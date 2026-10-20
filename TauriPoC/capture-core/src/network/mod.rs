@@ -279,7 +279,7 @@ impl Guardian {
         ) {
             coverage.synthetic_check_url = Some(format!(
                 "http://mitm.it/mobile-capture-check/{}",
-                &config.setup_nonce
+                config.setup_nonce
             ));
         }
         coverage

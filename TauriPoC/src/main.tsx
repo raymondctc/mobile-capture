@@ -452,7 +452,7 @@ function Details({ event }: { event: Event | undefined }) {
               <dd>
                 {event.clock_uncertainty_ms === null
                   ? "Unknown"
-                  : `${event.clock_uncertainty_ms} ms · host marker`}
+                  : `${event.clock_uncertainty_ms} ms · ${event.source === "marker" ? "host marker" : "host clock"}`}
               </dd>
             </div>
           </dl>
