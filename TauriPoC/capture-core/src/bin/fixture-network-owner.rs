@@ -30,7 +30,7 @@ fn main() {
     std::io::stdout().flush().unwrap();
     let mut action = [0];
     let _ = std::io::stdin().read(&mut action);
-    if action == [b'e'] {
+    if action == *b"e" {
         let outcome = owner.stop().unwrap();
         let archive = owner.export().unwrap();
         println!(
