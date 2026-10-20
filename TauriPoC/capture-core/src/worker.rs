@@ -159,27 +159,42 @@ pub fn run() -> Result<()> {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     };
-    let status_before_stop = child.try_wait().map_err(|e| e.to_string())?;
     #[cfg(unix)]
-    let stopped_by_worker = status_before_stop.is_none()
-        && unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) } == 0;
+    let exited_before_stop = {
+        // Keep the owned child unreaped until its group is signalled.
+        // Descendants can retain pipes after the leader exits.
+        let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        unsafe { info.si_pid() != 0 }
+    };
     #[cfg(windows)]
-    let stopped_by_worker = status_before_stop.is_none() && child.kill().is_ok();
+    let exited_before_stop = child.try_wait().map_err(|e| e.to_string())?.is_some();
+    #[cfg(unix)]
+    let stopped_by_worker = unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) } == 0;
+    #[cfg(windows)]
+    let stopped_by_worker = !exited_before_stop && child.kill().is_ok();
     let mut forced = cfg!(windows) && stopped_by_worker;
-    let status = match status_before_stop {
-        Some(status) => status,
-        None => match wait_bounded(&mut child, Duration::from_secs(1)) {
-            Ok(status) => status,
-            Err(_) => {
-                forced = true;
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(-(child.id() as i32), libc::SIGKILL);
-                }
-                let _ = child.kill();
-                child.wait().map_err(|e| e.to_string())?
+    let status = match wait_bounded(&mut child, Duration::from_secs(1)) {
+        Ok(status) => status,
+        Err(_) => {
+            forced = true;
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
-        },
+            let _ = child.kill();
+            child.wait().map_err(|e| e.to_string())?
+        }
     };
     #[cfg(unix)]
     let expected_stop = {
@@ -189,7 +204,7 @@ pub fn run() -> Result<()> {
     #[cfg(windows)]
     let expected_stop = stopped_by_worker && status.code() == Some(1);
     if reason == StopReason::LeaseClosed
-        && (status_before_stop.is_some() || (!status.success() && !expected_stop))
+        && (exited_before_stop || (!status.success() && !expected_stop))
     {
         reason = StopReason::CollectorExit;
     }

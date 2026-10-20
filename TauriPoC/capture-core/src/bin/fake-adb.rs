@@ -21,6 +21,10 @@ fn main() {
         std::process::exit(2);
     }
     let serial = &args[5];
+    #[cfg(unix)]
+    if serial.starts_with("fixture-descendant-") {
+        exited_leader(serial);
+    }
     let mut output = io::stdout().lock();
     #[cfg(unix)]
     if matches!(
@@ -65,6 +69,47 @@ fn main() {
         output.flush().unwrap();
         if serial != "fixture-flood" {
             thread::sleep(Duration::from_millis(150));
+        }
+    }
+}
+
+#[cfg(unix)]
+fn exited_leader(serial: &str) -> ! {
+    use std::{io::Read, os::unix::net::UnixStream};
+
+    let mut control = UnixStream::connect(env::var_os("FIXTURE_GROUP_CONTROL").unwrap()).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut pipe = [0; 2];
+    assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+    let leader = std::process::id();
+    let descendant = unsafe { libc::fork() };
+    assert!(descendant >= 0);
+    if descendant == 0 {
+        unsafe {
+            libc::close(pipe[1]);
+            assert_eq!(libc::read(pipe[0], [0u8; 1].as_mut_ptr().cast(), 1), 0);
+            libc::close(pipe[0]);
+        }
+        while unsafe { libc::getppid() } == leader as i32 {
+            thread::yield_now();
+        }
+        println!("1792022401.125 123 456 I Fixture: inherited pipes");
+        io::stdout().flush().unwrap();
+        writeln!(control, "{leader} {}", std::process::id()).unwrap();
+        let _ = control.read(&mut [0]);
+        unsafe { libc::_exit(0) };
+    }
+    unsafe {
+        libc::close(pipe[0]);
+        match serial {
+            "fixture-descendant-error" => libc::_exit(23),
+            "fixture-descendant-signal" => {
+                libc::kill(libc::getpid(), libc::SIGUSR1);
+                libc::_exit(24);
+            }
+            _ => libc::_exit(0),
         }
     }
 }
