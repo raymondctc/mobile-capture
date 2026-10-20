@@ -26,7 +26,7 @@ ADB server ownership stays outside the capture worker. Worker clients use explic
 
 The effective PoC log policy is bounded and included in evidence metadata. The default candidate policy is 32 MiB, 100,000 records, and 120 seconds. Keep only a bounded recent timeline in memory. Export reads all retained raw records. Unknown device clock uncertainty remains explicit. Whole-device scope must be clear in both the interface and manifest.
 
-Export uses the existing schema 1 format. Stable IDs match the current source, relative path, one-based line number, and raw-byte hash. The full timeline, raw logs, markers, context, manifest, README, and SHA256SUMS are generated from the admitted evidence. Exclude runtime state. Reject symlink or reparse evidence paths and nonregular files. Stage privately, hash the staged bytes, and publish atomically. Disconnect, malformed records, partial tails, limits, and forced shutdown remain visible in completeness metadata.
+Export uses the existing schema 1 format. Stable IDs match the current source, relative path, one-based line number, and raw-byte hash. The full timeline, raw logs, markers, context, manifest, README, and SHA256SUMS are generated from the admitted evidence. Exclude runtime state. Reject symlink or reparse evidence paths and nonregular files. Hash the immutable included bytes, write the ZIP privately, and publish atomically. Disconnect, malformed records, partial tails, limits, and forced shutdown remain visible in completeness metadata.
 
 ## Synthesis decision
 
@@ -45,6 +45,16 @@ The PoC accepts explicit whole-device scope instead of an incomplete app filter.
 The coordinator accepted the packaged-worker adaptation after the independent judge confirmed it preserves the base design. The Windows handshake and explicit-host ADB constraint are implementation gates. Any further contract change must update this file before the next unit uses it.
 
 The coordinator accepted snapshots that reread the bounded raw file and return the latest 500 events instead of maintaining a second timeline index. Frontend polling must not overlap. Search applies to the displayed recent window. Export still includes every admitted record. This PoC does not claim the production SQLite index's large-session behavior.
+
+Independent review reproduced an ADB exit with code 23 racing lease closure. A valid worker receipt is not sufficient for complete coverage when the collector exited abnormally. The worker must preserve that outcome and the archive must remain partial. Review also reproduced collection after an unterminated startup JSON frame reached EOF. Startup configuration requires its complete newline-delimited frame before collection can start. These are corrective implementations of the existing contract.
+
+Review also reproduced omission of the present empty marker file in a markerless export. The owner always creates that raw path. Export must preserve the empty file and reject a missing marker path rather than silently replacing lost evidence with an empty value.
+
+Independent correction review reproduced a descendant retaining output pipes after the ADB leader exited. The correction must signal the owned Unix process group before reaping its leader, which keeps the group's identifier reserved during termination. The leader's abnormal outcome must still remain partial. This repairs shutdown ordering within the existing ownership contract.
+
+The follow-up review disproved the shared premise that observing the leader's exit establishes that the group's pipes can drain. A descendant that ignores SIGTERM kept the exact `6231276` worker alive without a receipt 4.5 seconds after lease closure. The shutdown deadline must cover both leader exit and pipe completion. Escalation must signal the owned group before reaping releases its identifier. A second bounded drain must fail as unverified if completion still cannot be established. This replaces the invalid leader-only deadline rather than adding another leader-status guard.
+
+The coordinator accepted assembling export entries in memory within the per-file bounds. Checksums cover the same immutable byte vectors written to the private ZIP. This avoids a second raw-evidence staging copy while preserving atomic archive publication. The PoC does not claim streaming export or a lower peak-memory bound than the admitted inputs and generated timeline require.
 
 ## Verification
 

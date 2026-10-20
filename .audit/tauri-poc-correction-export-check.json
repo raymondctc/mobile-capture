@@ -1,0 +1,104 @@
+[
+  {
+    "case": "fixture-stop-clean",
+    "checked_by_coordinator": true,
+    "verification": {
+      "archive": "/private/tmp/mobile-capture-tauri-fix-validation-7kh4cusu/fixture-stop-clean/tauri-poc-nY8LKX/capture-package.zip",
+      "verified": true,
+      "counts": {
+        "logs": 100,
+        "network": 0,
+        "markers": 0
+      },
+      "package_state": "complete",
+      "files": [
+        "README.txt",
+        "SHA256SUMS",
+        "context.json",
+        "logs/device.log",
+        "manifest.json",
+        "timeline/events.jsonl",
+        "timeline/markers.jsonl"
+      ]
+    },
+    "receipt": {
+      "reason": "lease_closed",
+      "bytes": 4290,
+      "records": 100,
+      "incomplete_tail": false,
+      "child_reaped": true,
+      "forced": false,
+      "exit_code": null,
+      "stderr": "",
+      "ended_at": "2026-10-20T17:19:40.213078Z"
+    }
+  },
+  {
+    "case": "fixture-stop-exit",
+    "checked_by_coordinator": true,
+    "verification": {
+      "archive": "/private/tmp/mobile-capture-tauri-fix-validation-7kh4cusu/fixture-stop-exit/tauri-poc-3uolR7/capture-package.zip",
+      "verified": true,
+      "counts": {
+        "logs": 100,
+        "network": 0,
+        "markers": 0
+      },
+      "package_state": "partial",
+      "files": [
+        "README.txt",
+        "SHA256SUMS",
+        "context.json",
+        "logs/device.log",
+        "manifest.json",
+        "timeline/events.jsonl",
+        "timeline/markers.jsonl"
+      ]
+    },
+    "receipt": {
+      "reason": "collector_exit",
+      "bytes": 4290,
+      "records": 100,
+      "incomplete_tail": false,
+      "child_reaped": true,
+      "forced": false,
+      "exit_code": 23,
+      "stderr": "",
+      "ended_at": "2026-10-20T17:19:40.392034Z"
+    }
+  },
+  {
+    "case": "fixture-stop-signal",
+    "checked_by_coordinator": true,
+    "verification": {
+      "archive": "/private/tmp/mobile-capture-tauri-fix-validation-7kh4cusu/fixture-stop-signal/tauri-poc-RGfYyH/capture-package.zip",
+      "verified": true,
+      "counts": {
+        "logs": 100,
+        "network": 0,
+        "markers": 0
+      },
+      "package_state": "partial",
+      "files": [
+        "README.txt",
+        "SHA256SUMS",
+        "context.json",
+        "logs/device.log",
+        "manifest.json",
+        "timeline/events.jsonl",
+        "timeline/markers.jsonl"
+      ]
+    },
+    "receipt": {
+      "reason": "collector_exit",
+      "bytes": 4290,
+      "records": 100,
+      "incomplete_tail": false,
+      "child_reaped": true,
+      "forced": false,
+      "exit_code": null,
+      "stderr": "",
+      "ended_at": "2026-10-20T17:19:40.562804Z"
+    }
+  }
+]
