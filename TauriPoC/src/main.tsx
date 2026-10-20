@@ -222,12 +222,12 @@ function App() {
                 onChange={(event) => setNetworkConsent(event.target.checked)}
               />
               <span>
-                Also capture whole-device network traffic. I consent to temporary device proxy routing and manual trust of the session certificate.
+                Also capture whole-device network traffic. I consent to temporary device proxy routing and manual trust of the capture certificate.
               </span>
             </label>
             {networkConsent && (
               <p className="hint">
-                Requires installed mitmdump 12.2.3. Trust the session certificate on the Android device manually; HTTPS content without trust is not observed. App scope and iPhone capture are unavailable.
+                Requires installed mitmdump 12.2.3. Trust the capture certificate on the Android device manually; HTTPS content without trust is not observed. This PoC retains up to 32 HTTP flows, 256 KiB per body, and 120 seconds. App scope and iPhone capture are unavailable.
               </p>
             )}
             <div className="actions">
@@ -256,7 +256,8 @@ function App() {
               >
                 {pending === "stop" ? "Stopping…" : "Stop"}
               </button>
-              {snapshot?.phase === "recovery_required" && (
+              {(snapshot?.phase === "recovery_required" ||
+                (snapshot?.phase === "unverified_shutdown" && network?.state === "recovery_required")) && (
                 <button
                   className="stop"
                   disabled={!!pending}
@@ -522,7 +523,7 @@ function NetworkStatus({ network }: { network: NetworkView }) {
         <div><dt>Unavailable bodies</dt><dd>{coverage.unavailable_bodies.toLocaleString()}</dd></div>
       </dl>
       {coverage.admission_closed && <p className="hint">Evidence admission reached a limit. The proxy may still forward traffic while the session is active.</p>}
-      {coverage.public_certificate && <p className="hint">Trust this session certificate manually on the Android device: <code>{coverage.public_certificate}</code></p>}
+      {coverage.public_certificate && <p className="hint">Trust this capture certificate manually on the Android device: <code>{coverage.public_certificate}</code></p>}
       {coverage.synthetic_check_url && <p className="hint">After trusting it, visit <code>{coverage.synthetic_check_url}</code> on that device to check HTTPS capture.</p>}
       {coverage.decoded_http_events === 0 && <p className="hint">No decoded HTTP has been observed. TLS errors alone do not establish captured content.</p>}
       {completion && (
