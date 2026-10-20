@@ -15,6 +15,14 @@ npm ci
 npm run dev
 ```
 
+On Windows PowerShell, after installing the platform build prerequisites:
+
+```powershell
+cd TauriPoC
+npm ci
+npm run dev
+```
+
 Connect an Android device or start an emulator. Enable USB debugging and accept the device authorization prompt. Refresh devices, select a ready device, check the whole-device consent box, and choose **Start capture**.
 
 Add a marker to record a reproduction step. Select a timeline row to inspect its stable ID, raw reference, parsed fields, and clock basis. Search filters only the displayed recent window.
@@ -65,7 +73,7 @@ The embedded Rust owner retains the worker process and its only stdin lease writ
 
 The worker uses `adb -H 127.0.0.1 -P 5037` for collection. Discovery may prepare the normal ADB server outside the worker Job. The capture never kills that shared server.
 
-On macOS the worker owns the ADB process group, sends SIGTERM, and escalates after one second. It drains stdout within the admission bounds and waits for its ADB child before writing the receipt. On Windows stopping the owned ADB client uses process termination, which is recorded as forced and partial. The owner waits up to four seconds for its worker. Missing or failed receipts produce **Shutdown unverified** and disable export.
+On macOS the worker owns the ADB process group and sends SIGTERM. It gives the leader and both output pipes one second to finish, then escalates the group to SIGKILL. A second one-second deadline refuses a receipt if completion remains unverified. The leader stays unreaped until group signaling ends, so its identifier cannot be reused during escalation. Stderr retains at most 8 KiB while its reader continues through EOF. The worker waits for its ADB child before writing the receipt. On Windows stopping the owned ADB client uses process termination, which is recorded as forced and partial. The owner waits up to four seconds for its worker. Missing or failed receipts produce **Shutdown unverified** and disable export.
 
 A worker killed with SIGKILL on macOS can leave its ADB client running until that client exits. No persisted PID authorizes termination. A hard-killed worker cannot establish verified shutdown. This PoC has no recovery adapter and makes no routing changes.
 
