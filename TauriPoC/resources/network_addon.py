@@ -141,12 +141,20 @@ class Capture:
     def headers(message):
         return [{"name": k, "value": v} for k, v in message.headers.items(multi=True)]
 
+    def retainable_metadata(self, value):
+        try:
+            return len(encoded(value)) <= 16 * 1024
+        except UnicodeError:
+            if len(self.errors) < 32:
+                self.errors.append("Metadata cannot be represented as UTF-8; flow omitted while original traffic forwards")
+            return False
+
     def requestheaders(self, flow):
+        flow.request.stream = lambda chunk: chunk
         if time.monotonic() - self.started >= 120 or self.admitted >= 32:
             self.closed = True
-        if self.closed or len(encoded({"headers": self.headers(flow.request), "method": flow.request.method, "url": flow.request.pretty_url, "version": flow.request.http_version})) > 16 * 1024:
+        if self.closed or not self.retainable_metadata({"headers": self.headers(flow.request), "method": flow.request.method, "url": flow.request.pretty_url, "version": flow.request.http_version}):
             self.omitted = min(self.omitted + 1, 2**63 - 1)
-            flow.request.stream = lambda chunk: chunk
             return
         self.admitted += 1
         slot = {"flow": flow, "request": Body(), "response": Body()}
@@ -154,12 +162,14 @@ class Capture:
         flow.request.stream = slot["request"].stream
 
     def responseheaders(self, flow):
+        flow.response.stream = lambda chunk: chunk
         slot = self.pending.get(flow.id)
-        flow.response.stream = slot["response"].stream if slot else lambda chunk: chunk
-        if slot and len(encoded(self.headers(flow.response))) > 16 * 1024:
+        if slot and not self.retainable_metadata(self.headers(flow.response)):
             self.pending.pop(flow.id)
             self.omitted = min(self.omitted + 1, 2**63 - 1)
-            flow.response.stream = lambda chunk: chunk
+            return
+        if slot:
+            flow.response.stream = slot["response"].stream
 
     def request(self, flow):
         nonce = self.config["setup_nonce"]

@@ -31,11 +31,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         assert body == request_body
         self.respond(encoded_response, True)
     def do_GET(self):
+        if self.path == "/binary-request-header":
+            assert self.headers.get("X-Fixture") == "\xff"
         self.respond(large if self.path == "/large" else b"bounded", False)
     def respond(self, body, compressed):
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))
+        if self.path == "/binary-header":
+            self.send_header("X-Fixture", "\xff")
         if compressed:
             self.send_header("Content-Encoding", "gzip")
         self.end_headers()
@@ -209,6 +213,31 @@ finally:
         proc.kill()
         proc.wait()
     errors.close()
+for header_side in ["request", "response"]:
+    header_session, _, header_port, header_proc, header_errors = start("binary-" + header_side + "-header")
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", header_port, timeout=10)
+        url = f"http://127.0.0.1:{server.server_port}/" + ("binary-header" if header_side == "response" else "binary-request-header")
+        connection.request("GET", url, headers={"X-Fixture": b"\xff"} if header_side == "request" else {})
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.read() == b"bounded"
+        if header_side == "response":
+            assert response.getheader("X-Fixture") == "\xff"
+        connection.close()
+        (header_session / "runtime/engine-stop.json").write_text(json.dumps({"nonce": nonce}))
+        assert header_proc.wait(timeout=10) == 0
+        assert json.loads((header_session / "runtime/engine-receipt.json").read_text())["partial"]
+        facts = json.loads((header_session / "network/incomplete.json").read_text())
+        assert facts["omitted_flows"] == 1 and len(facts["errors"]) == 1
+        assert (header_session / "network/events.jsonl").stat().st_size == 0
+        assert json.loads((header_session / "network/capture.har").read_text())["log"]["entries"] == []
+    finally:
+        if header_proc.poll() is None:
+            header_proc.kill()
+            header_proc.wait()
+        header_errors.close()
+
 flush_addon = root / "flush-fault-addon.py"
 flush_addon.write_text("""import importlib.util
 from pathlib import Path
@@ -325,6 +354,13 @@ def owned_session(mode):
                 connection.request("GET", path)
                 assert connection.getresponse().status == 200
                 connection.close()
+        elif mode == "binary-header":
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            connection.request("GET", f"http://127.0.0.1:{server.server_port}/binary-request-header", headers={"X-Fixture": b"\xff"})
+            response = connection.getresponse()
+            assert response.status == 200
+            response.read()
+            connection.close()
         elif mode == "tls-error":
             connection = http.client.HTTPSConnection("127.0.0.1", port, context=ssl.create_default_context(), timeout=10)
             connection.set_tunnel("mitm.it", 443)
@@ -384,6 +420,11 @@ def owned_session(mode):
                 assert manifest["package_state"] == "partial" and manifest["completeness"]["partial"]
                 if mode == "flush-error":
                     assert json.loads(archive.read("network/incomplete.json"))["errors"] == ["fixture injected source flush failure"]
+                elif mode == "binary-header":
+                    assert manifest["completeness"]["omitted_flows"] == 1
+                    assert manifest["sources"]["network"] == "started"
+                    assert manifest["completeness"]["sources"]["network"]["decoded_http_events"] == 0
+                    assert json.loads(archive.read("network/incomplete.json"))["errors"]
                 else:
                     kind = "tls_error" if mode == "tls-error" else "error"
                     assert any(event["kind"] == kind for event in events), events
@@ -402,8 +443,8 @@ def owned_session(mode):
             owner.wait()
         errors.close()
 
-owned_proofs = [owned_session(mode) for mode in ["success", "tls-error", "http-error", "flush-error"]]
+owned_proofs = [owned_session(mode) for mode in ["success", "tls-error", "http-error", "flush-error", "binary-header"]]
 server.shutdown()
-result = {"root": str(root), "real_engine": "12.2.3", "native_har_jsonl_ids_and_raw_bytes_match": True, "http_binary_gzip_forwarded": True, "https_private_client_trust": True, "admitted_flows": 32, "omitted_flows": 4, "oversize_body_unavailable_everywhere": True, "private_nonce_shutdown": True, "owner_eof_graceful_done": True, "source_lease_failure_stops_unready_listener": True, "cross_file_write_failure_truthfully_partial": True, "flush_failure_closes_writers_before_source_lease_release": True, "partial_writer_initialization_closes_before_lease_release": True, "device_routing": "compiled_private_fake_only", "rust_owner_guardian_real_engine": owned_proofs}
+result = {"root": str(root), "real_engine": "12.2.3", "native_har_jsonl_ids_and_raw_bytes_match": True, "http_binary_gzip_forwarded": True, "https_private_client_trust": True, "admitted_flows": 32, "omitted_flows": 4, "oversize_body_unavailable_everywhere": True, "private_nonce_shutdown": True, "owner_eof_graceful_done": True, "source_lease_failure_stops_unready_listener": True, "cross_file_write_failure_truthfully_partial": True, "flush_failure_closes_writers_before_source_lease_release": True, "partial_writer_initialization_closes_before_lease_release": True, "binary_headers_forward_but_decline_retention_truthfully": True, "device_routing": "compiled_private_fake_only", "rust_owner_guardian_real_engine": owned_proofs}
 (root / "result.json").write_text(json.dumps(result, indent=2))
 print(json.dumps(result))
