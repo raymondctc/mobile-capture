@@ -1,24 +1,30 @@
-use capture_poc_core::{
-    model::{Limits, Receipt, WorkerConfig},
-    CaptureOwner,
-};
+use capture_poc_core::{model::*, CaptureOwner};
 use serde_json::Value;
 use std::{
     fs,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
 
 fn owner(root: &Path) -> CaptureOwner {
-    CaptureOwner::new(
-        env!("CARGO_BIN_EXE_fake-adb").into(),
-        env!("CARGO_BIN_EXE_collector-worker").into(),
-        root.into(),
+    CaptureOwner::open(
+        CapturePaths {
+            output_root: root.into(),
+            runtime_root: Some(root.join("fixture-runtime")),
+        },
+        ToolSelection {
+            adb: env!("CARGO_BIN_EXE_fake-adb").into(),
+            worker: env!("CARGO_BIN_EXE_collector-worker").into(),
+            guardian: PathBuf::new(),
+            mitmdump: None,
+            addon: PathBuf::new(),
+        },
         true,
     )
+    .unwrap()
 }
 fn view(owner: &mut CaptureOwner) -> Value {
     serde_json::to_value(owner.snapshot().unwrap()).unwrap()
@@ -38,7 +44,14 @@ fn wait(owner: &mut CaptureOwner, predicate: impl Fn(&Value) -> bool) -> Value {
     }
 }
 fn start(owner: &mut CaptureOwner, serial: &str, limits: Limits) {
-    owner.start(serial.into(), true, limits).unwrap();
+    owner
+        .start(StartRequest {
+            serial: serial.into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::Logs,
+            limits,
+        })
+        .unwrap();
 }
 fn zip_entries(path: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
     let mut zip = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
@@ -57,14 +70,29 @@ fn consent_is_required_and_unready_devices_are_refused() {
     let root = tempfile::tempdir().unwrap();
     let mut owner = owner(root.path());
     assert!(owner
-        .start("fixture-stream".into(), false, Limits::default())
+        .start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: false,
+            selection: CaptureSelection::Logs,
+            limits: Limits::default()
+        })
         .unwrap_err()
         .contains("consent"));
     assert!(owner
-        .start("fixture-offline".into(), true, Limits::default())
+        .start(StartRequest {
+            serial: "fixture-offline".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::Logs,
+            limits: Limits::default()
+        })
         .is_err());
     assert!(owner
-        .start("fixture-denied".into(), true, Limits::default())
+        .start(StartRequest {
+            serial: "fixture-denied".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::Logs,
+            limits: Limits::default()
+        })
         .is_err());
     assert!(owner.directory().is_none());
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
@@ -89,7 +117,7 @@ fn raw_bytes_live_ids_markers_stop_and_export_are_real() {
     let text = "quote \" slash \\ newline\nUnicode ✓";
     owner.marker(text.into()).unwrap();
     let stopped = serde_json::to_value(owner.stop().unwrap()).unwrap();
-    assert_eq!(stopped["phase"], "stopped");
+    assert_eq!(stopped["outcome"], "ready");
     assert_eq!(stopped["session"]["receipt"]["child_reaped"], true);
     assert_eq!(
         serde_json::to_value(owner.stop().unwrap()).unwrap(),
@@ -212,6 +240,7 @@ fn startup_requires_a_newline_terminated_config_before_collection() {
     for frame in ["empty", "json_without_newline", "partial_json"] {
         let root = tempfile::tempdir().unwrap();
         let config = WorkerConfig {
+            source_lease: false,
             adb: env!("CARGO_BIN_EXE_fake-adb").into(),
             serial: "fixture-stream".into(),
             directory: root.path().into(),
@@ -236,6 +265,7 @@ fn startup_requires_a_newline_terminated_config_before_collection() {
 fn parent_eof_stops_the_collector_after_a_complete_startup_frame() {
     let root = tempfile::tempdir().unwrap();
     let config = WorkerConfig {
+        source_lease: false,
         adb: env!("CARGO_BIN_EXE_fake-adb").into(),
         serial: "fixture-stream".into(),
         directory: root.path().into(),
@@ -298,7 +328,7 @@ fn abnormal_collector_outcomes_during_stop_remain_partial() {
         assert_eq!(receipt["stderr"], "", "{serial}");
         assert_eq!(receipt["forced"], false, "{serial}");
         assert_eq!(receipt["reason"], "collector_exit", "{serial}");
-        assert_eq!(stopped["phase"], "failed", "{serial}");
+        assert_eq!(stopped["outcome"], "ready", "{serial}");
         let entries = zip_entries(&owner.export().unwrap());
         let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
         assert_eq!(manifest["package_state"], "partial", "{serial}");
@@ -317,7 +347,7 @@ fn intentional_sigterm_with_clean_logs_can_be_complete() {
     wait(&mut owner, |v| v["session"]["logs"] == 100);
     let stopped = serde_json::to_value(owner.stop().unwrap()).unwrap();
     assert_eq!(stopped["session"]["receipt"]["reason"], "lease_closed");
-    assert_eq!(stopped["phase"], "stopped");
+    assert_eq!(stopped["outcome"], "ready");
     let entries = zip_entries(&owner.export().unwrap());
     let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
     assert_eq!(manifest["package_state"], "complete");
@@ -539,21 +569,35 @@ fn abrupt_owner_exit_ends_collection_without_a_destructor() {
 #[test]
 fn worker_failure_without_a_receipt_never_claims_verified_stop() {
     let root = tempfile::tempdir().unwrap();
-    let mut owner = CaptureOwner::new(
-        env!("CARGO_BIN_EXE_fake-adb").into(),
-        env!("CARGO_BIN_EXE_fixture-worker-crash").into(),
-        root.path().into(),
+    let mut owner = CaptureOwner::open(
+        CapturePaths {
+            output_root: root.path().into(),
+            runtime_root: Some(root.path().join("fixture-runtime")),
+        },
+        ToolSelection {
+            adb: env!("CARGO_BIN_EXE_fake-adb").into(),
+            worker: env!("CARGO_BIN_EXE_fixture-worker-crash").into(),
+            guardian: PathBuf::new(),
+            mitmdump: None,
+            addon: PathBuf::new(),
+        },
         true,
-    );
+    )
+    .unwrap();
     start(&mut owner, "fixture-stream", Limits::default());
     wait(&mut owner, |v| v["phase"] == "unverified_shutdown");
     assert!(owner.export().is_err());
     assert_eq!(
-        serde_json::to_value(owner.stop().unwrap()).unwrap()["phase"],
-        "unverified_shutdown"
+        serde_json::to_value(owner.stop().unwrap()).unwrap()["outcome"],
+        "unverified"
     );
     assert!(owner
-        .start("fixture-stream".into(), true, Limits::default())
+        .start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::Logs,
+            limits: Limits::default()
+        })
         .is_err());
 }
 

@@ -81,6 +81,8 @@ pub struct WorkerConfig {
     pub serial: String,
     pub directory: PathBuf,
     pub limits: Limits,
+    #[serde(default)]
+    pub source_lease: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -96,7 +98,7 @@ pub struct Event {
     pub detail: serde_json::Value,
     pub clock_uncertainty_ms: Option<f64>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SessionView {
     pub id: String,
     pub device: Device,
@@ -111,8 +113,9 @@ pub struct SessionView {
     pub receipt: Option<Receipt>,
     pub archive: Option<PathBuf>,
     pub warnings: Vec<String>,
+    pub network: NetworkView,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "phase", content = "session", rename_all = "snake_case")]
 pub enum Snapshot {
     Idle { fixture: bool, limits: Limits },
@@ -120,4 +123,77 @@ pub enum Snapshot {
     Stopped(SessionView),
     Failed(SessionView),
     UnverifiedShutdown(SessionView),
+    RecoveryRequired(SessionView),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CapturePaths {
+    pub output_root: PathBuf,
+    pub runtime_root: Option<PathBuf>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolSelection {
+    pub adb: PathBuf,
+    pub worker: PathBuf,
+    pub guardian: PathBuf,
+    pub mitmdump: Option<PathBuf>,
+    pub addon: PathBuf,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NetworkConsent {
+    pub whole_device: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "mode", content = "consent", rename_all = "snake_case")]
+pub enum CaptureSelection {
+    Logs,
+    LogsAndNetwork(NetworkConsent),
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StartRequest {
+    pub serial: String,
+    pub whole_device_consent: bool,
+    pub selection: CaptureSelection,
+    pub limits: Limits,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CoverageView {
+    pub decoded_http_events: u64,
+    pub tls_errors: u64,
+    pub omitted_flows: u64,
+    pub unavailable_bodies: u64,
+    pub admission_closed: bool,
+    pub public_certificate: Option<PathBuf>,
+    pub synthetic_check_url: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecoveryProblem {
+    pub message: String,
+    pub guardian_interrupted: bool,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct NetworkCompletion {
+    pub coverage: CoverageView,
+    pub routing_restored: bool,
+    pub partial: bool,
+    pub forced: bool,
+    pub interrupted: bool,
+    pub reasons: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "state", content = "detail", rename_all = "snake_case")]
+pub enum NetworkView {
+    NotSelected,
+    Preparing,
+    Recording(CoverageView),
+    RecoveryRequired(RecoveryProblem),
+    Stopped(NetworkCompletion),
+    Interrupted(NetworkCompletion),
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "outcome", content = "session", rename_all = "snake_case")]
+pub enum StopOutcome {
+    Ready(SessionView),
+    RecoveryRequired(SessionView),
+    Unverified(SessionView),
 }

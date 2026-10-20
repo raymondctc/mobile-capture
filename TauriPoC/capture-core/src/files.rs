@@ -30,7 +30,7 @@ pub fn read(root: &Path, relative: &str) -> Result<Option<Vec<u8>>> {
 }
 
 #[cfg(unix)]
-fn open(root: &Path, relative: &str) -> std::io::Result<File> {
+pub(crate) fn open(root: &Path, relative: &str) -> std::io::Result<File> {
     use std::{
         ffi::CString,
         os::{
@@ -67,7 +67,7 @@ fn open(root: &Path, relative: &str) -> std::io::Result<File> {
 }
 
 #[cfg(windows)]
-fn open(root: &Path, relative: &str) -> std::io::Result<File> {
+pub(crate) fn open(root: &Path, relative: &str) -> std::io::Result<File> {
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,

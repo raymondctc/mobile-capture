@@ -83,6 +83,7 @@ fn check_descendants(prefix: &str, forced: bool) {
             descendant: None,
         };
         let config = WorkerConfig {
+            source_lease: false,
             adb: env!("CARGO_BIN_EXE_fake-adb").into(),
             serial: serial.clone(),
             directory: root.path().into(),

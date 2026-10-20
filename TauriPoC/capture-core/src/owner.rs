@@ -12,13 +12,13 @@ use std::{
     time::Duration,
 };
 
-struct Lease {
+pub(crate) struct LogCollector {
     child: Child,
     input: Option<ChildStdin>,
     _job: Job,
 }
-impl Lease {
-    fn launch(worker: &Path, config: &WorkerConfig) -> Result<Self> {
+impl LogCollector {
+    pub(crate) fn launch(worker: &Path, config: &WorkerConfig) -> Result<Self> {
         let mut command = Command::new(worker);
         process::quiet(&mut command);
         let mut child = command
@@ -52,7 +52,7 @@ impl Lease {
             _job: job,
         })
     }
-    fn close(&mut self) -> Result<()> {
+    pub(crate) fn close(&mut self) -> Result<()> {
         self.input.take();
         match process::wait_bounded(&mut self.child, Duration::from_secs(4)) {
             Ok(_) => Ok(()),
@@ -64,7 +64,7 @@ impl Lease {
         }
     }
 }
-impl Drop for Lease {
+impl Drop for LogCollector {
     fn drop(&mut self) {
         if self.close().is_err() {
             let _ = self.child.kill();
@@ -74,7 +74,7 @@ impl Drop for Lease {
 }
 
 enum Lifecycle {
-    Recording(Lease),
+    Recording(LogCollector),
     Finished(Receipt),
     Unverified(String),
 }
@@ -88,14 +88,14 @@ struct Session {
     archive: Option<PathBuf>,
     markers: std::fs::File,
 }
-pub struct CaptureOwner {
+pub(crate) struct LogSession {
     adb: PathBuf,
     worker: PathBuf,
     root: PathBuf,
     fixture: bool,
     session: Option<Session>,
 }
-impl CaptureOwner {
+impl LogSession {
     pub fn new(adb: PathBuf, worker: PathBuf, root: PathBuf, fixture: bool) -> Self {
         Self {
             adb,
@@ -153,13 +153,14 @@ impl CaptureOwner {
             .into_owned();
         let started_at = now();
         fs::write(directory.join("session.json"), serde_json::to_vec(&serde_json::json!({"id": id, "started_at": started_at, "coordinator": "tauri-poc"})).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        let lease = Lease::launch(
+        let lease = LogCollector::launch(
             &self.worker,
             &WorkerConfig {
                 adb: self.adb.clone(),
                 serial,
                 directory: directory.clone(),
                 limits: limits.clone(),
+                source_lease: false,
             },
         )?;
         self.session = Some(Session {
@@ -274,6 +275,7 @@ impl CaptureOwner {
             events,
             receipt,
             archive: session.archive.clone(),
+            network: NetworkView::NotSelected,
             warnings,
         };
         Ok(match &session.lifecycle {

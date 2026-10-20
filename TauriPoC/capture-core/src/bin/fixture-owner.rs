@@ -1,4 +1,4 @@
-use capture_poc_core::{model::Limits, CaptureOwner};
+use capture_poc_core::{model::*, CaptureOwner};
 use std::{
     io::{Read, Write},
     path::PathBuf,
@@ -11,14 +11,28 @@ fn main() {
         .unwrap()
         .to_path_buf();
     let suffix = if cfg!(windows) { ".exe" } else { "" };
-    let mut owner = CaptureOwner::new(
-        binaries.join(format!("fake-adb{suffix}")),
-        binaries.join(format!("collector-worker{suffix}")),
-        root,
+    let mut owner = CaptureOwner::open(
+        CapturePaths {
+            output_root: root.clone(),
+            runtime_root: Some(root.join("fixture-runtime")),
+        },
+        ToolSelection {
+            adb: binaries.join(format!("fake-adb{suffix}")),
+            worker: binaries.join(format!("collector-worker{suffix}")),
+            guardian: PathBuf::new(),
+            mitmdump: None,
+            addon: PathBuf::new(),
+        },
         true,
-    );
+    )
+    .unwrap();
     owner
-        .start("fixture-stream".into(), true, Limits::default())
+        .start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::Logs,
+            limits: Limits::default(),
+        })
         .unwrap();
     println!("{}", owner.directory().unwrap().display());
     std::io::stdout().flush().unwrap();

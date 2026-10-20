@@ -13,6 +13,13 @@ fn main() {
         println!("fixture-stop-exit\tdevice model:Stop_Exit_Fixture\nfixture-stop-signal\tdevice model:Stop_Signal_Fixture\nfixture-stop-clean\tdevice model:Clean_Stop_Fixture");
         return;
     }
+    if args.len() >= 7
+        && args[..5] == ["-H", "127.0.0.1", "-P", "5037", "-s"]
+        && args[6] != "logcat"
+    {
+        routing(&args[6..]);
+        return;
+    }
     if args.len() != 11
         || args[..5] != ["-H", "127.0.0.1", "-P", "5037", "-s"]
         || args[6..] != ["logcat", "-v", "epoch", "-T", "1"]
@@ -146,4 +153,122 @@ extern "C" fn signal_on_stop(_: libc::c_int) {
         libc::kill(libc::getpid(), libc::SIGUSR1);
         libc::_exit(24);
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FakeState {
+    #[serde(default)]
+    settings: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    reverse: std::collections::BTreeMap<String, String>,
+    #[serde(default = "yes")]
+    connected: bool,
+    #[serde(default = "yes")]
+    acknowledge_clear: bool,
+    #[serde(default)]
+    commands: Vec<Vec<String>>,
+    #[serde(default)]
+    fail_command: Option<usize>,
+}
+fn yes() -> bool {
+    true
+}
+fn routing(args: &[String]) {
+    let path = env::var_os("FAKE_ADB_STATE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            env::current_exe()
+                .unwrap()
+                .with_file_name("fake-adb-state.json")
+        });
+    let mut state: FakeState =
+        serde_json::from_slice(&std::fs::read(&path).expect("private fake state required"))
+            .unwrap();
+    state.commands.push(args.to_vec());
+    let failed = !state.connected || state.fail_command == Some(state.commands.len());
+    let mut output = String::new();
+    let mut conflict = false;
+    if !failed {
+        if args == ["shell", "settings list global"] {
+            output = state
+                .settings
+                .iter()
+                .map(|(k, v)| format!("{k}={v}\n"))
+                .collect();
+        } else if args == ["reverse", "--list"] {
+            output = state
+                .reverse
+                .iter()
+                .map(|(k, v)| format!("fixture {k} {v}\n"))
+                .collect();
+        } else if args.len() == 4 && args[..2] == ["reverse", "--no-rebind"] {
+            if state.reverse.contains_key(&args[2]) {
+                conflict = true;
+            } else {
+                state.reverse.insert(args[2].clone(), args[3].clone());
+            }
+        } else if args.len() == 3 && args[..2] == ["reverse", "--remove"] {
+            state.reverse.remove(&args[2]);
+        } else if args.len() == 2 && args[0] == "shell" {
+            let fields = shell_fields(&args[1]);
+            assert!(fields.len() >= 4 && fields[0] == "settings" && fields[2] == "global");
+            if fields[1] == "delete" {
+                state.settings.remove(&fields[3]);
+            } else {
+                state.settings.insert(fields[3].clone(), fields[4].clone());
+                if fields[3] == "http_proxy" && fields[4] == ":0" && state.acknowledge_clear {
+                    for (k, v) in [
+                        ("global_http_proxy_host", ""),
+                        ("global_http_proxy_port", "0"),
+                        ("global_http_proxy_exclusion_list", ""),
+                        ("global_proxy_pac_url", ""),
+                    ] {
+                        state.settings.insert(k.into(), v.into());
+                    }
+                }
+            }
+        } else {
+            panic!("fixture rejects arguments {args:?}");
+        }
+    }
+    let temporary = path.with_extension("pending");
+    std::fs::write(&temporary, serde_json::to_vec(&state).unwrap()).unwrap();
+    std::fs::rename(temporary, path).unwrap();
+    if failed || conflict {
+        eprintln!("fixture device disconnected or reverse conflict");
+        std::process::exit(1);
+    }
+    print!("{output}");
+}
+fn shell_fields(script: &str) -> Vec<String> {
+    let mut fields = vec![];
+    let mut current = String::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut active = false;
+    for c in script.chars() {
+        if escaped {
+            current.push(c);
+            escaped = false;
+            active = true;
+        } else if c == '\\' && !quoted {
+            escaped = true;
+        } else if c == '\'' {
+            quoted = !quoted;
+            active = true;
+        } else if c == ' ' && !quoted {
+            if active {
+                fields.push(std::mem::take(&mut current));
+                active = false;
+            }
+        } else {
+            current.push(c);
+            active = true;
+        }
+    }
+    if active {
+        fields.push(current);
+    }
+    assert!(!quoted && !escaped);
+    fields
 }

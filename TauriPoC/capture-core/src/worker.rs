@@ -47,6 +47,17 @@ pub fn run() -> Result<()> {
     if closed.load(Ordering::Acquire) {
         return Ok(());
     }
+    let _source_lease = if config.source_lease {
+        let guard =
+            crate::lease::FileLease::acquire(&config.directory.join("runtime/logs.writer"))?;
+        if closed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        crate::lease::write(&config.directory.join("runtime/log-ready.json"), &true)?;
+        Some(guard)
+    } else {
+        None
+    };
     fs::create_dir_all(config.directory.join("logs")).map_err(|e| e.to_string())?;
     let mut raw = OpenOptions::new()
         .write(true)

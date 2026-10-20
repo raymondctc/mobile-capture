@@ -155,3 +155,43 @@ impl Job {
         Ok(Self)
     }
 }
+
+pub(crate) fn absolute_executable(path: &std::path::Path) -> Result<std::path::PathBuf> {
+    let candidates = if path.components().count() > 1 || path.is_absolute() {
+        vec![path.to_path_buf()]
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .flat_map(|directory| {
+                #[cfg(windows)]
+                let names = vec![
+                    directory.join(path),
+                    directory.join(path).with_extension("exe"),
+                ];
+                #[cfg(not(windows))]
+                let names = vec![directory.join(path)];
+                names
+            })
+            .collect()
+    };
+    for candidate in candidates {
+        if let Ok(canonical) = std::fs::canonicalize(candidate) {
+            if let Ok(metadata) = canonical.metadata() {
+                if !metadata.is_file() {
+                    continue;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if metadata.permissions().mode() & 0o111 == 0 {
+                        continue;
+                    }
+                }
+                return Ok(canonical);
+            }
+        }
+    }
+    Err(format!(
+        "Cannot resolve executable {} from PATH",
+        path.display()
+    ))
+}
