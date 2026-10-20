@@ -23,7 +23,7 @@ Add a marker to record a reproduction step. Search and source filtering cover th
 
 Choose **Stop** to restore device routing and wait for source shutdown. If recovery is required, keep the device connected and choose **Retry recovery**. Export and a new capture stay disabled until restoration and source verification finish. A verified partial capture can be exported, with its limitations recorded in the manifest. Review raw evidence before sharing it.
 
-Normal sessions use the Tauri application's data directory under `dev.mobilecapture.tauri-poc`. Private runtime state is separate from exported evidence. A guardian process owns network session restoration after a GUI interruption. A hard guardian death can interrupt capture; recovery then reports partial evidence. No saved process ID authorizes killing an unrelated process.
+Normal sessions use the Tauri application's data directory under `dev.mobilecapture.tauri-poc`. Private runtime state is separate from exported evidence. A guardian process owns network session restoration after a GUI interruption. A hard guardian death can interrupt capture; recovery then reports partial evidence. An external launcher that stops its whole process tree can also interrupt the guardian. Reopen the app with the original device connected to recover. No saved process ID authorizes killing an unrelated process.
 
 ## Verify without a phone
 

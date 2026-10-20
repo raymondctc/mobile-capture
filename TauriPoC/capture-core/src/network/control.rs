@@ -197,7 +197,7 @@ fn spawn_windows_guardian(command: &mut Command, fixture: bool) -> std::io::Resu
         System::{
             JobObjects::{
                 IsProcessInJob, JobObjectExtendedLimitInformation, QueryInformationJobObject,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             },
             Threading::{
                 GetCurrentProcess, CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP,
@@ -237,8 +237,9 @@ fn spawn_windows_guardian(command: &mut Command, fixture: bool) -> std::io::Resu
     let immediate_limit_flags = query_result
         .filter(|result| *result != 0)
         .map(|_| limits.BasicLimitInformation.LimitFlags);
-    let retry_attempted =
-        first_spawn_error == Some(ERROR_ACCESS_DENIED as i32) && immediate_limit_flags == Some(0);
+    let retry_attempted = first_spawn_error == Some(ERROR_ACCESS_DENIED as i32)
+        && immediate_limit_flags
+            .is_some_and(|flags| flags & !JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0);
     let result = if retry_attempted {
         command.creation_flags(detached_flags).spawn()
     } else {
