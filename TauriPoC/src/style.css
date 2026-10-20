@@ -214,6 +214,22 @@ pre {
   accent-color: #16715e;
   margin: 3px 0 0;
 }
+.network-consent {
+  margin-top: 15px;
+}
+.network-status code {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.network-status[role="alert"] h2 {
+  color: #943f32;
+}
+.source.network {
+  color: #246a9a;
+}
+.body-preview pre {
+  max-height: 110px;
+}
 .unavailable {
   display: flex;
   justify-content: space-between;

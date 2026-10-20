@@ -1,5 +1,8 @@
 use capture_poc_core::{
-    model::{Device, Limits, Snapshot},
+    model::{
+        CapturePaths, CaptureSelection, Device, Limits, NetworkConsent, Snapshot, StartRequest,
+        ToolSelection,
+    },
     CaptureOwner,
 };
 use std::{
@@ -9,6 +12,15 @@ use std::{
 use tauri::Manager;
 
 type Owner = Arc<Mutex<CaptureOwner>>;
+fn installed_mitmdump() -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "mitmdump.exe"
+    } else {
+        "mitmdump"
+    };
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|directory| directory.join(name).canonicalize().ok())
+}
 async fn with_owner<T: Send + 'static>(
     owner: Owner,
     operation: impl FnOnce(&mut CaptureOwner) -> Result<T, String> + Send + 'static,
@@ -29,9 +41,19 @@ async fn start(
     owner: tauri::State<'_, Owner>,
     serial: String,
     whole_device_consent: bool,
+    network_consent: bool,
 ) -> Result<Snapshot, String> {
     with_owner(owner.inner().clone(), move |o| {
-        o.start(serial, whole_device_consent, Limits::default())
+        o.start(StartRequest {
+            serial,
+            whole_device_consent,
+            selection: if network_consent {
+                CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true })
+            } else {
+                CaptureSelection::Logs
+            },
+            limits: Limits::default(),
+        })
     })
     .await
 }
@@ -45,7 +67,19 @@ async fn marker(owner: tauri::State<'_, Owner>, text: String) -> Result<Snapshot
 }
 #[tauri::command]
 async fn stop(owner: tauri::State<'_, Owner>) -> Result<Snapshot, String> {
-    with_owner(owner.inner().clone(), |o| o.stop()).await
+    with_owner(owner.inner().clone(), |o| {
+        o.stop()?;
+        o.snapshot()
+    })
+    .await
+}
+#[tauri::command]
+async fn recover(owner: tauri::State<'_, Owner>) -> Result<Snapshot, String> {
+    with_owner(owner.inner().clone(), |o| {
+        o.recover()?;
+        o.snapshot()
+    })
+    .await
 }
 #[tauri::command]
 async fn export(owner: tauri::State<'_, Owner>) -> Result<PathBuf, String> {
@@ -62,30 +96,64 @@ pub fn run() {
             } else {
                 "collector-worker"
             };
+            let guardian_name = if cfg!(windows) {
+                "capture-guardian.exe"
+            } else {
+                "capture-guardian"
+            };
             let packaged_worker = executable
                 .parent()
                 .ok_or("Application executable has no directory")?
                 .join(worker_name);
-            let (adb, worker, root) = if fixture {
+            let packaged_guardian = executable
+                .parent()
+                .ok_or("Application executable has no directory")?
+                .join(guardian_name);
+            let (adb, worker, guardian, output_root, runtime_root) = if fixture {
                 (
                     PathBuf::from(std::env::var("MOBILE_CAPTURE_POC_FIXTURE_ADB")?),
                     PathBuf::from(std::env::var("MOBILE_CAPTURE_POC_WORKER")?),
+                    PathBuf::from(std::env::var("MOBILE_CAPTURE_POC_GUARDIAN")?),
                     PathBuf::from(std::env::var("MOBILE_CAPTURE_POC_FIXTURE_ROOT")?),
+                    Some(PathBuf::from(std::env::var(
+                        "MOBILE_CAPTURE_POC_FIXTURE_RUNTIME_ROOT",
+                    )?)),
                 )
             } else {
                 (
                     PathBuf::from("adb"),
                     packaged_worker,
+                    packaged_guardian,
                     app.path().app_data_dir()?.join("sessions"),
+                    None,
                 )
             };
-            app.manage(Arc::new(Mutex::new(CaptureOwner::new(
-                adb, worker, root, fixture,
-            ))));
+            let addon = app
+                .path()
+                .resolve("network_addon.py", tauri::path::BaseDirectory::Resource)?;
+            let mitmdump = std::env::var_os("MOBILE_CAPTURE_POC_MITMDUMP")
+                .map(PathBuf::from)
+                .or_else(installed_mitmdump);
+            let owner = CaptureOwner::open(
+                CapturePaths {
+                    output_root,
+                    runtime_root,
+                },
+                ToolSelection {
+                    adb,
+                    worker,
+                    guardian,
+                    mitmdump,
+                    addon,
+                },
+                fixture,
+            )
+            .map_err(std::io::Error::other)?;
+            app.manage(Arc::new(Mutex::new(owner)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            discover, start, snapshot, marker, stop, export
+            discover, start, snapshot, marker, stop, recover, export
         ])
         .build(tauri::generate_context!())
         .expect("Cannot build the Mobile Capture PoC")

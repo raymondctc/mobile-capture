@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,9 @@ const build = spawnSync(
 if (build.status !== 0) process.exit(build.status ?? 1);
 const suffix = process.platform === "win32" ? ".exe" : "";
 const binary = process.argv[2];
+const fixtureRoot = mkdtempSync(path.join(tmpdir(), "mobile-capture-poc-fixture-"));
+const runtimeRoot = path.join(fixtureRoot, "runtime");
+mkdirSync(runtimeRoot, { mode: 0o700 });
 const env = {
   ...process.env,
   MOBILE_CAPTURE_POC_FIXTURE: "1",
@@ -23,10 +26,13 @@ const env = {
   MOBILE_CAPTURE_POC_WORKER: binary
     ? path.join(path.dirname(binary), `collector-worker${suffix}`)
     : path.join(root, `target/debug/collector-worker${suffix}`),
-  MOBILE_CAPTURE_POC_FIXTURE_ROOT: mkdtempSync(
-    path.join(tmpdir(), "mobile-capture-poc-fixture-"),
-  ),
+  MOBILE_CAPTURE_POC_GUARDIAN: binary
+    ? path.join(path.dirname(binary), `capture-guardian${suffix}`)
+    : path.join(root, `target/debug/capture-guardian${suffix}`),
+  MOBILE_CAPTURE_POC_FIXTURE_ROOT: path.join(fixtureRoot, "sessions"),
+  MOBILE_CAPTURE_POC_FIXTURE_RUNTIME_ROOT: runtimeRoot,
 };
+mkdirSync(env.MOBILE_CAPTURE_POC_FIXTURE_ROOT, { mode: 0o700 });
 console.info(
   `FIXTURE MODE. No phone is used. Evidence root: ${env.MOBILE_CAPTURE_POC_FIXTURE_ROOT}`,
 );

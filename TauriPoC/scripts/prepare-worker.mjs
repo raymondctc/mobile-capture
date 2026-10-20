@@ -16,6 +16,8 @@ const result = spawnSync(
     "capture-poc-core",
     "--bin",
     "collector-worker",
+    "--bin",
+    "capture-guardian",
     "--release",
     "--locked",
   ],
@@ -24,7 +26,9 @@ const result = spawnSync(
 if (result.status !== 0) process.exit(result.status ?? 1);
 const suffix = process.platform === "win32" ? ".exe" : "";
 mkdirSync(path.join(root, "src-tauri/binaries"), { recursive: true });
-copyFileSync(
-  path.join(root, `target/release/collector-worker${suffix}`),
-  path.join(root, `src-tauri/binaries/collector-worker-${target}${suffix}`),
-);
+for (const name of ["collector-worker", "capture-guardian"]) {
+  copyFileSync(
+    path.join(root, `target/release/${name}${suffix}`),
+    path.join(root, `src-tauri/binaries/${name}-${target}${suffix}`),
+  );
+}

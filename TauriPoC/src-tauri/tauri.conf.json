@@ -29,8 +29,12 @@
       "app"
     ],
     "externalBin": [
-      "binaries/collector-worker"
+      "binaries/collector-worker",
+      "binaries/capture-guardian"
     ],
+    "resources": {
+      "../resources/network_addon.py": "network_addon.py"
+    },
     "icon": [
       "icons/icon.png",
       "icons/icon.icns",
