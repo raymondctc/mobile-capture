@@ -101,6 +101,20 @@ fn wait_until(mut check: impl FnMut() -> bool) {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_launch_probe_runs_inside_rust_test_job() {
+    let probe = std::process::Command::new("python")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/probe-windows-launch.py"))
+        .status()
+        .expect("Windows launch probe must run from the Rust test process");
+    let f = Fixture::new();
+    let mut owner = f.owner();
+    assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    assert!(probe.success(), "owned-handle Windows launch probe failed");
+}
+
 #[test]
 fn fixture_route_exact_values_marker_receipt_and_sealed_export() {
     let f = Fixture::new();

@@ -135,7 +135,7 @@ impl Client {
             }
         }
         #[cfg(windows)]
-        let child = spawn_windows_guardian(&mut command);
+        let child = spawn_windows_guardian(&mut command, config.fixture);
         #[cfg(not(windows))]
         let child = command.spawn();
         let mut child = child.map_err(|e| format!("Cannot launch independent guardian {e}"))?;
@@ -190,10 +190,10 @@ impl Client {
     }
 }
 #[cfg(windows)]
-fn spawn_windows_guardian(command: &mut Command) -> std::io::Result<Child> {
+fn spawn_windows_guardian(command: &mut Command, fixture: bool) -> std::io::Result<Child> {
     use std::os::windows::process::CommandExt;
     use windows_sys::Win32::{
-        Foundation::ERROR_ACCESS_DENIED,
+        Foundation::{GetLastError, ERROR_ACCESS_DENIED},
         System::{
             JobObjects::{
                 IsProcessInJob, JobObjectExtendedLimitInformation, QueryInformationJobObject,
@@ -207,36 +207,66 @@ fn spawn_windows_guardian(command: &mut Command) -> std::io::Result<Child> {
     };
 
     let detached_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
-    command
+    let first = command
         .creation_flags(CREATE_BREAKAWAY_FROM_JOB | detached_flags)
-        .spawn()
-        .or_else(|error| {
-            if error.raw_os_error() != Some(ERROR_ACCESS_DENIED as i32) {
-                return Err(error);
-            }
-            let mut in_job = 0;
-            if unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job) }
-                == 0
-                || in_job == 0
-            {
-                return Err(error);
-            }
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-            if unsafe {
-                QueryInformationJobObject(
-                    std::ptr::null_mut(),
-                    JobObjectExtendedLimitInformation,
-                    (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                    std::mem::size_of_val(&limits) as u32,
-                    std::ptr::null_mut(),
-                )
-            } == 0
-                || limits.BasicLimitInformation.LimitFlags != 0
-            {
-                return Err(error);
-            }
-            command.creation_flags(detached_flags).spawn()
-        })
+        .spawn();
+    let first_spawn_error = first.as_ref().err().and_then(|error| error.raw_os_error());
+    if first_spawn_error != Some(ERROR_ACCESS_DENIED as i32) && !fixture {
+        return first;
+    }
+    let mut in_job = 0;
+    let membership_result =
+        unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job) };
+    let membership_error = (membership_result == 0).then(|| unsafe { GetLastError() });
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    let (query_result, query_error) = if membership_result != 0 && in_job != 0 {
+        let result = unsafe {
+            QueryInformationJobObject(
+                std::ptr::null_mut(),
+                JobObjectExtendedLimitInformation,
+                (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        let error = (result == 0).then(|| unsafe { GetLastError() });
+        (Some(result), error)
+    } else {
+        (None, None)
+    };
+    let immediate_limit_flags = query_result
+        .filter(|result| *result != 0)
+        .map(|_| limits.BasicLimitInformation.LimitFlags);
+    let retry_attempted =
+        first_spawn_error == Some(ERROR_ACCESS_DENIED as i32) && immediate_limit_flags == Some(0);
+    let result = if retry_attempted {
+        command.creation_flags(detached_flags).spawn()
+    } else {
+        first
+    };
+    if fixture {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "probe": "windows_guardian_launch_rust",
+                "pid_for_diagnostics_only": std::process::id(),
+                "membership_result": membership_result,
+                "membership_error": membership_error,
+                "in_job": (membership_result != 0).then_some(in_job != 0),
+                "query_result": query_result,
+                "query_error": query_error,
+                "immediate_limit_flags": immediate_limit_flags,
+                "first_spawn_error": first_spawn_error,
+                "retry_attempted": retry_attempted,
+                "retry_spawn_error": if retry_attempted {
+                    result.as_ref().err().and_then(|error| error.raw_os_error())
+                } else {
+                    None
+                },
+            })
+        );
+    }
+    result
 }
 fn connect(descriptor: &Descriptor) -> Result<TcpStream> {
     let stream = TcpStream::connect_timeout(
