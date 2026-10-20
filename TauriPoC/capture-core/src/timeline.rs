@@ -342,7 +342,24 @@ mod tests {
             .map(|r| format!("{}\n", serde_json::to_string(r).unwrap()))
             .collect::<String>();
         std::fs::write(directory.path().join("network/events.jsonl"), bytes).unwrap();
-        let expected=std::process::Command::new(if cfg!(windows){"python"}else{"python3"}).args(["-c","import sys,json; from pathlib import Path; sys.path.insert(0,sys.argv[1]); import evidence; print(json.dumps(evidence._read_events(Path(sys.argv[2]),{'started_at':sys.argv[3]})))"]).arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../CaptureRuntime")).arg(directory.path()).arg(start).output().unwrap();
+        let expected = std::process::Command::new(if cfg!(windows) { "python" } else { "python3" })
+            .args([
+                "-c",
+                r#"
+import sys, json
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import evidence
+root = Path(sys.argv[2])
+raw_files = {"network/events.jsonl": (root / "network/events.jsonl").read_bytes()}
+print(json.dumps(evidence._read_events(root, {"started_at": sys.argv[3]}, raw_files=raw_files)))
+"#,
+            ])
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../CaptureRuntime"))
+            .arg(directory.path())
+            .arg(start)
+            .output()
+            .unwrap();
         assert!(
             expected.status.success(),
             "{}",
