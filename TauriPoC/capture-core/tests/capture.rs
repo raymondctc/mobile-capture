@@ -377,10 +377,13 @@ fn abrupt_owner_exit_ends_collection_without_a_destructor() {
         assert_eq!(receipt["child_reaped"], true);
     }
     #[cfg(windows)]
-    assert!(
-        !directory.join("receipt.json").exists(),
-        "Job closure hard-kills the worker, so shutdown cannot be claimed verified"
-    );
+    if let Ok(bytes) = fs::read(directory.join("receipt.json")) {
+        let receipt: Receipt = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            receipt.child_reaped,
+            "A worker that wins the Job-close race must have reaped its child"
+        );
+    }
 }
 
 #[test]
