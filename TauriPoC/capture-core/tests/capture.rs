@@ -360,8 +360,45 @@ fn abrupt_owner_exit_ends_collection_without_a_destructor() {
         assert!(Instant::now() < deadline);
         thread::sleep(Duration::from_millis(20));
     }
+    #[cfg(windows)]
+    let collector = {
+        let pid = loop {
+            let bytes = fs::read(directory.join("logs/device.log")).unwrap();
+            if let Some(pid) = String::from_utf8_lossy(&bytes).lines().find_map(|line| {
+                line.split_once("owned_pid=")
+                    .and_then(|(_, pid)| pid.parse::<u32>().ok())
+            }) {
+                break pid;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        };
+        let handle =
+            unsafe { windows_sys::Win32::System::Threading::OpenProcess(0x00100000, 0, pid) };
+        assert!(
+            !handle.is_null(),
+            "Retain a wait handle to the actual fake ADB before owner exit"
+        );
+        handle
+    };
     drop(child.stdin.take());
     assert!(child.wait().unwrap().success());
+    #[cfg(windows)]
+    {
+        let outcome =
+            unsafe { windows_sys::Win32::System::Threading::WaitForSingleObject(collector, 3000) };
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(collector);
+        }
+        assert_eq!(
+            outcome, 0,
+            "The actual owned ADB process must exit after Job closure"
+        );
+    }
+    assert!(
+        !directory.join("capture-package.zip").exists(),
+        "Abrupt exit must never publish evidence as a successful capture"
+    );
     thread::sleep(Duration::from_millis(350));
     let bytes = fs::read(directory.join("logs/device.log")).unwrap();
     thread::sleep(Duration::from_millis(350));

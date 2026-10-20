@@ -21,6 +21,12 @@ fn main() {
     let serial = &args[5];
     let mut output = io::stdout().lock();
     output.write_all(b"1792022401.125  123  456 I Fixture: first raw record\r\n\n1792022401.250 123 456 W Fixture: binary \xff retained\nmalformed record\n").unwrap();
+    writeln!(
+        output,
+        "1792022401.375 123 456 I Fixture: owned_pid={}",
+        std::process::id()
+    )
+    .unwrap();
     output.flush().unwrap();
     if serial == "fixture-disconnect" {
         output.write_all(b"incomplete tail").unwrap();
