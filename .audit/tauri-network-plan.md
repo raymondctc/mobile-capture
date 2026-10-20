@@ -20,6 +20,8 @@ An authorized Android device can route whole-device HTTP(S) through an owned loo
 
 The bottleneck is the recovery contract, not UI scaffolding. Two independent source readers have completed nonoverlapping routing and evidence investigations. One explainer merges them; two design candidates and a separate judge select one shape. A single strongest code owner implements the shared lifecycle in an isolated checkout. The coordinator owns integration, external delivery, and independent artifact verification. Reviews start only against a stable implementation. Reusable process probes carry more value than parallel writers that would disagree about session state.
 
+Execution deviated from the last review timing sentence. A provisional independent review began while the backend writer investigated crash-test refusals. It read source hashes and built only private snapshots, then rechecked changed files. Its findings were not a final stable-source verdict. A fresh independent reviewer now checks the final delta and records its complete source inventory before integration. No reviewer ran suites or wrote code in the active author's checkout.
+
 ## Verification boundary
 
 No real device routing, host proxy, or certificate trust changes during this task. Fake ADB uses a persistent private settings database. The real proxy binds loopback and serves controlled traffic. Fixture UI and evidence must identify simulation explicitly. Windows CI evidence is distinct from physical Windows/Android acceptance.
@@ -33,6 +35,8 @@ Current mitmdump is 12.2.3, Python 3.14.4, OpenSSL 3.5.5 on macOS arm64. The exi
 Context7 was resolved once and queried twice outside the sandbox, exhausting the three-call budget for this question. Official stable documentation confirms regular mode, loopback listener options, private `confdir`, and streaming native-flow output. `running()` means the proxy is ready; `done()` runs after the event loop stops; addon `ctx.master.shutdown()` requests graceful shutdown on both platforms. A private control mechanism can use that API without console signals.
 
 Sources: https://docs.mitmproxy.org/stable/concepts/options ; https://docs.mitmproxy.org/stable/api/events.html ; https://docs.mitmproxy.org/stable/addons/examples .
+
+The official [12.2.3 package metadata](https://pypi.org/project/mitmproxy/12.2.3/) confirms Python 3.12 or newer and lists Windows and macOS. This supports the existing CI Python 3.12 selection. It does not replace an actual engine run on either runner.
 
 ## Rationale coverage
 
