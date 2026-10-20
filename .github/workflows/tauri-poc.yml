@@ -35,6 +35,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Probe Windows process lifetimes
+        if: runner.os == 'Windows'
+        run: python scripts/probe-windows-launch.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
