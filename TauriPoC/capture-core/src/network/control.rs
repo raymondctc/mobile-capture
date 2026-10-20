@@ -135,13 +135,10 @@ impl Client {
             }
         }
         #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x01000000 | 0x00000008 | 0x00000200);
-        }
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("Cannot launch independent guardian {e}"))?;
+        let child = spawn_windows_guardian(&mut command);
+        #[cfg(not(windows))]
+        let child = command.spawn();
+        let mut child = child.map_err(|e| format!("Cannot launch independent guardian {e}"))?;
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if startup_path.with_extension("ready").exists() {
@@ -191,6 +188,55 @@ impl Client {
             }
         }
     }
+}
+#[cfg(windows)]
+fn spawn_windows_guardian(command: &mut Command) -> std::io::Result<Child> {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::{
+        Foundation::ERROR_ACCESS_DENIED,
+        System::{
+            JobObjects::{
+                IsProcessInJob, JobObjectExtendedLimitInformation, QueryInformationJobObject,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            },
+            Threading::{
+                GetCurrentProcess, CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP,
+                DETACHED_PROCESS,
+            },
+        },
+    };
+
+    let detached_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    command
+        .creation_flags(CREATE_BREAKAWAY_FROM_JOB | detached_flags)
+        .spawn()
+        .or_else(|error| {
+            if error.raw_os_error() != Some(ERROR_ACCESS_DENIED as i32) {
+                return Err(error);
+            }
+            let mut in_job = 0;
+            if unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job) }
+                == 0
+                || in_job == 0
+            {
+                return Err(error);
+            }
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            if unsafe {
+                QueryInformationJobObject(
+                    std::ptr::null_mut(),
+                    JobObjectExtendedLimitInformation,
+                    (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&limits) as u32,
+                    std::ptr::null_mut(),
+                )
+            } == 0
+                || limits.BasicLimitInformation.LimitFlags != 0
+            {
+                return Err(error);
+            }
+            command.creation_flags(detached_flags).spawn()
+        })
 }
 fn connect(descriptor: &Descriptor) -> Result<TcpStream> {
     let stream = TcpStream::connect_timeout(
