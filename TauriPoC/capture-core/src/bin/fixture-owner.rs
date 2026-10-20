@@ -23,6 +23,5 @@ fn main() {
     println!("{}", owner.directory().unwrap().display());
     std::io::stdout().flush().unwrap();
     let _ = std::io::stdin().read(&mut [0]);
-    // Deliberately bypass Drop to test OS closure of the lease and Windows Job handle.
     std::process::exit(0);
 }
