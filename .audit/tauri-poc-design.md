@@ -44,6 +44,8 @@ The PoC accepts explicit whole-device scope instead of an incomplete app filter.
 
 The coordinator accepted the packaged-worker adaptation after the independent judge confirmed it preserves the base design. The Windows handshake and explicit-host ADB constraint are implementation gates. Any further contract change must update this file before the next unit uses it.
 
+The coordinator accepted snapshots that reread the bounded raw file and return the latest 500 events instead of maintaining a second timeline index. Frontend polling must not overlap. Search applies to the displayed recent window. Export still includes every admitted record. This PoC does not claim the production SQLite index's large-session behavior.
+
 ## Verification
 
 The code owner builds a compiled fake ADB and the verification command first. Scenarios include discovery states, rejected scope, raw-byte retention, live rows, markers, repeated Stop, disconnect, parent EOF, limits, failed publication, stable event IDs, hashes, and unsafe-path refusal. The coordinator independently drives the built desktop application. Windows fixture and build evidence is distinct from Windows phone acceptance.
