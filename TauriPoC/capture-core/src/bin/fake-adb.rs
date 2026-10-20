@@ -87,6 +87,12 @@ fn exited_leader(serial: &str) -> ! {
     let descendant = unsafe { libc::fork() };
     assert!(descendant >= 0);
     if descendant == 0 {
+        if serial.contains("ignore-term") {
+            assert_ne!(
+                unsafe { libc::signal(libc::SIGTERM, libc::SIG_IGN) },
+                libc::SIG_ERR
+            );
+        }
         unsafe {
             libc::close(pipe[1]);
             assert_eq!(libc::read(pipe[0], [0u8; 1].as_mut_ptr().cast(), 1), 0);
@@ -98,14 +104,29 @@ fn exited_leader(serial: &str) -> ! {
         println!("1792022401.125 123 456 I Fixture: inherited pipes");
         io::stdout().flush().unwrap();
         writeln!(control, "{leader} {}", std::process::id()).unwrap();
+        if serial.contains("stderr-only") {
+            control.read_exact(&mut [0]).unwrap();
+            unsafe { libc::close(libc::STDOUT_FILENO) };
+            eprintln!("fixture descendant retains stderr");
+            if serial.contains("stderr-cap") {
+                io::stderr()
+                    .write_all(&vec![
+                        b'x';
+                        8192 - b"fixture descendant retains stderr\n".len()
+                    ])
+                    .unwrap();
+                io::stderr().flush().unwrap();
+            }
+            writeln!(control, "stdout closed").unwrap();
+        }
         let _ = control.read(&mut [0]);
         unsafe { libc::_exit(0) };
     }
     unsafe {
         libc::close(pipe[0]);
-        match serial {
-            "fixture-descendant-error" => libc::_exit(23),
-            "fixture-descendant-signal" => {
+        match serial.rsplit('-').next().unwrap() {
+            "error" => libc::_exit(23),
+            "signal" => {
                 libc::kill(libc::getpid(), libc::SIGUSR1);
                 libc::_exit(24);
             }
