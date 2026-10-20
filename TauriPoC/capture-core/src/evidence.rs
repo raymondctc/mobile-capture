@@ -22,7 +22,8 @@ pub fn export(
     if logs.len() as u64 != receipt.bytes {
         return Err("Raw log size does not match the stopped collector receipt".into());
     }
-    let markers = files::read(directory, "timeline/markers.jsonl")?.unwrap_or_default();
+    let markers =
+        files::read(directory, "timeline/markers.jsonl")?.ok_or("Raw markers are missing")?;
     let events = timeline::events(&logs, &markers, started_at);
     let logs_count = events.iter().filter(|e| e.source == "logs").count();
     let unparsed: Vec<_> = events
@@ -42,9 +43,7 @@ pub fn export(
         || !unparsed.is_empty();
     let context = json!({"log_scope": {"mode": "whole_device", "explicit_consent": true, "app_scope_available": false}, "device_logs": {"policy": limits, "persisted_bytes": receipt.bytes, "raw_records": receipt.records, "completion_reason": receipt.reason, "incomplete_tail": receipt.incomplete_tail}, "coordinator": "tauri-poc", "fixture": fixture});
     entries.insert("logs/device.log".to_string(), logs);
-    if !markers.is_empty() {
-        entries.insert("timeline/markers.jsonl".to_string(), markers);
-    }
+    entries.insert("timeline/markers.jsonl".to_string(), markers);
     let artifacts: Vec<_> = entries.iter().map(|(path, bytes)| json!({"path": path, "bytes": bytes.len(), "sha256": timeline::hash(bytes)})).collect();
     let warnings = if fixture {
         vec![

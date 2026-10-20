@@ -208,15 +208,33 @@ fn bounds_end_admission_without_evicting_earlier_bytes() {
     }
 }
 #[test]
-fn startup_eof_starts_nothing_and_parent_eof_stops_the_collector() {
+fn startup_requires_a_newline_terminated_config_before_collection() {
+    for frame in ["empty", "json_without_newline", "partial_json"] {
+        let root = tempfile::tempdir().unwrap();
+        let config = WorkerConfig {
+            adb: env!("CARGO_BIN_EXE_fake-adb").into(),
+            serial: "fixture-stream".into(),
+            directory: root.path().into(),
+            limits: Limits::default(),
+        };
+        let json = serde_json::to_vec(&config).unwrap();
+        let bytes = match frame {
+            "empty" => &json[..0],
+            "partial_json" => &json[..json.len() / 2],
+            _ => &json,
+        };
+        let mut child = Command::new(env!("CARGO_BIN_EXE_collector-worker"))
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(bytes).unwrap();
+        assert!(child.wait().unwrap().success(), "{frame}");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0, "{frame}");
+    }
+}
+#[test]
+fn parent_eof_stops_the_collector_after_a_complete_startup_frame() {
     let root = tempfile::tempdir().unwrap();
-    let mut empty = Command::new(env!("CARGO_BIN_EXE_collector-worker"))
-        .stdin(Stdio::piped())
-        .spawn()
-        .unwrap();
-    drop(empty.stdin.take());
-    assert!(empty.wait().unwrap().success());
-    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     let config = WorkerConfig {
         adb: env!("CARGO_BIN_EXE_fake-adb").into(),
         serial: "fixture-stream".into(),
@@ -261,6 +279,101 @@ fn startup_eof_starts_nothing_and_parent_eof_stops_the_collector() {
         bytes,
         fs::read(root.path().join("logs/device.log")).unwrap()
     );
+}
+#[test]
+#[cfg(unix)]
+fn abnormal_collector_outcomes_during_stop_remain_partial() {
+    for (serial, exit_code) in [
+        ("fixture-stop-exit", serde_json::json!(23)),
+        ("fixture-stop-signal", Value::Null),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut owner = owner(root.path());
+        start(&mut owner, serial, Limits::default());
+        wait(&mut owner, |v| v["session"]["logs"] == 100);
+        let stopped = serde_json::to_value(owner.stop().unwrap()).unwrap();
+        let receipt = &stopped["session"]["receipt"];
+        assert_eq!(receipt["exit_code"], exit_code, "{serial}");
+        assert_eq!(receipt["incomplete_tail"], false, "{serial}");
+        assert_eq!(receipt["stderr"], "", "{serial}");
+        assert_eq!(receipt["forced"], false, "{serial}");
+        assert_eq!(receipt["reason"], "collector_exit", "{serial}");
+        assert_eq!(stopped["phase"], "failed", "{serial}");
+        let entries = zip_entries(&owner.export().unwrap());
+        let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+        assert_eq!(manifest["package_state"], "partial", "{serial}");
+        assert_eq!(
+            manifest["completeness"]["device_logs"]["coverage_ended_before_session_end"], true,
+            "{serial}"
+        );
+    }
+}
+#[test]
+#[cfg(unix)]
+fn intentional_sigterm_with_clean_logs_can_be_complete() {
+    let root = tempfile::tempdir().unwrap();
+    let mut owner = owner(root.path());
+    start(&mut owner, "fixture-stop-clean", Limits::default());
+    wait(&mut owner, |v| v["session"]["logs"] == 100);
+    let stopped = serde_json::to_value(owner.stop().unwrap()).unwrap();
+    assert_eq!(stopped["session"]["receipt"]["reason"], "lease_closed");
+    assert_eq!(stopped["phase"], "stopped");
+    let entries = zip_entries(&owner.export().unwrap());
+    let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+    assert_eq!(manifest["package_state"], "complete");
+    assert_eq!(
+        manifest["completeness"]["device_logs"]["coverage_ended_before_session_end"],
+        false
+    );
+}
+#[test]
+fn markerless_export_preserves_the_empty_raw_file() {
+    use sha2::{Digest, Sha256};
+    let root = tempfile::tempdir().unwrap();
+    let mut owner = owner(root.path());
+    start(&mut owner, "fixture-stream", Limits::default());
+    wait(&mut owner, |v| {
+        v["session"]["bytes"].as_u64().unwrap_or(0) > 0
+    });
+    owner.stop().unwrap();
+    let raw = fs::read(owner.directory().unwrap().join("timeline/markers.jsonl")).unwrap();
+    assert!(raw.is_empty());
+    let entries = zip_entries(&owner.export().unwrap());
+    assert_eq!(entries.get("timeline/markers.jsonl"), Some(&raw));
+    let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+    let artifact = manifest["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|artifact| artifact["path"] == "timeline/markers.jsonl")
+        .unwrap();
+    assert_eq!(artifact["bytes"], 0);
+    assert_eq!(artifact["sha256"], format!("{:x}", Sha256::digest(&raw)));
+    assert!(String::from_utf8(entries["SHA256SUMS"].clone())
+        .unwrap()
+        .contains(&format!(
+            "{:x}  timeline/markers.jsonl\n",
+            Sha256::digest(&raw)
+        )));
+}
+#[test]
+fn missing_marker_evidence_refuses_export() {
+    let root = tempfile::tempdir().unwrap();
+    let mut owner = owner(root.path());
+    start(&mut owner, "fixture-stream", Limits::default());
+    wait(&mut owner, |v| {
+        v["session"]["bytes"].as_u64().unwrap_or(0) > 0
+    });
+    owner.marker("must not disappear".into()).unwrap();
+    owner.stop().unwrap();
+    let directory = owner.directory().unwrap();
+    fs::remove_file(directory.join("timeline/markers.jsonl")).unwrap();
+    assert!(owner.export().is_err());
+    assert!(!owner
+        .directory()
+        .unwrap()
+        .join("capture-package.zip")
+        .exists());
 }
 #[test]
 fn publication_failure_preserves_evidence_and_allows_retry() {

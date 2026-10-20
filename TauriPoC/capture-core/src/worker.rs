@@ -14,6 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Startup requires one UTF-8 JSON frame ending in LF within 65,536 bytes.
+/// EOF before LF starts nothing. After a complete frame, lease EOF may race launch.
 pub fn run() -> Result<()> {
     let mut input = std::io::stdin().lock();
     let mut config = String::new();
@@ -22,7 +24,7 @@ pub fn run() -> Result<()> {
         .take(65536)
         .read_line(&mut config)
         .map_err(|e| e.to_string())?;
-    if config.is_empty() {
+    if !config.ends_with('\n') {
         return Ok(());
     }
     let config: WorkerConfig =
@@ -157,25 +159,40 @@ pub fn run() -> Result<()> {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     };
+    let status_before_stop = child.try_wait().map_err(|e| e.to_string())?;
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGTERM);
-    }
+    let stopped_by_worker = status_before_stop.is_none()
+        && unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) } == 0;
     #[cfg(windows)]
-    let _ = child.kill();
-    let mut forced = cfg!(windows);
-    let status = match wait_bounded(&mut child, Duration::from_secs(1)) {
-        Ok(status) => status,
-        Err(_) => {
-            forced = true;
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
+    let stopped_by_worker = status_before_stop.is_none() && child.kill().is_ok();
+    let mut forced = cfg!(windows) && stopped_by_worker;
+    let status = match status_before_stop {
+        Some(status) => status,
+        None => match wait_bounded(&mut child, Duration::from_secs(1)) {
+            Ok(status) => status,
+            Err(_) => {
+                forced = true;
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                child.wait().map_err(|e| e.to_string())?
             }
-            let _ = child.kill();
-            child.wait().map_err(|e| e.to_string())?
-        }
+        },
     };
+    #[cfg(unix)]
+    let expected_stop = {
+        use std::os::unix::process::ExitStatusExt;
+        stopped_by_worker && status.signal() == Some(libc::SIGTERM)
+    };
+    #[cfg(windows)]
+    let expected_stop = stopped_by_worker && status.code() == Some(1);
+    if reason == StopReason::LeaseClosed
+        && (status_before_stop.is_some() || (!status.success() && !expected_stop))
+    {
+        reason = StopReason::CollectorExit;
+    }
     let mut capped = matches!(
         reason,
         StopReason::ByteLimit | StopReason::RecordLimit | StopReason::ReadError
