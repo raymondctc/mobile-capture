@@ -6,7 +6,7 @@ App scope and iPhone capture are unavailable. This app does not replace the Swif
 
 ## Prerequisites and local run
 
-Install Node 22, Rust, the platform's Tauri build prerequisites, and Android platform-tools. Put `adb` on `PATH`. Network mode also requires an installed **mitmdump 12.2.3**. The proxy engine is not bundled. Set `MOBILE_CAPTURE_POC_MITMDUMP` to its absolute executable path if it is not discoverable through the normal installation. The app packages its own PoC addon.
+Install Node 22, Rust, the platform's Tauri build prerequisites, and Android platform-tools. The app looks for `adb` on `PATH`, in `ANDROID_HOME` or `ANDROID_SDK_ROOT`, and in the standard user SDK location. On macOS, it also checks `/opt/homebrew/bin` and `/usr/local/bin`. Network mode also requires an installed **mitmdump 12.2.3**. The proxy engine is not bundled. The app checks `PATH` and those macOS executable directories for mitmdump. Set `MOBILE_CAPTURE_POC_MITMDUMP` to its absolute executable path for another installation. The app packages its own PoC addon.
 
 ```sh
 cd TauriPoC
@@ -32,7 +32,7 @@ npm run verify
 npm run fixture
 ```
 
-The verification command builds the fake ADB and real collector, exercises the Rust owner, and checks an exported ZIP against `CaptureRuntime.evidence`. The fixture launcher compiles fake ADB and starts the native development app with fresh private output and runtime directories. Its banner identifies fake ADB. Selecting network mode uses the installed real proxy engine but does not capture phone traffic.
+The verification command tests desktop tool discovery against synthetic files, builds the fake ADB and real collector, exercises the Rust owner, and checks an exported ZIP against `CaptureRuntime.evidence`. The fixture launcher compiles fake ADB and starts the native development app with fresh private output and runtime directories. Its banner identifies fake ADB. Selecting network mode uses the installed real proxy engine but does not capture phone traffic.
 
 The separate `scripts/probe-network-engine.py` check requires `CAPTURE_TEST_MITMDUMP` set to an absolute path to mitmdump 12.2.3. It uses loopback HTTP and HTTPS with private client trust, then compares original body bytes across native flows, HAR, and JSONL. CI runs this real-engine check on macOS and Windows.
 

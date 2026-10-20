@@ -27,6 +27,18 @@ const directory = mkdtempSync(
   path.join(tmpdir(), "mobile-capture-poc-verify-"),
 );
 try {
+  const toolsTests = path.join(
+    directory,
+    `desktop-tools-tests${process.platform === "win32" ? ".exe" : ""}`,
+  );
+  run("rustc", [
+    "--edition=2021",
+    "--test",
+    "src-tauri/src/tools.rs",
+    "-o",
+    toolsTests,
+  ]);
+  run(toolsTests, []);
   const result = run(
     path.join(
       root,

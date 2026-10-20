@@ -11,16 +11,9 @@ use std::{
 };
 use tauri::Manager;
 
+mod tools;
+
 type Owner = Arc<Mutex<CaptureOwner>>;
-fn installed_mitmdump() -> Option<PathBuf> {
-    let name = if cfg!(windows) {
-        "mitmdump.exe"
-    } else {
-        "mitmdump"
-    };
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|directory| directory.join(name).canonicalize().ok())
-}
 async fn with_owner<T: Send + 'static>(
     owner: Owner,
     operation: impl FnOnce(&mut CaptureOwner) -> Result<T, String> + Send + 'static,
@@ -90,6 +83,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let fixture = std::env::var("MOBILE_CAPTURE_POC_FIXTURE").ok().as_deref() == Some("1");
+            let environment = tools::DiscoveryEnv::from_process();
             let executable = std::env::current_exe()?;
             let worker_name = if cfg!(windows) {
                 "collector-worker.exe"
@@ -121,7 +115,7 @@ pub fn run() {
                 )
             } else {
                 (
-                    PathBuf::from("adb"),
+                    tools::installed_adb(&environment).unwrap_or_else(|| PathBuf::from("adb")),
                     packaged_worker,
                     packaged_guardian,
                     app.path().app_data_dir()?.join("sessions"),
@@ -133,7 +127,7 @@ pub fn run() {
                 .resolve("network_addon.py", tauri::path::BaseDirectory::Resource)?;
             let mitmdump = std::env::var_os("MOBILE_CAPTURE_POC_MITMDUMP")
                 .map(PathBuf::from)
-                .or_else(installed_mitmdump);
+                .or_else(|| tools::installed_mitmdump(&environment));
             let owner = CaptureOwner::open(
                 CapturePaths {
                     output_root,
