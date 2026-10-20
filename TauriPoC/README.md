@@ -34,6 +34,8 @@ npm run fixture
 
 The verification command builds the fake ADB and real collector, exercises the Rust owner, and checks an exported ZIP against `CaptureRuntime.evidence`. The fixture launcher compiles fake ADB and starts the native development app with fresh private output and runtime directories. Its banner identifies fake ADB. Selecting network mode uses the installed real proxy engine but does not capture phone traffic.
 
+The separate `scripts/probe-network-engine.py` check requires `CAPTURE_TEST_MITMDUMP` set to an absolute path to mitmdump 12.2.3. It uses loopback HTTP and HTTPS with private client trust, then compares original body bytes across native flows, HAR, and JSONL. CI runs this real-engine check on macOS and Windows.
+
 ## Build and check the packaged app
 
 On macOS:

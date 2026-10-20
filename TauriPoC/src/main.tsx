@@ -44,7 +44,10 @@ function App() {
   const canStart =
     snapshot &&
     (snapshot.phase === "idle" || snapshot.phase === "stopped" || snapshot.phase === "failed") &&
-    network?.state !== "recovery_required" &&
+    (network === undefined ||
+      network.state === "not_selected" ||
+      ((network.state === "stopped" || network.state === "interrupted") &&
+        network.detail.routing_restored)) &&
     devices.some(
       (device) => device.serial === serial && device.state === "ready",
     ) &&
