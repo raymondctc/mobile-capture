@@ -1,0 +1,5 @@
+node_modules/
+target/
+dist/
+src-tauri/binaries/collector-worker-*
+fixture-sessions/
