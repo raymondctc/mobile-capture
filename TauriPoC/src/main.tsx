@@ -7,8 +7,8 @@ type Action = "refresh" | "start" | "marker" | "stop" | "recover" | "export";
 const phaseNames = {
   idle: "Ready to capture",
   recording: "Recording",
-  stopped: "Stopped · collector verified",
-  failed: "Collector ended · partial capture",
+  stopped: "Stopped",
+  failed: "Capture ended · partial evidence",
   unverified_shutdown: "Shutdown unverified · export disabled",
   recovery_required: "Device routing needs recovery",
 } satisfies Record<Snapshot["phase"], string>;
@@ -525,6 +525,8 @@ function NetworkStatus({ network }: { network: NetworkView }) {
       {completion && (
         <>
           <p className="hint">{completion.routing_restored ? "Device routing restored." : "Device routing restoration unverified."} {completion.partial ? "Network evidence is partial." : "No network gaps reported by the collector."}</p>
+          {completion.forced && <p className="hint">A capture process required forced shutdown.</p>}
+          {completion.interrupted && <p className="hint">Capture was interrupted. Check the manifest for missing or incomplete sources.</p>}
           {completion.reasons.map((reason) => <p className="hint" key={reason}>{reason}</p>)}
         </>
       )}
