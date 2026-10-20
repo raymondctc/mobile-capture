@@ -180,6 +180,17 @@ impl Client {
     pub fn has_lease(&self) -> bool {
         self.lease.is_some()
     }
+    pub fn release(&mut self, lock: &Path) -> Result<()> {
+        self.lease.take();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match lease::FileLease::acquire_owner(lock) {
+                Ok(_) => return Ok(()),
+                Err(error) if Instant::now() >= deadline => return Err(error),
+                Err(_) => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+    }
 }
 fn connect(descriptor: &Descriptor) -> Result<TcpStream> {
     let stream = TcpStream::connect_timeout(

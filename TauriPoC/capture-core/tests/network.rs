@@ -600,6 +600,128 @@ fn request_stop(directory: &Path) {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn completed_network_handoff_waits_for_previous_guardian_release() {
+    let f = Fixture::new();
+    let (mut guardian, gui, directory) = crash_session(&f, None, false);
+    let mut owner = f.owner();
+    drop(gui);
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    let archive = owner.export().unwrap();
+    let original_archive = fs::read(&archive).unwrap();
+    assert!(guardian.try_wait().unwrap().is_none());
+    assert_eq!(
+        unsafe { libc::kill(guardian.id() as i32, libc::SIGSTOP) },
+        0
+    );
+    let control = directory.join("runtime/control.json");
+    let unavailable = directory.join("runtime/control.paused.json");
+    fs::rename(&control, &unavailable).unwrap();
+    let resume = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(250));
+        fs::rename(unavailable, control).unwrap();
+        assert_eq!(
+            unsafe { libc::kill(guardian.id() as i32, libc::SIGCONT) },
+            0
+        );
+        guardian.wait().unwrap()
+    });
+    let started = owner.start(StartRequest {
+        serial: "fixture-stream".into(),
+        whole_device_consent: true,
+        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+        limits: Limits::default(),
+    });
+    assert!(resume.join().unwrap().success());
+    assert!(matches!(started, Ok(Snapshot::Recording(_))), "{started:?}");
+    assert_ne!(owner.directory(), Some(directory.as_path()));
+    assert_eq!(fs::read(archive).unwrap(), original_archive);
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    assert!(owner.export().is_ok());
+}
+
+#[test]
+fn completed_network_handoff_refuses_other_client_and_preserves_export() {
+    let f = Fixture::new();
+    let (mut guardian, gui, directory) = crash_session(&f, None, false);
+    let mut owner = f.owner();
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    let archive = owner.export().unwrap();
+    let commands = f.state()["commands"].clone();
+    let locator = fs::read(f.paths.runtime_root.as_ref().unwrap().join("owner.lock")).unwrap();
+    let refusal = Instant::now();
+    let started = owner.start(StartRequest {
+        serial: "fixture-stream".into(),
+        whole_device_consent: true,
+        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+        limits: Limits::default(),
+    });
+    assert!(refusal.elapsed() < Duration::from_secs(8));
+    assert_eq!(
+        started.unwrap_err(),
+        "Another capture owns this connection or source"
+    );
+    assert!(guardian.try_wait().unwrap().is_none());
+    assert_eq!(owner.directory(), Some(directory.as_path()));
+    assert!(matches!(owner.snapshot().unwrap(), Snapshot::Stopped(_)));
+    assert_eq!(owner.export().unwrap(), archive);
+    assert_eq!(f.state()["commands"], commands);
+    assert_eq!(
+        fs::read(f.paths.runtime_root.as_ref().unwrap().join("owner.lock")).unwrap(),
+        locator
+    );
+    assert!(!f.paths.output_root.exists());
+    drop(gui);
+    assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
+    assert!(guardian.wait().unwrap().success());
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    assert!(owner.export().is_ok());
+}
+
+#[test]
+fn completed_network_handoff_repeats_network_then_log_capture() {
+    let f = Fixture::new();
+    let mut owner = f.owner();
+    let mut directories = std::collections::HashSet::new();
+    for _ in 0..3 {
+        assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
+        assert!(directories.insert(owner.directory().unwrap().to_owned()));
+        assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+        assert!(owner.export().is_ok());
+        let directory = owner.directory().unwrap().to_owned();
+        drop(owner);
+        wait_until(|| {
+            fs::read_to_string(directory.join("runtime/guardian-events.jsonl"))
+                .unwrap_or_default()
+                .contains("exit_quiescent_no_clients")
+        });
+        owner = f.owner();
+        assert!(owner.export().is_ok());
+    }
+    assert!(matches!(
+        owner
+            .start(StartRequest {
+                serial: "fixture-stream".into(),
+                whole_device_consent: true,
+                selection: CaptureSelection::Logs,
+                limits: Limits::default(),
+            })
+            .unwrap(),
+        Snapshot::Recording(_)
+    ));
+    assert!(directories.insert(owner.directory().unwrap().to_owned()));
+    owner.marker("log-only after network".into()).unwrap();
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    let archive = owner.export().unwrap();
+    let mut zip = zip::ZipArchive::new(fs::File::open(archive).unwrap()).unwrap();
+    assert!(zip.by_name("logs/device.log").is_ok());
+    assert!(zip.by_name("network/capture.mitm").is_err());
+    assert_eq!(f.state()["settings"], json!({}));
+    assert_eq!(f.state()["reverse"], json!({}));
+}
+
 #[test]
 fn crash_before_and_after_every_route_journal_command_and_verification_recovers() {
     let frozen = freeze_binaries();

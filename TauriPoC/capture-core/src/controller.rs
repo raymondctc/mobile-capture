@@ -51,13 +51,20 @@ impl CaptureOwner {
             if !matches!(snapshot, Snapshot::Stopped(_) | Snapshot::Failed(_)) {
                 return Err("Restore and stop the prior network session first".into());
             }
-            self.network.take();
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            let (lock, _) = network::namespace(&self.paths, self.fixture)?;
+            if let Some(client) = &mut self.network {
+                client.release(&lock)?;
+            }
         }
         match &request.selection {
             CaptureSelection::Logs => {
-                self.logs
-                    .start(request.serial, request.whole_device_consent, request.limits)
+                let snapshot = self.logs.start(
+                    request.serial,
+                    request.whole_device_consent,
+                    request.limits,
+                )?;
+                self.network = None;
+                Ok(snapshot)
             }
             CaptureSelection::LogsAndNetwork(consent) => {
                 if !consent.whole_device {
