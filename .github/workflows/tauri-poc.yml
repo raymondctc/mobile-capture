@@ -59,6 +59,9 @@ jobs:
           PY
       - run: cargo fmt --all -- --check
       - run: cargo clippy -p capture-poc-core --all-targets --locked -- -D warnings
+      - name: Probe Windows process lifetimes inside the Rust test Job
+        if: runner.os == 'Windows'
+        run: cargo test -p capture-poc-core --test network windows_launch_probe_runs_inside_rust_test_job --locked -- --exact --nocapture
       - run: npm run verify
       - name: Verify real mitmdump evidence
         run: python scripts/probe-network-engine.py
