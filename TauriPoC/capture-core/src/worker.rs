@@ -1,11 +1,11 @@
 use crate::{
     model::{now, Receipt, Result, StopReason, WorkerConfig},
-    process::{quiet, wait_bounded},
+    process::quiet,
 };
 use std::{
     fs::{self, OpenOptions},
     io::{BufRead, Read, Write},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
@@ -101,7 +101,16 @@ pub fn run() -> Result<()> {
     });
     let errors = thread::spawn(move || {
         let mut bytes = Vec::new();
-        let _ = stderr.by_ref().take(8192).read_to_end(&mut bytes);
+        let mut data = [0; 8192];
+        loop {
+            match stderr.read(&mut data) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let end = n.min(8192 - bytes.len());
+                    bytes.extend_from_slice(&data[..end]);
+                }
+            }
+        }
         String::from_utf8_lossy(&bytes).into_owned()
     });
     let started = Instant::now();
@@ -109,6 +118,7 @@ pub fn run() -> Result<()> {
     let mut records = 0u64;
     let mut last = None;
     let mut io_error = None;
+    let mut stdout_closed = false;
     let mut admit = |data: &[u8]| -> Result<Option<StopReason>> {
         let mut end = data.len().min((config.limits.bytes - bytes) as usize);
         let mut line_count = 0;
@@ -155,47 +165,77 @@ pub fn run() -> Result<()> {
                 io_error = Some(error);
                 break StopReason::ReadError;
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break StopReason::CollectorExit,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                stdout_closed = true;
+                break StopReason::CollectorExit;
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     };
-    #[cfg(unix)]
-    let exited_before_stop = {
-        // Keep the owned child unreaped until its group is signalled.
-        // Descendants can retain pipes after the leader exits.
-        let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
-        if unsafe {
-            libc::waitid(
-                libc::P_PID,
-                child.id() as libc::id_t,
-                &mut info,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-            )
-        } != 0
-        {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
-        unsafe { info.si_pid() != 0 }
-    };
-    #[cfg(windows)]
-    let exited_before_stop = child.try_wait().map_err(|e| e.to_string())?.is_some();
+    let exited_before_stop = collector_exited(&mut child)?;
     #[cfg(unix)]
     let stopped_by_worker = unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) } == 0;
     #[cfg(windows)]
     let stopped_by_worker = !exited_before_stop && child.kill().is_ok();
     let mut forced = cfg!(windows) && stopped_by_worker;
-    let status = match wait_bounded(&mut child, Duration::from_secs(1)) {
-        Ok(status) => status,
-        Err(_) => {
-            forced = true;
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
+    let mut capped = matches!(
+        reason,
+        StopReason::ByteLimit | StopReason::RecordLimit | StopReason::ReadError
+    );
+    let mut drain = |child: &mut Child| -> Result<bool> {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            if collector_exited(child)? && stdout_closed && errors.is_finished() {
+                return Ok(true);
             }
-            let _ = child.kill();
-            child.wait().map_err(|e| e.to_string())?
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(false);
+            }
+            let interval = remaining.min(Duration::from_millis(25));
+            if stdout_closed {
+                thread::sleep(interval);
+                continue;
+            }
+            match receive.recv_timeout(interval) {
+                Ok(Ok(data)) if !capped => match admit(&data) {
+                    Ok(Some(limit)) => {
+                        reason = limit;
+                        capped = true;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        io_error = Some(error);
+                        reason = StopReason::ReadError;
+                        capped = true;
+                    }
+                },
+                Ok(Err(error)) => {
+                    io_error = Some(error);
+                    reason = StopReason::ReadError;
+                    capped = true;
+                }
+                Ok(Ok(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => stdout_closed = true,
+            }
         }
     };
+    if !drain(&mut child)? {
+        forced = true;
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+        #[cfg(windows)]
+        let _ = child.kill();
+        if !drain(&mut child)? {
+            let _ = child.try_wait();
+            return Err(
+                "Collector did not exit and close its output before the shutdown deadline".into(),
+            );
+        }
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
     #[cfg(unix)]
     let expected_stop = {
         use std::os::unix::process::ExitStatusExt;
@@ -207,32 +247,6 @@ pub fn run() -> Result<()> {
         && (exited_before_stop || (!status.success() && !expected_stop))
     {
         reason = StopReason::CollectorExit;
-    }
-    let mut capped = matches!(
-        reason,
-        StopReason::ByteLimit | StopReason::RecordLimit | StopReason::ReadError
-    );
-    for chunk in receive {
-        match chunk {
-            Ok(data) if !capped => match admit(&data) {
-                Ok(Some(limit)) => {
-                    reason = limit;
-                    capped = true;
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    io_error = Some(error);
-                    reason = StopReason::ReadError;
-                    capped = true;
-                }
-            },
-            Err(error) => {
-                io_error = Some(error);
-                reason = StopReason::ReadError;
-                capped = true;
-            }
-            Ok(_) => {}
-        }
     }
     reader.join().map_err(|_| "Collector reader panicked")?;
     let mut stderr = errors
@@ -261,4 +275,28 @@ pub fn run() -> Result<()> {
     .map_err(|e| e.to_string())?;
     fs::rename(temporary, config.directory.join("receipt.json")).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn collector_exited(child: &mut Child) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        // The unreaped leader reserves its process group ID through escalation.
+        let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(unsafe { info.si_pid() != 0 })
+    }
+    #[cfg(windows)]
+    {
+        Ok(child.try_wait().map_err(|e| e.to_string())?.is_some())
+    }
 }
