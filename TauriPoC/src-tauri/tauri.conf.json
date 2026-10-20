@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Mobile Capture PoC",
+  "version": "0.1.0",
+  "identifier": "dev.mobilecapture.tauri-poc",
+  "build": {
+    "beforeDevCommand": "npm run prepare:worker && npm run web:dev",
+    "beforeBuildCommand": "npm run prepare:worker && npm run web:build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Mobile Capture PoC",
+        "width": 1200,
+        "height": 790,
+        "minWidth": 900,
+        "minHeight": 620
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "externalBin": [
+      "binaries/collector-worker"
+    ],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

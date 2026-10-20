@@ -1,0 +1,29 @@
+{
+  "name": "mobile-capture-tauri-poc",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "web:dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "web:build": "tsc --noEmit && vite build",
+    "build": "tauri build",
+    "prepare:worker": "node scripts/prepare-worker.mjs",
+    "fixture": "node scripts/fixture.mjs",
+    "verify": "node scripts/verify.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

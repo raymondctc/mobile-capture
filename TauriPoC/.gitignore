@@ -3,3 +3,4 @@ target/
 dist/
 src-tauri/binaries/collector-worker-*
 fixture-sessions/
+src-tauri/gen/

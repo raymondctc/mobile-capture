@@ -1,0 +1,50 @@
+name: Tauri capture PoC
+
+on:
+  pull_request:
+    paths: ['TauriPoC/**', '.github/workflows/tauri-poc.yml', 'CaptureRuntime/evidence.py']
+  push:
+    branches: ['codex/tauri-poc']
+    paths: ['TauriPoC/**', '.github/workflows/tauri-poc.yml', 'CaptureRuntime/evidence.py']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-and-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            bundle: app
+          - os: windows-latest
+            bundle: nsis
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: TauriPoC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: TauriPoC/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: npm ci
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -p capture-poc-core --all-targets --locked -- -D warnings
+      - run: npm run verify
+      - run: npm run build -- --bundles ${{ matrix.bundle }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-poc-${{ matrix.os }}
+          path: TauriPoC/target/release/bundle/
+          if-no-files-found: error
