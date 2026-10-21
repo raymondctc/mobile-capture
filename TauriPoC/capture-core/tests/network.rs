@@ -695,6 +695,159 @@ fn completed_network_handoff_refuses_other_client_and_preserves_export() {
 }
 
 #[test]
+fn completed_network_handoff_after_directory_moves_preserves_evidence() {
+    let f = Fixture::new();
+    let (mut guardian, gui, directory) = crash_session(&f, None, false);
+    let mut owner = f.owner();
+    drop(gui);
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    let archive = owner.export().unwrap();
+    let original_archive = fs::read(&archive).unwrap();
+    let moved = f.root.path().join("moved-completed-session");
+    fs::rename(&directory, &moved).unwrap();
+
+    let snapshot_error = owner.snapshot().unwrap_err();
+    let export_error = owner.export().unwrap_err();
+    let started = owner.start(StartRequest {
+        serial: "fixture-stream".into(),
+        whole_device_consent: true,
+        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+        limits: Limits::default(),
+    });
+    if started.is_err() {
+        fs::rename(&moved, &directory).unwrap();
+    }
+    assert!(matches!(started, Ok(Snapshot::Recording(_))), "{started:?}");
+    assert!(guardian.wait().unwrap().success());
+    assert!(!directory.exists());
+    assert_ne!(owner.directory(), Some(directory.as_path()));
+    for error in [snapshot_error, export_error] {
+        assert!(error.contains(&directory.display().to_string()), "{error}");
+        assert!(error.contains("missing"), "{error}");
+    }
+    assert_eq!(
+        fs::read(moved.join(archive.strip_prefix(&directory).unwrap())).unwrap(),
+        original_archive
+    );
+    owner.marker("capture after moved evidence".into()).unwrap();
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    assert!(owner.export().is_ok());
+    assert!(!directory.exists());
+    assert_eq!(f.state()["settings"], json!({}));
+    assert_eq!(f.state()["reverse"], json!({}));
+}
+
+#[test]
+fn missing_network_state_cannot_release_active_or_recovery_required_session() {
+    for recovery_required in [false, true] {
+        let f = Fixture::new();
+        let mut owner = f.owner();
+        f.start(&mut owner);
+        if recovery_required {
+            f.edit(|s| s["connected"] = json!(false));
+            assert!(matches!(
+                owner.stop().unwrap(),
+                StopOutcome::RecoveryRequired(_)
+            ));
+        }
+        let directory = owner.directory().unwrap().to_owned();
+        let commands = f.state()["commands"].clone();
+        let lock = f.paths.runtime_root.as_ref().unwrap().join("owner.lock");
+        let locator = fs::read(&lock).unwrap();
+        let moved = f.root.path().join("moved-unfinished-session");
+        fs::rename(&directory, &moved).unwrap();
+        let started = owner.start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+            limits: Limits::default(),
+        });
+        let unchanged_commands = f.state()["commands"] == commands;
+        let unchanged_locator = fs::read(&lock).unwrap() == locator;
+        let original_absent = !directory.exists();
+        let retained_directory = owner.directory() == Some(directory.as_path());
+        fs::rename(&moved, &directory).unwrap();
+        f.edit(|s| s["connected"] = json!(true));
+        assert!(matches!(owner.recover().unwrap(), StopOutcome::Ready(_)));
+
+        let error = started.unwrap_err();
+        assert!(error.contains(&directory.display().to_string()), "{error}");
+        assert!(error.contains("missing"), "{error}");
+        assert!(unchanged_commands);
+        assert!(unchanged_locator);
+        assert!(original_absent);
+        assert!(retained_directory);
+    }
+}
+
+#[test]
+fn offline_completion_cannot_authorize_handoff_after_state_disappears() {
+    let f = Fixture::new();
+    let (mut guardian, gui, directory) = crash_session(&f, None, false);
+    request_stop(&directory);
+    drop(gui);
+    assert!(guardian.wait().unwrap().success());
+    let mut owner = f.owner();
+    assert!(matches!(owner.snapshot().unwrap(), Snapshot::Stopped(_)));
+    let commands = f.state()["commands"].clone();
+    let moved = f.root.path().join("moved-offline-session");
+    fs::rename(&directory, &moved).unwrap();
+    let started = owner.start(StartRequest {
+        serial: "fixture-stream".into(),
+        whole_device_consent: true,
+        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+        limits: Limits::default(),
+    });
+    let original_absent = !directory.exists();
+    fs::rename(&moved, &directory).unwrap();
+    assert!(started.is_err(), "{started:?}");
+    assert_eq!(owner.directory(), Some(directory.as_path()));
+    assert_eq!(f.state()["commands"], commands);
+    assert!(original_absent);
+}
+
+#[test]
+fn missing_completed_state_still_requires_actual_owner_lease_handoff() {
+    let f = Fixture::new();
+    let (mut guardian, gui, directory) = crash_session(&f, None, false);
+    let mut owner = f.owner();
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    let archive = owner.export().unwrap();
+    let original_archive = fs::read(&archive).unwrap();
+    let commands = f.state()["commands"].clone();
+    let moved = f.root.path().join("moved-shared-session");
+    fs::rename(&directory, &moved).unwrap();
+    let started = owner.start(StartRequest {
+        serial: "fixture-stream".into(),
+        whole_device_consent: true,
+        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+        limits: Limits::default(),
+    });
+    if started.as_ref().err().map(String::as_str)
+        != Some("Another capture owns this connection or source")
+    {
+        fs::rename(&moved, &directory).unwrap();
+    }
+    assert_eq!(
+        started.unwrap_err(),
+        "Another capture owns this connection or source"
+    );
+    assert!(guardian.try_wait().unwrap().is_none());
+    assert_eq!(owner.directory(), Some(directory.as_path()));
+    assert_eq!(f.state()["commands"], commands);
+    assert!(!directory.exists());
+    drop(gui);
+    assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
+    assert!(guardian.wait().unwrap().success());
+    assert_eq!(
+        fs::read(moved.join(archive.strip_prefix(&directory).unwrap())).unwrap(),
+        original_archive
+    );
+    assert!(!directory.exists());
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+}
+
+#[test]
 fn completed_network_handoff_repeats_network_then_log_capture() {
     let f = Fixture::new();
     let mut owner = f.owner();
