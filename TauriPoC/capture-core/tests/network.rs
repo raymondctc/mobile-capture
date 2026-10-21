@@ -848,6 +848,36 @@ fn missing_completed_state_still_requires_actual_owner_lease_handoff() {
 }
 
 #[test]
+fn missing_completed_state_can_retry_a_launch_failure_before_pending_routing() {
+    let frozen = freeze_binaries();
+    let f = Fixture::from_binaries(Some(frozen.path()));
+    let (mut guardian, gui, directory) = crash_session(&f, None, false);
+    let mut owner = f.owner();
+    drop(gui);
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    let moved = f.root.path().join("moved-before-launch-failure");
+    fs::rename(&directory, &moved).unwrap();
+    let unavailable = frozen.path().join("unavailable-guardian");
+    fs::rename(&f.tools.guardian, &unavailable).unwrap();
+    let started = owner.start(StartRequest {
+        serial: "fixture-stream".into(),
+        whole_device_consent: true,
+        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+        limits: Limits::default(),
+    });
+    fs::rename(&unavailable, &f.tools.guardian).unwrap();
+    assert!(started
+        .unwrap_err()
+        .contains("Cannot launch independent guardian"));
+    assert!(guardian.wait().unwrap().success());
+    assert_eq!(owner.directory(), Some(directory.as_path()));
+    assert!(!directory.exists());
+    assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
+    assert!(!directory.exists());
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+}
+
+#[test]
 fn completed_network_handoff_repeats_network_then_log_capture() {
     let f = Fixture::new();
     let mut owner = f.owner();

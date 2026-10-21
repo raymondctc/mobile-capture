@@ -83,12 +83,15 @@ fn receive_with_timeout<T: DeserializeOwned>(
 pub(crate) struct Client {
     pub directory: PathBuf,
     lease: Option<TcpStream>,
+    completion: Option<AuthenticatedCompletion>,
 }
+struct AuthenticatedCompletion;
 impl Client {
     pub fn detached(directory: PathBuf) -> Self {
         Self {
             directory,
             lease: None,
+            completion: None,
         }
     }
     pub fn attach(directory: PathBuf) -> Result<Self> {
@@ -101,12 +104,18 @@ impl Client {
                 command: Action::Attach,
             },
         )?;
-        match receive_with_timeout(&mut stream, Duration::from_secs(40))? {
-            Reply::Snapshot(_) => Ok(Self {
-                directory,
-                lease: Some(stream),
-            }),
-            Reply::Error(e) => Err(e),
+        let reply = receive_with_timeout(&mut stream, Duration::from_secs(40))?;
+        match &reply {
+            Reply::Snapshot(_) => {
+                let mut client = Self {
+                    directory,
+                    lease: Some(stream),
+                    completion: None,
+                };
+                client.observe(&reply);
+                Ok(client)
+            }
+            Reply::Error(e) => Err(e.clone()),
             _ => Err("Unexpected guardian attachment response".into()),
         }
     }
@@ -162,7 +171,7 @@ impl Client {
             thread::sleep(Duration::from_millis(20));
         }
     }
-    pub fn request(&self, command: Action) -> Result<Reply> {
+    pub fn request(&mut self, command: Action) -> Result<Reply> {
         let descriptor: Descriptor = lease::read(&self.directory.join("runtime/control.json"))?;
         let mut stream = connect(&descriptor)?;
         send(
@@ -172,7 +181,30 @@ impl Client {
                 command,
             },
         )?;
-        receive_with_timeout(&mut stream, Duration::from_secs(40))
+        let reply = receive_with_timeout(&mut stream, Duration::from_secs(40))?;
+        self.observe(&reply);
+        Ok(reply)
+    }
+    fn observe(&mut self, reply: &Reply) {
+        let view = match reply {
+            Reply::Snapshot(Snapshot::Stopped(view) | Snapshot::Failed(view))
+            | Reply::Stop(StopOutcome::Ready(view)) => Some(view),
+            Reply::Snapshot(_) | Reply::Stop(_) => None,
+            _ => return,
+        };
+        self.completion = view
+            .filter(|view| {
+                view.directory == self.directory
+                    && matches!(
+                        &view.network,
+                        NetworkView::Stopped(completion) | NetworkView::Interrupted(completion)
+                            if completion.routing_restored
+                    )
+            })
+            .map(|_| AuthenticatedCompletion);
+    }
+    pub fn has_authenticated_completion(&self) -> bool {
+        self.completion.is_some()
     }
     pub fn has_lease(&self) -> bool {
         self.lease.is_some()

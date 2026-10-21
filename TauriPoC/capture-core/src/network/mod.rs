@@ -648,7 +648,9 @@ fn run_inner(path: &Path) -> Result<()> {
         });
         if attached && owner_present && clients.is_empty() {
             owner_present = false;
-            let _ = guardian.stop();
+            if guardian.sealed.is_none() {
+                let _ = guardian.stop();
+            }
         }
         if attached
             && (guardian.header.phase == "recording"

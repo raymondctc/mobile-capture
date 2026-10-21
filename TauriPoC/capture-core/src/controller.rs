@@ -46,10 +46,16 @@ impl CaptureOwner {
         if !request.whole_device_consent {
             return Err("Explicit consent to whole-device Android logs is required".into());
         }
-        if self.network.is_some() {
-            let snapshot = self.snapshot()?;
-            if !matches!(snapshot, Snapshot::Stopped(_) | Snapshot::Failed(_)) {
-                return Err("Restore and stop the prior network session first".into());
+        if let Some(client) = &self.network {
+            if missing_network_state(client)? {
+                if !client.has_authenticated_completion() {
+                    return Err(missing_state_error(client));
+                }
+            } else {
+                let snapshot = self.snapshot()?;
+                if !matches!(snapshot, Snapshot::Stopped(_) | Snapshot::Failed(_)) {
+                    return Err("Restore and stop the prior network session first".into());
+                }
             }
             let (lock, _) = network::namespace(&self.paths, self.fixture)?;
             if let Some(client) = &mut self.network {
@@ -121,7 +127,10 @@ impl CaptureOwner {
         }
     }
     pub fn snapshot(&mut self) -> Result<Snapshot> {
-        if let Some(client) = &self.network {
+        if let Some(client) = &mut self.network {
+            if missing_network_state(client)? {
+                return Err(missing_state_error(client));
+            }
             match client.request(Action::Snapshot) {
                 Ok(Reply::Snapshot(s)) => Ok(s),
                 Ok(Reply::Error(e)) => Err(e),
@@ -132,7 +141,7 @@ impl CaptureOwner {
         }
     }
     pub fn marker(&mut self, text: String) -> Result<Snapshot> {
-        if let Some(client) = &self.network {
+        if let Some(client) = &mut self.network {
             match client.request(Action::Marker(text))? {
                 Reply::Snapshot(s) => Ok(s),
                 Reply::Error(e) => Err(e),
@@ -143,7 +152,7 @@ impl CaptureOwner {
         }
     }
     pub fn stop(&mut self) -> Result<StopOutcome> {
-        if let Some(client) = &self.network {
+        if let Some(client) = &mut self.network {
             match client.request(Action::Stop) {
                 Ok(Reply::Stop(s)) => Ok(s),
                 Ok(Reply::Error(e)) => Err(e),
@@ -154,7 +163,7 @@ impl CaptureOwner {
         }
     }
     pub fn recover(&mut self) -> Result<StopOutcome> {
-        let client = self.network.as_ref().ok_or("No pending network session")?;
+        let client = self.network.as_mut().ok_or("No pending network session")?;
         if client.has_lease() {
             if let Ok(Reply::Stop(s)) = client.request(Action::Recover) {
                 return Ok(s);
@@ -174,7 +183,10 @@ impl CaptureOwner {
         if self.network.is_none() {
             return self.logs.export();
         }
-        let client = self.network.as_ref().ok_or("Network capture missing")?;
+        let client = self.network.as_mut().ok_or("Network capture missing")?;
+        if missing_network_state(client)? {
+            return Err(missing_state_error(client));
+        }
         let directory = client.directory.clone();
         let mut reply = client.request(Action::Export);
         if reply.is_err() && network::sealed_on_disk(&directory) {
@@ -183,7 +195,7 @@ impl CaptureOwner {
             }
             reply = self
                 .network
-                .as_ref()
+                .as_mut()
                 .ok_or("Recovered capture missing")?
                 .request(Action::Export);
         }
@@ -198,6 +210,37 @@ impl CaptureOwner {
             .as_ref()
             .map(|c| c.directory.as_path())
             .or_else(|| self.logs.directory())
+    }
+}
+fn missing_network_state(client: &Client) -> Result<bool> {
+    for path in [
+        client.directory.join("session.json"),
+        client.directory.join("runtime/bootstrap.json"),
+    ] {
+        match fs::metadata(&path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => {
+                return Err(format!(
+                    "Cannot inspect capture state at {}. {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    Ok(false)
+}
+fn missing_state_error(client: &Client) -> String {
+    if client.has_authenticated_completion() {
+        format!(
+            "Completed capture files are missing at {}. Evidence cannot be exported. You can start a new capture.",
+            client.directory.display()
+        )
+    } else {
+        format!(
+            "Capture state is missing at {}. Routing restoration cannot be verified. Restore the session files and retry recovery before starting another capture.",
+            client.directory.display()
+        )
     }
 }
 fn outcome(snapshot: Snapshot) -> Result<StopOutcome> {
