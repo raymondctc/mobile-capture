@@ -149,6 +149,99 @@ fn fixture_route_exact_values_marker_receipt_and_sealed_export() {
         .iter()
         .all(|v| !v.to_string().contains("kill-server")));
 }
+
+#[test]
+fn recent_preview_retains_network_after_log_flood_and_export_keeps_every_record() {
+    let f = Fixture::new();
+    let mut owner = f.owner();
+    owner
+        .start(StartRequest {
+            serial: "fixture-flood".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+            limits: Limits {
+                records: 600,
+                ..Limits::default()
+            },
+        })
+        .unwrap();
+    let directory = owner.directory().unwrap().to_owned();
+    let records = ["request", "response"]
+        .map(|kind| {
+            format!(
+                "{}\n",
+                json!({"timestamp":"2026-10-15T00:00:01.500000Z","kind":kind,"summary":format!("fixture {kind}"),"detail":{},"clock_uncertainty_ms":1})
+            )
+        })
+        .concat();
+    fs::write(directory.join("network/events.jsonl"), &records).unwrap();
+    fs::write(
+        directory.join("runtime/coverage.json"),
+        serde_json::to_vec(&CoverageView {
+            decoded_http_events: 2,
+            ..CoverageView::default()
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let mut live = None;
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        if let Snapshot::Recording(view) = owner.snapshot().unwrap() {
+            if view.logs > 500 {
+                live = Some(view);
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    let stopped = owner.stop().unwrap();
+    let archive = owner.export().unwrap();
+    let mut zip = zip::ZipArchive::new(fs::File::open(archive).unwrap()).unwrap();
+    let mut raw = String::new();
+    zip.by_name("network/events.jsonl")
+        .unwrap()
+        .read_to_string(&mut raw)
+        .unwrap();
+    assert_eq!(raw, records);
+    let mut normalized = String::new();
+    zip.by_name("timeline/events.jsonl")
+        .unwrap()
+        .read_to_string(&mut normalized)
+        .unwrap();
+    let exported: Vec<Event> = normalized
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let live = live.expect("log flood must exceed the 500-event preview");
+    assert_eq!(
+        exported.iter().filter(|e| e.source == "logs").count(),
+        live.logs
+    );
+    assert_eq!(exported.iter().filter(|e| e.source == "network").count(), 2);
+    let StopOutcome::Ready(stopped) = stopped else {
+        panic!("verified restoration required")
+    };
+    assert_eq!(stopped.logs, live.logs);
+    for view in [live, stopped] {
+        assert_eq!(view.markers, 0);
+        let coverage = match &view.network {
+            NetworkView::Recording(coverage) => coverage,
+            NetworkView::Stopped(completion) => &completion.coverage,
+            other => panic!("unexpected network state {other:?}"),
+        };
+        assert_eq!(coverage.decoded_http_events, 2);
+        assert!(view.events.len() <= 500);
+        assert_eq!(
+            view.events.iter().filter(|e| e.source == "network").count(),
+            2,
+            "older network events must remain in a {}-event preview after {} logs",
+            view.events.len(),
+            view.logs
+        );
+    }
+}
+
 #[test]
 fn disconnect_and_conflict_keep_listener_and_restore_on_retry() {
     let f = Fixture::new();
