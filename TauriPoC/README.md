@@ -1,6 +1,6 @@
 # Run the Tauri Android capture PoC
 
-This isolated desktop app captures whole-device Android logs after explicit consent. Network capture is optional and requires separate consent. The timeline displays the latest 500 events. The evidence ZIP contains admitted raw sources, normalized events, markers, context, coverage gaps, and a schema 1 manifest with checksums.
+This isolated desktop app captures whole-device Android logs after explicit consent. Network capture is optional and requires separate consent. The timeline previews up to 500 recent events shared across sources, retaining each source's newest events. Sources with fewer events leave capacity for busier sources. The evidence ZIP contains admitted raw sources, normalized events, markers, context, coverage gaps, and a schema 1 manifest with checksums.
 
 App scope and iPhone capture are unavailable. This app does not replace the Swift application.
 
@@ -19,7 +19,7 @@ The PATH line above is specific to the development Mac. On Windows PowerShell, r
 
 Connect an Android device or start an emulator. Enable USB debugging and accept the authorization prompt. Refresh devices, select a ready device, and check the whole-device logs consent box. To capture network traffic, also check the separate network consent box. Starting network mode configures temporary device proxy routing. The app shows the session certificate path and synthetic check URL supplied by the running engine. Install and trust that certificate on the Android device manually. The app does not alter host trust settings. HTTPS content whose trust or decryption fails is not observed as decoded HTTP.
 
-Add a marker to record a reproduction step. Search and source filtering cover the displayed recent window. Selecting a network event shows decoded details and at most 1024 original body bytes as a labelled preview. Binary previews appear as base64. Admitted complete bytes may be retained in the ZIP; unavailable bodies and coverage gaps appear in the manifest. A TLS error count does not mean HTTP content was observed.
+Add a marker to record a reproduction step. Search and source filtering cover the displayed preview. Selecting a network event shows decoded details and at most 1024 original body bytes as a labelled preview. Binary previews appear as base64. Admitted complete bytes may be retained in the ZIP; unavailable bodies and coverage gaps appear in the manifest. A TLS error count does not mean HTTP content was observed.
 
 Choose **Stop** to restore device routing and wait for source shutdown. If recovery is required, keep the device connected and choose **Retry recovery**. Export and a new capture stay disabled until restoration and source verification finish. A verified partial capture can be exported, with its limitations recorded in the manifest. Review raw evidence before sharing it.
 

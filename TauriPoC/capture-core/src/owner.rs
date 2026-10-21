@@ -224,9 +224,7 @@ impl LogSession {
         let mut events = timeline::events(live_logs, &markers, &session.started_at);
         let log_count = events.iter().filter(|event| event.source == "logs").count();
         let marker_count = events.len() - log_count;
-        if events.len() > 500 {
-            events.drain(..events.len() - 500);
-        }
+        timeline::retain_recent(&mut events);
         let receipt = if let Lifecycle::Finished(receipt) = &session.lifecycle {
             Some(receipt.clone())
         } else {

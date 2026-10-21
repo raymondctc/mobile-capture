@@ -300,12 +300,9 @@ impl Guardian {
             &self.header.started_at,
             self.header.completion.is_none(),
         )?);
-        timeline::sort(&mut events);
         let log_count = events.iter().filter(|e| e.source == "logs").count();
         let marker_count = events.iter().filter(|e| e.source == "marker").count();
-        if events.len() > 500 {
-            events.drain(..events.len() - 500);
-        }
+        timeline::retain_recent(&mut events);
         for event in &mut events {
             timeline::preview(event);
         }

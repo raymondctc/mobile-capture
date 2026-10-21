@@ -286,7 +286,7 @@ function App() {
               {networkSelected && (
                 <div>
                   <dt>Network events</dt>
-                  <dd>{events.filter((event) => event.source === "network").length.toLocaleString()} in recent timeline</dd>
+                  <dd>{events.filter((event) => event.source === "network").length.toLocaleString()} in preview</dd>
                 </div>
               )}
               <div>
@@ -322,7 +322,7 @@ function App() {
             <div>
               <h2>Timeline</h2>
               <p>
-                Latest 500 events. Search covers this recent window. Export
+                Up to 500 recent events shared across sources. Search covers this preview. Export
                 includes all admitted evidence.
               </p>
             </div>
@@ -330,8 +330,8 @@ function App() {
           </div>
           <div className="toolbar">
             <input
-              aria-label="Search recent events"
-              placeholder="Search recent events…"
+              aria-label="Search preview events"
+              placeholder="Search preview events…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -395,7 +395,7 @@ function App() {
                 <h3>
                   {current
                     ? search || filter !== "all"
-                      ? "No matching recent events"
+                      ? "No matching preview events"
                       : active
                         ? "Waiting for events"
                         : "No events were admitted"

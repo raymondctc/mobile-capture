@@ -245,6 +245,39 @@ pub(crate) fn sort(events: &mut [Event]) {
         ))
     });
 }
+
+pub(crate) fn retain_recent(events: &mut Vec<Event>) {
+    sort(events);
+    if events.len() <= 500 {
+        return;
+    }
+    let mut omitted = [0usize; 3];
+    for event in events.iter() {
+        omitted[usize::from(source_order(&event.source))] += 1;
+    }
+    let mut slots = 500;
+    while slots > 0 {
+        for count in &mut omitted {
+            if *count > 0 {
+                *count -= 1;
+                slots -= 1;
+                if slots == 0 {
+                    break;
+                }
+            }
+        }
+    }
+    events.retain(|event| {
+        let count = &mut omitted[usize::from(source_order(&event.source))];
+        if *count == 0 {
+            true
+        } else {
+            *count -= 1;
+            false
+        }
+    });
+}
+
 fn source_order(source: &str) -> u8 {
     match source {
         "logs" => 0,
@@ -327,7 +360,96 @@ pub(crate) fn preview(event: &mut Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::*;
     use base64::{engine::general_purpose::STANDARD, Engine};
+
+    fn preview_event(source: &str, number: usize) -> Event {
+        Event {
+            id: format!("{source}-{number}"),
+            timestamp: "2026-10-15T00:00:02.000000Z".into(),
+            original_timestamp: None,
+            received_at: None,
+            source: source.into(),
+            kind: source.into(),
+            summary: "fixture event".into(),
+            raw_ref: format!("{source}#L{number}"),
+            detail: json!({}),
+            clock_uncertainty_ms: None,
+        }
+    }
+
+    #[test]
+    fn recent_preview_fairly_shares_capacity_and_retains_each_sources_newest_events() {
+        let mut events: Vec<_> = ["logs", "network", "marker"]
+            .into_iter()
+            .flat_map(|source| (1..=600).map(move |number| preview_event(source, number)))
+            .collect();
+        let mut reversed = events.clone();
+        reversed.reverse();
+        retain_recent(&mut events);
+        retain_recent(&mut reversed);
+        assert_eq!(events.len(), 500);
+        assert_eq!(
+            events.iter().map(|event| &event.id).collect::<Vec<_>>(),
+            reversed.iter().map(|event| &event.id).collect::<Vec<_>>()
+        );
+        let counts = ["logs", "network", "marker"].map(|source| {
+            let numbers: Vec<_> = events
+                .iter()
+                .filter(|event| event.source == source)
+                .map(line)
+                .collect();
+            assert_eq!(numbers, (601 - numbers.len()..=600).collect::<Vec<_>>());
+            numbers.len()
+        });
+        assert!(counts.iter().max().unwrap() - counts.iter().min().unwrap() <= 1);
+    }
+
+    #[test]
+    fn recent_preview_redistributes_unused_capacity_to_busy_sources() {
+        let mut events: Vec<_> = (1..=700)
+            .map(|number| preview_event("logs", number))
+            .collect();
+        events.extend([preview_event("network", 1), preview_event("marker", 1)]);
+        retain_recent(&mut events);
+        assert_eq!(events.len(), 500);
+        assert_eq!(events.first().unwrap().raw_ref, "logs#L203");
+        assert_eq!(events[497].raw_ref, "logs#L700");
+        assert_eq!(events[498].source, "network");
+        assert_eq!(events[499].source, "marker");
+    }
+
+    #[test]
+    fn recent_preview_below_capacity_preserves_all_events_and_chronological_tiebreaks() {
+        let mut early = preview_event("marker", 3);
+        early.timestamp = "2026-10-15T00:00:01.000000Z".into();
+        let mut events = vec![
+            preview_event("marker", 2),
+            preview_event("network", 1),
+            preview_event("logs", 2),
+            preview_event("marker", 1),
+            preview_event("logs", 1),
+            preview_event("network", 2),
+            early,
+        ];
+        retain_recent(&mut events);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "marker-3",
+                "logs-1",
+                "logs-2",
+                "network-1",
+                "network-2",
+                "marker-1",
+                "marker-2"
+            ]
+        );
+    }
+
     #[test]
     fn network_normalization_matches_the_schema_one_python_normalizer() {
         let directory = tempfile::tempdir().unwrap();
@@ -396,6 +518,29 @@ print(json.dumps(evidence._read_events(root, {"started_at": sys.argv[3]}, raw_fi
             vec![255; 1024]
         );
         assert_eq!(event.detail["response_body"]["unavailable"], true);
-        assert!(serde_json::to_vec(&vec![event; 500]).unwrap().len() < 4 * 1024 * 1024);
+        let mut events = vec![event; 600];
+        retain_recent(&mut events);
+        assert_eq!(events.len(), 500);
+        let reply = crate::network::Reply::Snapshot(Snapshot::Recording(SessionView {
+            id: "fixture-session".into(),
+            device: Device {
+                serial: "fixture-stream".into(),
+                name: "Fixture Android".into(),
+                state: DeviceState::Ready,
+            },
+            directory: "fixture-session".into(),
+            started_at: "2026-10-20T00:00:00Z".into(),
+            limits: Limits::default(),
+            fixture: true,
+            bytes: 0,
+            logs: 0,
+            markers: 0,
+            events,
+            receipt: None,
+            archive: None,
+            warnings: vec![],
+            network: NetworkView::Recording(CoverageView::default()),
+        }));
+        assert!(serde_json::to_vec(&reply).unwrap().len() < 4 * 1024 * 1024);
     }
 }

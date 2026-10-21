@@ -187,13 +187,16 @@ fn recent_preview_retains_network_after_log_flood_and_export_keeps_every_record(
     let mut live = None;
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+        if !directory.join("receipt.json").is_file() {
+            continue;
+        }
         if let Snapshot::Recording(view) = owner.snapshot().unwrap() {
             if view.logs > 500 {
                 live = Some(view);
                 break;
             }
         }
-        thread::sleep(Duration::from_millis(25));
     }
     let stopped = owner.stop().unwrap();
     let archive = owner.export().unwrap();

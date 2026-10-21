@@ -613,13 +613,28 @@ fn recent_window_is_bounded_while_export_contains_every_record() {
             ..Limits::default()
         },
     );
+    fs::write(
+        owner.directory().unwrap().join("timeline/markers.jsonl"),
+        b"{\"timestamp\":\"2026-10-15T00:00:01.500000Z\",\"text\":\"older fixture marker\"}\n",
+    )
+    .unwrap();
     let state = wait(&mut owner, |v| v["phase"] == "stopped");
     assert_eq!(state["session"]["events"].as_array().unwrap().len(), 500);
+    assert_eq!(state["session"]["markers"], 1);
+    assert_eq!(
+        state["session"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["source"] == "marker")
+            .count(),
+        1
+    );
     let entries = zip_entries(&owner.export().unwrap());
     let count = entries["timeline/events.jsonl"]
         .split(|b| *b == b'\n')
         .filter(|line| !line.is_empty())
         .count();
-    assert_eq!(count as u64, state["session"]["logs"].as_u64().unwrap());
+    assert_eq!(count as u64, state["session"]["logs"].as_u64().unwrap() + 1);
     assert!(count > 500);
 }
