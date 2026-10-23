@@ -433,7 +433,28 @@ impl LogSession {
         }
         self.snapshot()
     }
+    pub fn prepare_save(&mut self) -> Result<crate::save::SaveHandle> {
+        self.refresh()?;
+        let session = self.session.as_ref().ok_or("There is no capture to save")?;
+        if !matches!(session.lifecycle, Lifecycle::Finished(_)) || session.quiescent.is_none() {
+            return Err("Save requires verified collector shutdown".into());
+        }
+        verify_log_proof(&session.directory)?;
+        crate::save::SaveHandle::create(&session.directory)
+    }
+    pub fn export_with_control(&mut self, control: &crate::save::SaveHandle) -> Result<PathBuf> {
+        self.refresh()?;
+        let session = self.session.as_ref().ok_or("There is no capture to save")?;
+        control.matches(&session.directory)?;
+        if !matches!(session.lifecycle, Lifecycle::Finished(_)) || session.quiescent.is_none() {
+            return Err("Save requires verified collector shutdown".into());
+        }
+        control.run(|| self.export_impl(Some(control)))
+    }
     pub fn export(&mut self) -> Result<PathBuf> {
+        self.export_impl(None)
+    }
+    fn export_impl(&mut self, control: Option<&crate::save::SaveHandle>) -> Result<PathBuf> {
         self.refresh()?;
         let session = self
             .session
@@ -442,16 +463,32 @@ impl LogSession {
         let Lifecycle::Finished(receipt) = &session.lifecycle else {
             return Err("Export requires a verified stopped collector".into());
         };
-        verify_log_proof(&session.directory)?;
-        let archive = crate::evidence::export(
-            &session.directory,
-            &session.id,
-            &session.device,
-            &session.started_at,
-            &session.limits,
-            receipt,
-            self.fixture,
-        )?;
+        if let Some(control) = control {
+            control.matches(&session.directory)?;
+        }
+        verify_log_proof_controlled(&session.directory, control)?;
+        let archive = match control {
+            Some(control) => crate::evidence::export_controlled(
+                &session.directory,
+                &session.id,
+                &session.device,
+                &session.started_at,
+                &session.limits,
+                receipt,
+                self.fixture,
+                None,
+                control,
+            )?,
+            None => crate::evidence::export(
+                &session.directory,
+                &session.id,
+                &session.device,
+                &session.started_at,
+                &session.limits,
+                receipt,
+                self.fixture,
+            )?,
+        };
         session.archive = Some(archive.clone());
         Ok(archive)
     }
@@ -466,6 +503,12 @@ struct LogProof {
     hashes: std::collections::BTreeMap<String, String>,
 }
 fn log_proof(directory: &Path) -> Result<LogProof> {
+    log_proof_controlled(directory, None)
+}
+fn log_proof_controlled(
+    directory: &Path,
+    control: Option<&crate::save::SaveHandle>,
+) -> Result<LogProof> {
     let mut hashes = std::collections::BTreeMap::new();
     for path in [
         "capture.json",
@@ -473,19 +516,25 @@ fn log_proof(directory: &Path) -> Result<LogProof> {
         "logs/device.log",
         "timeline/markers.jsonl",
     ] {
-        let bytes = files::read(directory, path)?
+        let bytes = crate::save::read(directory, path, control)?
             .ok_or_else(|| format!("Stopped source missing: {path}"))?;
-        hashes.insert(path.to_owned(), timeline::hash(&bytes));
+        hashes.insert(path.to_owned(), crate::save::hash(&bytes, control)?);
     }
     Ok(LogProof { version: 1, hashes })
 }
 fn verify_log_proof(directory: &Path) -> Result<()> {
+    verify_log_proof_controlled(directory, None)
+}
+fn verify_log_proof_controlled(
+    directory: &Path,
+    control: Option<&crate::save::SaveHandle>,
+) -> Result<()> {
     let saved: LogProof = serde_json::from_slice(
         &files::read(directory, "runtime/log-completion.json")?
             .ok_or("Saved logs have no private verified completion proof")?,
     )
     .map_err(|e| e.to_string())?;
-    if saved != log_proof(directory)? {
+    if saved != log_proof_controlled(directory, control)? {
         return Err("Saved logs differ from verified completion proof".into());
     }
     Ok(())

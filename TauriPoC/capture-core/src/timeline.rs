@@ -14,12 +14,21 @@ pub fn hash(data: &[u8]) -> String {
 }
 
 pub fn events(logs: &[u8], markers: &[u8], started_at: &str) -> Vec<Event> {
+    events_controlled(logs, markers, started_at, None).expect("uncontrolled normalization")
+}
+pub(crate) fn events_controlled(
+    logs: &[u8],
+    markers: &[u8],
+    started_at: &str,
+    control: Option<&crate::save::SaveHandle>,
+) -> crate::model::Result<Vec<Event>> {
     let mut output = Vec::new();
     for (source, path, bytes) in [
         ("logs", "logs/device.log", logs),
         ("marker", "timeline/markers.jsonl", markers),
     ] {
-        for (index, raw) in records(bytes).into_iter().enumerate() {
+        for (index, raw) in records(bytes, control)?.into_iter().enumerate() {
+            crate::save::check(control)?;
             if raw.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }
@@ -81,7 +90,7 @@ pub fn events(logs: &[u8], markers: &[u8], started_at: &str) -> Vec<Event> {
             let mut identity = format!("{source}\0{path}\0{number}\0").into_bytes();
             identity.extend_from_slice(raw);
             output.push(Event {
-                id: format!("event-{}", &hash(&identity)[..24]),
+                id: format!("event-{}", &crate::save::hash(&identity, control)?[..24]),
                 timestamp,
                 original_timestamp: original,
                 received_at: None,
@@ -94,22 +103,10 @@ pub fn events(logs: &[u8], markers: &[u8], started_at: &str) -> Vec<Event> {
             });
         }
     }
-    output.sort_by(|a, b| {
-        (
-            &a.timestamp,
-            if a.source == "logs" { 0 } else { 2 },
-            line(a),
-            &a.id,
-        )
-            .cmp(&(
-                &b.timestamp,
-                if b.source == "logs" { 0 } else { 2 },
-                line(b),
-                &b.id,
-            ))
-    });
-    output
+    sort_controlled(&mut output, control)?;
+    Ok(output)
 }
+
 fn line(event: &Event) -> usize {
     event
         .raw_ref
@@ -119,11 +116,19 @@ fn line(event: &Event) -> usize {
         .unwrap_or(0)
 }
 
-fn records(bytes: &[u8]) -> Vec<&[u8]> {
+fn records<'a>(
+    bytes: &'a [u8],
+    control: Option<&crate::save::SaveHandle>,
+) -> crate::model::Result<Vec<&'a [u8]>> {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut index = 0;
+    let mut checkpoint = 0;
     while index < bytes.len() {
+        if index >= checkpoint {
+            crate::save::check(control)?;
+            checkpoint = index + crate::save::CHUNK;
+        }
         if bytes[index] == b'\r' || bytes[index] == b'\n' {
             lines.push(&bytes[start..index]);
             if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
@@ -136,7 +141,7 @@ fn records(bytes: &[u8]) -> Vec<&[u8]> {
     if start < bytes.len() {
         lines.push(&bytes[start..]);
     }
-    lines
+    Ok(lines)
 }
 
 pub(crate) fn network_events(
@@ -144,13 +149,24 @@ pub(crate) fn network_events(
     started_at: &str,
     live: bool,
 ) -> crate::model::Result<Vec<Event>> {
+    network_events_controlled(directory, started_at, live, None)
+}
+pub(crate) fn network_events_controlled(
+    directory: &std::path::Path,
+    started_at: &str,
+    live: bool,
+    control: Option<&crate::save::SaveHandle>,
+) -> crate::model::Result<Vec<Event>> {
     use std::io::{BufRead, Read};
     let file = match crate::files::open(directory, "network/events.jsonl") {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(e) => return Err(e.to_string()),
     };
-    let mut reader = std::io::BufReader::new(file);
+    let mut reader = std::io::BufReader::with_capacity(
+        crate::save::CHUNK,
+        crate::save::CheckedReader::new(file, control),
+    );
     let mut output = vec![];
     let mut line = 0;
     loop {
@@ -175,7 +191,12 @@ pub(crate) fn network_events(
         if bytes.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let value:serde_json::Value=serde_json::from_slice(&bytes).unwrap_or(json!({"kind":"parse_error","summary":"Unparsed network event","detail":{"parse_error":"Invalid network JSON record"}}));
+        let parsed = serde_json::from_reader(std::io::BufReader::with_capacity(
+            crate::save::CHUNK,
+            crate::save::CheckedReader::new(std::io::Cursor::new(&bytes), control),
+        ));
+        crate::save::check(control)?;
+        let value: serde_json::Value = parsed.unwrap_or(json!({"kind":"parse_error","summary":"Unparsed network event","detail":{"parse_error":"Invalid network JSON record"}}));
         let mut detail = value["detail"].as_object().cloned().unwrap_or_default();
         if value["id"].is_string() {
             detail.insert("source_event_id".into(), value["id"].clone());
@@ -215,7 +236,7 @@ pub(crate) fn network_events(
         let mut identity = format!("network\0network/events.jsonl\0{line}\0").into_bytes();
         identity.extend_from_slice(&bytes);
         output.push(Event {
-            id: format!("event-{}", &hash(&identity)[..24]),
+            id: format!("event-{}", &crate::save::hash(&identity, control)?[..24]),
             timestamp,
             original_timestamp: value
                 .get("original_timestamp")
@@ -244,6 +265,57 @@ pub(crate) fn sort(events: &mut [Event]) {
             &b.id,
         ))
     });
+}
+
+pub(crate) fn sort_controlled(
+    events: &mut Vec<Event>,
+    control: Option<&crate::save::SaveHandle>,
+) -> crate::model::Result<()> {
+    if control.is_none() {
+        sort(events);
+        return Ok(());
+    }
+    fn ordered(a: &Event, b: &Event) -> std::cmp::Ordering {
+        (&a.timestamp, source_order(&a.source), line(a), &a.id).cmp(&(
+            &b.timestamp,
+            source_order(&b.source),
+            line(b),
+            &b.id,
+        ))
+    }
+    fn merge_sort(
+        mut events: Vec<Event>,
+        control: Option<&crate::save::SaveHandle>,
+    ) -> crate::model::Result<Vec<Event>> {
+        crate::save::check(control)?;
+        if events.len() <= 256 {
+            events.sort_by(ordered);
+            return Ok(events);
+        }
+        let right = events.split_off(events.len() / 2);
+        let mut left = merge_sort(events, control)?.into_iter().peekable();
+        let mut right = merge_sort(right, control)?.into_iter().peekable();
+        let mut merged = Vec::with_capacity(left.len() + right.len());
+        while let (Some(a), Some(b)) = (left.peek(), right.peek()) {
+            if merged.len() % 128 == 0 {
+                crate::save::check(control)?;
+            }
+            merged.push(if ordered(a, b).is_le() {
+                left.next().unwrap()
+            } else {
+                right.next().unwrap()
+            });
+        }
+        for event in left.chain(right) {
+            if merged.len() % 128 == 0 {
+                crate::save::check(control)?;
+            }
+            merged.push(event);
+        }
+        Ok(merged)
+    }
+    *events = merge_sort(std::mem::take(events), control)?;
+    Ok(())
 }
 
 pub(crate) fn retain_recent(events: &mut Vec<Event>) {
@@ -412,6 +484,40 @@ mod tests {
             detail: json!({}),
             clock_uncertainty_ms: None,
         }
+    }
+
+    #[test]
+    fn controlled_normalization_preserves_ids_and_order_across_merge_batches() {
+        let root = tempfile::tempdir().unwrap();
+        let control = crate::save::SaveHandle::create(root.path()).unwrap();
+        let logs = (0..1200)
+            .rev()
+            .map(|n| format!("1792022401.{}  123  456 I Fixture: line {n}\r\n", n % 10))
+            .collect::<String>();
+        let markers = b"{\"timestamp\":\"2026-10-20T00:00:00Z\",\"text\":\"marker\"}\n";
+        let expected = events(logs.as_bytes(), markers, "2026-10-20T00:00:00Z");
+        let controlled = events_controlled(
+            logs.as_bytes(),
+            markers,
+            "2026-10-20T00:00:00Z",
+            Some(&control),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(expected).unwrap(),
+            serde_json::to_value(controlled).unwrap()
+        );
+        assert_eq!(
+            control.cancel().unwrap(),
+            crate::save::CancelOutcome::Accepted
+        );
+        assert!(events_controlled(
+            logs.as_bytes(),
+            markers,
+            "2026-10-20T00:00:00Z",
+            Some(&control)
+        )
+        .is_err());
     }
 
     #[test]

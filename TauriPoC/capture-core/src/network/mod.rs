@@ -589,7 +589,10 @@ impl Guardian {
             .map_err(|e| e.to_string())?;
         self.snapshot()
     }
-    fn export(&mut self) -> Result<PathBuf> {
+    fn export(&mut self, control: Option<&crate::save::SaveHandle>) -> Result<PathBuf> {
+        if let Some(control) = control {
+            control.matches(&self.config.directory)?;
+        }
         if self.config.descriptor_version == 1 {
             let public: serde_json::Value = serde_json::from_slice(
                 &crate::files::read(&self.config.directory, "capture.json")?
@@ -654,16 +657,29 @@ impl Guardian {
         }
                 }
             });
-        let archive = crate::evidence::export_network(
-            &self.config.directory,
-            &self.header.id,
-            &self.header.device,
-            &self.header.started_at,
-            &self.config.request.limits,
-            &receipt,
-            self.config.fixture,
-            sealed,
-        )?;
+        let archive = match control {
+            Some(control) => crate::evidence::export_controlled(
+                &self.config.directory,
+                &self.header.id,
+                &self.header.device,
+                &self.header.started_at,
+                &self.config.request.limits,
+                &receipt,
+                self.config.fixture,
+                Some(sealed),
+                control,
+            )?,
+            None => crate::evidence::export_network(
+                &self.config.directory,
+                &self.header.id,
+                &self.header.device,
+                &self.header.started_at,
+                &self.config.request.limits,
+                &receipt,
+                self.config.fixture,
+                sealed,
+            )?,
+        };
         self.header.archive = Some(archive.clone());
         self.save()?;
         Ok(archive)
@@ -748,7 +764,12 @@ fn run_inner(path: &Path) -> Result<()> {
                         Action::Status => guardian.status().map(Reply::Snapshot),
                         Action::Marker(text) => guardian.marker(text).map(Reply::Snapshot),
                         Action::Stop | Action::Recover => guardian.stop().map(Reply::Stop),
-                        Action::Export => guardian.export().map(Reply::Archive),
+                        Action::Export => guardian.export(None).map(Reply::Archive),
+                        Action::ExportControlled(id) => {
+                            crate::save::SaveHandle::open(&guardian.config.directory, &id)
+                                .and_then(|control| control.run(|| guardian.export(Some(&control))))
+                                .map(Reply::Archive)
+                        }
                     }
                 };
                 let sent = if drop_reply {

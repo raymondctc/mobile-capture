@@ -263,6 +263,7 @@ fn disconnect_and_conflict_keep_listener_and_restore_on_retry() {
         StopOutcome::RecoveryRequired(_)
     ));
     assert!(listener(&directory));
+    assert!(owner.prepare_save().is_err());
     assert!(owner.export().is_err());
     f.edit(|s| {
         s["connected"] = json!(true);
@@ -1705,4 +1706,75 @@ fn network_admission_duration_does_not_end_selected_logs_or_routing() {
     assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
     assert_eq!(f.state()["settings"], json!({}));
     assert_eq!(f.state()["reverse"], json!({}));
+}
+
+#[test]
+fn controlled_network_save_preserves_restoration_sealing_checksums_and_retry() {
+    use capture_poc_core::save::CancelOutcome;
+    use sha2::{Digest, Sha256};
+    let f = Fixture::new();
+    let original = json!({"http_proxy":"prior:8123","global_http_proxy_host":"prior","global_http_proxy_port":"8123","global_http_proxy_exclusion_list":"","global_proxy_pac_url":""});
+    f.edit(|s| s["settings"] = original.clone());
+    let mut owner = f.owner();
+    f.start(&mut owner);
+    assert!(owner.prepare_save().is_err());
+    let directory = owner.directory().unwrap().to_path_buf();
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    assert_eq!(f.state()["settings"], original);
+    assert!(!listener(&directory));
+    let first = owner.prepare_save().unwrap();
+    let archive = owner.export_with_control(&first).unwrap();
+    let prior = fs::read(&archive).unwrap();
+    assert_eq!(first.progress().unwrap().stage, "complete");
+    assert_eq!(owner.export_with_control(&first).unwrap(), archive);
+    let cancelled = owner.prepare_save().unwrap();
+    assert_eq!(cancelled.cancel().unwrap(), CancelOutcome::Accepted);
+    assert!(owner
+        .export_with_control(&cancelled)
+        .unwrap_err()
+        .contains("cancelled"));
+    assert_eq!(fs::read(&archive).unwrap(), prior);
+    let retry = owner.prepare_save().unwrap();
+    owner.export_with_control(&retry).unwrap();
+    assert_eq!(fs::read(&archive).unwrap(), prior);
+    let mut zip = zip::ZipArchive::new(fs::File::open(&archive).unwrap()).unwrap();
+    let mut entries = std::collections::BTreeMap::new();
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index).unwrap();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        entries.insert(entry.name().to_owned(), bytes);
+    }
+    assert!(entries.keys().all(|name| matches!(
+        name.as_str(),
+        "capture.json"
+            | "context.json"
+            | "logs/device.log"
+            | "manifest.json"
+            | "README.txt"
+            | "SHA256SUMS"
+            | "timeline/markers.jsonl"
+            | "timeline/events.jsonl"
+            | "network/events.jsonl"
+            | "network/capture.mitm"
+            | "network/capture.har"
+            | "network/incomplete.json"
+    )));
+    for path in [
+        "network/events.jsonl",
+        "network/capture.mitm",
+        "network/capture.har",
+    ] {
+        assert_eq!(entries[path], fs::read(directory.join(path)).unwrap());
+    }
+    for line in String::from_utf8(entries["SHA256SUMS"].clone())
+        .unwrap()
+        .lines()
+    {
+        let (hash, name) = line.split_once("  ").unwrap();
+        assert_eq!(format!("{:x}", Sha256::digest(&entries[name])), hash);
+    }
+    let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+    assert_eq!(manifest["routing_restored"], true);
+    assert_eq!(f.state()["settings"], original);
 }

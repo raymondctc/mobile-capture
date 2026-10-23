@@ -46,6 +46,7 @@ pub(crate) enum Action {
     Stop,
     Recover,
     Export,
+    ExportControlled(String),
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) enum Reply {
@@ -177,6 +178,11 @@ impl Client {
         }
     }
     pub fn request(&mut self, command: Action) -> Result<Reply> {
+        let timeout = if matches!(command, Action::ExportControlled(_)) {
+            Duration::from_secs(60 * 60)
+        } else {
+            Duration::from_secs(40)
+        };
         let descriptor: Descriptor = lease::read(&self.directory.join("runtime/control.json"))?;
         let mut stream = connect(&descriptor)?;
         send(
@@ -186,7 +192,7 @@ impl Client {
                 command,
             },
         )?;
-        let reply = receive_with_timeout(&mut stream, Duration::from_secs(40))?;
+        let reply = receive_with_timeout(&mut stream, timeout)?;
         self.observe(&reply);
         Ok(reply)
     }

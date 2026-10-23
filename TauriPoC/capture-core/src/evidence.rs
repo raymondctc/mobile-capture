@@ -1,4 +1,9 @@
-use crate::{files, model::*, timeline};
+use crate::{
+    files,
+    model::*,
+    save::{self, SaveHandle, Stage},
+    timeline,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
@@ -19,7 +24,7 @@ pub fn export(
     fixture: bool,
 ) -> Result<PathBuf> {
     export_impl(
-        directory, id, device, started_at, limits, receipt, fixture, None,
+        directory, id, device, started_at, limits, receipt, fixture, None, None,
     )
 }
 #[allow(clippy::too_many_arguments)]
@@ -42,6 +47,32 @@ pub(crate) fn export_network(
         receipt,
         fixture,
         Some(sealed.completion()),
+        None,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn export_controlled(
+    directory: &Path,
+    id: &str,
+    device: &Device,
+    started_at: &str,
+    limits: &Limits,
+    receipt: &Receipt,
+    fixture: bool,
+    network: Option<&crate::network::SealedEvidence>,
+    control: &SaveHandle,
+) -> Result<PathBuf> {
+    control.matches(directory)?;
+    export_impl(
+        directory,
+        id,
+        device,
+        started_at,
+        limits,
+        receipt,
+        fixture,
+        network.map(|n| n.completion()),
+        Some(control),
     )
 }
 #[allow(clippy::too_many_arguments)]
@@ -54,8 +85,10 @@ fn export_impl(
     receipt: &Receipt,
     fixture: bool,
     network: Option<&NetworkCompletion>,
+    control: Option<&SaveHandle>,
 ) -> Result<PathBuf> {
-    let descriptor_bytes = files::read(directory, "capture.json")?;
+    save::update(control, Stage::Validate, 0, None)?;
+    let descriptor_bytes = save::read(directory, "capture.json", control)?;
     let descriptor: Option<SessionDescriptor> = descriptor_bytes
         .as_ref()
         .map(|bytes| serde_json::from_slice(bytes).map_err(|e| e.to_string()))
@@ -63,7 +96,7 @@ fn export_impl(
     let logs_selected = descriptor
         .as_ref()
         .is_none_or(|d| d.selection.includes_logs());
-    let logs = match files::read(directory, "logs/device.log")? {
+    let logs = match save::read(directory, "logs/device.log", control)? {
         Some(bytes) => bytes,
         None if network.is_some() => vec![],
         None => return Err("Raw logs are missing".into()),
@@ -71,12 +104,15 @@ fn export_impl(
     if logs.len() as u64 != receipt.bytes {
         return Err("Raw log size does not match the stopped collector receipt".into());
     }
-    let markers =
-        files::read(directory, "timeline/markers.jsonl")?.ok_or("Raw markers are missing")?;
-    let mut events = timeline::events(&logs, &markers, started_at);
+    let markers = save::read(directory, "timeline/markers.jsonl", control)?
+        .ok_or("Raw markers are missing")?;
+    save::update(control, Stage::Normalize, 0, None)?;
+    let mut events = timeline::events_controlled(&logs, &markers, started_at, control)?;
     if network.is_some() {
-        events.extend(timeline::network_events(directory, started_at, false)?);
-        timeline::sort(&mut events);
+        events.extend(timeline::network_events_controlled(
+            directory, started_at, false, control,
+        )?);
+        timeline::sort_controlled(&mut events, control)?;
     }
     let logs_count = events.iter().filter(|e| e.source == "logs").count();
     let network_count = events.iter().filter(|e| e.source == "network").count();
@@ -135,9 +171,9 @@ fn export_impl(
         if metadata.len() > 1024 * 1024 * 1024 {
             return Err("Evidence exceeds enforced 1 GiB streaming bound".into());
         }
-        let (bytes, hash) = digest(&mut file, 1024 * 1024 * 1024)?;
-        if path == "logs/device.log" && hash != timeline::hash(&logs)
-            || path == "timeline/markers.jsonl" && hash != timeline::hash(&markers)
+        let (bytes, hash) = digest(&mut file, 1024 * 1024 * 1024, control)?;
+        if path == "logs/device.log" && hash != save::hash(&logs, control)?
+            || path == "timeline/markers.jsonl" && hash != save::hash(&markers, control)?
         {
             return Err("Raw source changed during normalization".into());
         }
@@ -198,7 +234,15 @@ fn export_impl(
         .map_err(|e| e.to_string())?;
     let mut timeline_file =
         tempfile::NamedTempFile::new_in(stage.path()).map_err(|e| e.to_string())?;
-    for event in &events {
+    for (index, event) in events.iter().enumerate() {
+        if index % 128 == 0 {
+            save::update(
+                control,
+                Stage::Normalize,
+                index as u64,
+                Some(events.len() as u64),
+            )?;
+        }
         let (path, line) = event
             .raw_ref
             .rsplit_once("#L")
@@ -209,11 +253,17 @@ fn export_impl(
         if line == 0 || !raw.contains_key(path) {
             return Err("Canonical event refers to absent raw evidence".into());
         }
-        serde_json::to_writer(&mut timeline_file, event).map_err(|e| e.to_string())?;
+        let mut writer = std::io::BufWriter::with_capacity(
+            save::CHUNK,
+            CheckedWriter::new(&mut timeline_file, control),
+        );
+        serde_json::to_writer(&mut writer, event).map_err(|e| e.to_string())?;
+        writer.flush().map_err(|e| e.to_string())?;
+        drop(writer);
         timeline_file.write_all(b"\n").map_err(|e| e.to_string())?;
     }
     timeline_file.flush().map_err(|e| e.to_string())?;
-    let (_, hash) = digest(timeline_file.as_file_mut(), 2 * 1024 * 1024 * 1024)?;
+    let (_, hash) = digest(timeline_file.as_file_mut(), 2 * 1024 * 1024 * 1024, control)?;
     checksums.insert("timeline/events.jsonl".into(), hash);
     raw.insert(
         "timeline/events.jsonl".into(),
@@ -227,7 +277,7 @@ fn export_impl(
     generated.insert("context.json".to_string(),serde_json::to_vec_pretty(&json!({"id":id,"platform":"android","device_id":device.serial,"device_name":device.name,"started_at":started_at,"stopped_at":receipt.ended_at,"context":context})).map_err(|e|e.to_string())?);
     generated.insert("README.txt".to_string(),format!("Mobile Capture Android, schema 1\nSource selection and app attribution are recorded in capture.json and context.json. {}\nRead manifest.json for gaps, limits, fixture provenance, and shutdown outcomes. ZIP creation does not establish completeness.\nRaw evidence is unchanged. Original HTTP content-encoding bytes use raw_content basis. Device clock uncertainty is unknown. Timestamp proximity is inferred.\nSHA256SUMS covers every included file except itself. Private runtime, tokens, journal, spools, and CA keys are excluded.\n",if network.is_some(){"HTTP(S) proxy evidence requires manual CA trust. Hard guardian death may interrupt its listener. Routing restoration and original writer quiescence were verified."}else{"Log-only recording. No routing or trust settings were changed."}).into_bytes());
     for (path, bytes) in &generated {
-        checksums.insert(path.clone(), timeline::hash(bytes));
+        checksums.insert(path.clone(), save::hash(bytes, control)?);
     }
     generated.insert(
         "SHA256SUMS".into(),
@@ -237,6 +287,13 @@ fn export_impl(
             .collect::<String>()
             .into_bytes(),
     );
+    let total = raw
+        .values()
+        .try_fold(0u64, |total, file| file.metadata().map(|m| total + m.len()))
+        .map_err(|e| e.to_string())?
+        + generated.values().map(|b| b.len() as u64).sum::<u64>();
+    let mut completed = 0u64;
+    save::update(control, Stage::Archive, completed, Some(total))?;
     let temporary = stage.path().join("capture-package.zip");
     let mut file = fs::File::create(&temporary).map_err(|e| e.to_string())?;
     let options = SimpleFileOptions::default()
@@ -248,7 +305,12 @@ fn export_impl(
         archive
             .start_file(path, options)
             .map_err(|e| e.to_string())?;
-        archive.write_all(&bytes).map_err(|e| e.to_string())?;
+        for chunk in bytes.chunks(save::CHUNK) {
+            save::check(control)?;
+            archive.write_all(chunk).map_err(|e| e.to_string())?;
+            completed += chunk.len() as u64;
+            save::update(control, Stage::Archive, completed, Some(total))?;
+        }
     }
     for (path, mut source) in raw {
         archive
@@ -263,6 +325,7 @@ fn export_impl(
         };
         let mut buffer = [0; 65536];
         loop {
+            save::check(control)?;
             let n = source.read(&mut buffer).map_err(|e| e.to_string())?;
             if n == 0 {
                 break;
@@ -273,6 +336,8 @@ fn export_impl(
             }
             hasher.update(&buffer[..n]);
             archive.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+            completed += n as u64;
+            save::update(control, Stage::Archive, completed, Some(total))?;
         }
         if format!("{:x}", hasher.finalize()) != checksums[&path] {
             return Err("Sealed evidence changed during export".into());
@@ -283,15 +348,19 @@ fn export_impl(
     drop(file);
     let target = directory.join("capture-package.zip");
     files::refuse_link(&target)?;
-    publish(&temporary, &target)?;
+    match control {
+        Some(control) => control.publish(&temporary, &target)?,
+        None => save::publish(&temporary, &target)?,
+    }
     Ok(target)
 }
-fn digest(file: &mut fs::File, limit: u64) -> Result<(u64, String)> {
+fn digest(file: &mut fs::File, limit: u64, control: Option<&SaveHandle>) -> Result<(u64, String)> {
     let mut hash = Sha256::new();
     let mut count = 0;
     let mut bytes = [0; 65536];
     file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
     loop {
+        save::check(control)?;
         let n = file.read(&mut bytes).map_err(|e| e.to_string())?;
         if count + n as u64 > limit {
             return Err(format!(
@@ -307,27 +376,130 @@ fn digest(file: &mut fs::File, limit: u64) -> Result<(u64, String)> {
     file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
     Ok((count, format!("{:x}", hash.finalize())))
 }
-#[cfg(not(windows))]
-fn publish(source: &Path, target: &Path) -> Result<()> {
-    fs::rename(source, target).map_err(|e| e.to_string())
+struct CheckedWriter<'a, W> {
+    inner: W,
+    control: Option<&'a SaveHandle>,
 }
-#[cfg(windows)]
-fn publish(source: &Path, target: &Path) -> Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let from: Vec<_> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let to: Vec<_> = target.as_os_str().encode_wide().chain(Some(0)).collect();
-    if unsafe {
-        MoveFileExW(
-            from.as_ptr(),
-            to.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    } == 0
-    {
-        return Err(std::io::Error::last_os_error().to_string());
+impl<'a, W> CheckedWriter<'a, W> {
+    fn new(inner: W, control: Option<&'a SaveHandle>) -> Self {
+        Self { inner, control }
     }
-    Ok(())
+}
+impl<W: Write> Write for CheckedWriter<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        save::check(self.control).map_err(std::io::Error::other)?;
+        self.inner.write(&bytes[..bytes.len().min(save::CHUNK)])
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn cancellation_during_real_zip_write_preserves_raw_and_prior_zip_then_retry_succeeds() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("logs")).unwrap();
+        fs::create_dir(root.path().join("timeline")).unwrap();
+        let logs = vec![b'x'; 8 * 1024 * 1024];
+        fs::write(root.path().join("logs/device.log"), &logs).unwrap();
+        fs::write(root.path().join("timeline/markers.jsonl"), b"").unwrap();
+        let target = root.path().join("capture-package.zip");
+        fs::write(&target, b"prior archive").unwrap();
+        let receipt = Receipt {
+            reason: StopReason::LeaseClosed,
+            bytes: logs.len() as u64,
+            records: 1,
+            incomplete_tail: true,
+            child_reaped: true,
+            forced: false,
+            exit_code: Some(0),
+            stderr: String::new(),
+            ended_at: "2026-10-20T00:00:01Z".into(),
+        };
+        let device = Device {
+            serial: "fixture".into(),
+            name: "fixture".into(),
+            state: DeviceState::Ready,
+        };
+        let handle = SaveHandle::create(root.path()).unwrap();
+        let cancel = handle.clone();
+        let directory = root.path().to_path_buf();
+        let receipt_copy = receipt.clone();
+        let device_copy = device.clone();
+        let worker = thread::spawn(move || {
+            handle.run(|| {
+                export_controlled(
+                    &directory,
+                    "fixture",
+                    &device_copy,
+                    "2026-10-20T00:00:00Z",
+                    &Limits::default(),
+                    &receipt_copy,
+                    true,
+                    None,
+                    &handle,
+                )
+            })
+        });
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let progress = cancel.progress().unwrap();
+            if progress.stage == "archive" && progress.completed > 0 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "never observed archive progress {progress:?}"
+            );
+            assert!(
+                !worker.is_finished(),
+                "archive completed before cancellation was exercised"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(cancel.cancel().unwrap(), save::CancelOutcome::Accepted);
+        assert!(worker.join().unwrap().unwrap_err().contains("cancelled"));
+        assert_eq!(fs::read(&target).unwrap(), b"prior archive");
+        assert_eq!(fs::read(root.path().join("logs/device.log")).unwrap(), logs);
+        assert!(!fs::read_dir(root.path()).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".export-")));
+        let retry = SaveHandle::create(root.path()).unwrap();
+        retry
+            .run(|| {
+                export_controlled(
+                    root.path(),
+                    "fixture",
+                    &device,
+                    "2026-10-20T00:00:00Z",
+                    &Limits::default(),
+                    &receipt,
+                    true,
+                    None,
+                    &retry,
+                )
+            })
+            .unwrap();
+        let mut zip = zip::ZipArchive::new(fs::File::open(&target).unwrap()).unwrap();
+        let mut archived_logs = Vec::new();
+        zip.by_name("logs/device.log")
+            .unwrap()
+            .read_to_end(&mut archived_logs)
+            .unwrap();
+        assert_eq!(archived_logs, logs);
+        assert!(zip
+            .file_names()
+            .all(|name| !name.starts_with("runtime/") && !name.contains("state.json")));
+        assert_eq!(retry.progress().unwrap().stage, "complete");
+    }
 }

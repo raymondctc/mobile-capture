@@ -602,6 +602,7 @@ fn worker_failure_without_a_receipt_never_claims_verified_stop() {
     .unwrap();
     start(&mut owner, "fixture-stream", Limits::default());
     wait(&mut owner, |v| v["phase"] == "unverified_shutdown");
+    assert!(owner.prepare_save().is_err());
     assert!(owner.export().is_err());
     assert_eq!(
         serde_json::to_value(owner.stop().unwrap()).unwrap()["outcome"],
@@ -857,4 +858,66 @@ fn closing_app_source_cancels_an_inflight_identity_probe_before_worker_escalatio
     assert!(receipt.child_reaped);
     assert!(!receipt.forced);
     assert!(owner.export().unwrap().is_file());
+}
+
+#[test]
+fn controlled_save_admits_verified_logs_cancels_preserves_and_retries_real_zip() {
+    use capture_poc_core::save::{copy_archive, CancelOutcome};
+    use sha2::{Digest, Sha256};
+    let root = tempfile::tempdir().unwrap();
+    let mut owner = owner(root.path());
+    assert!(owner.prepare_save().is_err());
+    start(&mut owner, "fixture-stream", Limits::default());
+    assert!(owner.prepare_save().is_err());
+    wait(&mut owner, |v| {
+        v["session"]["logs"].as_u64().unwrap_or(0) >= 4
+    });
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    let first = owner.prepare_save().unwrap();
+    let archive = owner.export_with_control(&first).unwrap();
+    assert_eq!(first.progress().unwrap().stage, "complete");
+    let prior = fs::read(&archive).unwrap();
+    assert_eq!(owner.export_with_control(&first).unwrap(), archive);
+    let directory = owner.directory().unwrap().to_path_buf();
+    let raw = fs::read(directory.join("logs/device.log")).unwrap();
+    let cancelled = owner.prepare_save().unwrap();
+    assert_eq!(cancelled.cancel().unwrap(), CancelOutcome::Accepted);
+    assert!(owner
+        .export_with_control(&cancelled)
+        .unwrap_err()
+        .contains("cancelled"));
+    assert_eq!(fs::read(&archive).unwrap(), prior);
+    assert_eq!(fs::read(directory.join("logs/device.log")).unwrap(), raw);
+    let retry = owner.prepare_save().unwrap();
+    assert_ne!(retry.id(), cancelled.id());
+    owner.export_with_control(&retry).unwrap();
+    assert_eq!(fs::read(&archive).unwrap(), prior);
+    let entries = zip_entries(&archive);
+    assert!(entries.keys().all(|name| matches!(
+        name.as_str(),
+        "capture.json"
+            | "context.json"
+            | "logs/device.log"
+            | "manifest.json"
+            | "README.txt"
+            | "SHA256SUMS"
+            | "timeline/markers.jsonl"
+            | "timeline/events.jsonl"
+    )));
+    for line in String::from_utf8(entries["SHA256SUMS"].clone())
+        .unwrap()
+        .lines()
+    {
+        let (hash, name) = line.split_once("  ").unwrap();
+        assert_eq!(format!("{:x}", Sha256::digest(&entries[name])), hash);
+    }
+    let copied = root.path().join("copied.zip");
+    copy_archive(&archive, &copied).unwrap();
+    assert_eq!(fs::read(copied).unwrap(), prior);
+    start(&mut owner, "fixture-stream", Limits::default());
+    assert!(owner.export_with_control(&first).is_err());
+    wait(&mut owner, |v| {
+        v["session"]["logs"].as_u64().unwrap_or(0) >= 1
+    });
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
 }

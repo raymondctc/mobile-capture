@@ -272,16 +272,68 @@ impl CaptureOwner {
         self.network = Some(Client::launch(config)?);
         self.stop()
     }
-    pub fn export(&mut self) -> Result<std::path::PathBuf> {
+    pub fn prepare_save(&mut self) -> Result<crate::save::SaveHandle> {
         if self.network.is_none() {
-            return self.logs.export();
+            return self.logs.prepare_save();
+        }
+        if !matches!(self.status()?, Snapshot::Stopped(_) | Snapshot::Failed(_)) {
+            return Err("Save requires restored routing and verified source shutdown".into());
+        }
+        if !self
+            .network
+            .as_ref()
+            .is_some_and(Client::has_authenticated_completion)
+        {
+            let directory = self
+                .network
+                .as_ref()
+                .ok_or("Network capture missing")?
+                .directory
+                .clone();
+            let (lock, _) = network::namespace(&self.paths, self.fixture)?;
+            network::admit_saved(&directory, &lock)?;
+            if !matches!(self.recover()?, StopOutcome::Ready(_)) {
+                return Err("Stopped source writers are not quiescent".into());
+            }
+        }
+        let client = self.network.as_ref().ok_or("Network capture missing")?;
+        if !client.has_authenticated_completion() {
+            return Err("Save requires authenticated completion".into());
+        }
+        crate::save::SaveHandle::create(&client.directory)
+    }
+    pub fn export_with_control(
+        &mut self,
+        control: &crate::save::SaveHandle,
+    ) -> Result<std::path::PathBuf> {
+        self.export_impl(Some(control))
+    }
+    pub fn export(&mut self) -> Result<std::path::PathBuf> {
+        self.export_impl(None)
+    }
+    fn export_impl(
+        &mut self,
+        control: Option<&crate::save::SaveHandle>,
+    ) -> Result<std::path::PathBuf> {
+        if self.network.is_none() {
+            return match control {
+                Some(control) => self.logs.export_with_control(control),
+                None => self.logs.export(),
+            };
         }
         let client = self.network.as_mut().ok_or("Network capture missing")?;
+        if let Some(control) = control {
+            control.matches(&client.directory)?;
+        }
         if missing_network_state(client)? {
             return Err(missing_state_error(client));
         }
+        let command = || match control {
+            Some(control) => Action::ExportControlled(control.id().into()),
+            None => Action::Export,
+        };
         let directory = client.directory.clone();
-        let mut reply = client.request(Action::Export);
+        let mut reply = client.request(command());
         if reply.is_err() && network::sealed_on_disk(&directory) {
             if !matches!(self.recover()?, StopOutcome::Ready(_)) {
                 return Err("Stopped source writers are not quiescent".into());
@@ -290,7 +342,7 @@ impl CaptureOwner {
                 .network
                 .as_mut()
                 .ok_or("Recovered capture missing")?
-                .request(Action::Export);
+                .request(command());
         }
         match reply? {
             Reply::Archive(path) => Ok(path),
