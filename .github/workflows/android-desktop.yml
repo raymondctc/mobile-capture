@@ -83,14 +83,14 @@ jobs:
         run: cargo test -p capture-poc-core --test setup completed_setup_releases_control_before_export_and_stays_finished_during_next_capture --locked -- --exact --test-threads=1
       - name: Verify setup waits for held control
         run: cargo test -p capture-poc-core --test setup restored_setup_remains_retryable_until_completed_control_is_released --locked -- --exact --test-threads=1
+      - name: Verify bundled mitmdump evidence and capture beyond two minutes
+        run: python scripts/probe-bundled-engine.py --package "${{ runner.temp }}/android-package" --payload "${{ runner.temp }}/${{ matrix.payload }}"
       - name: Verify serial core fixtures, desktop adapter, and normalized evidence
         run: npm run verify
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Probe Windows process lifetimes inside the Rust test Job
         if: runner.os == 'Windows'
         run: cargo test -p capture-poc-core --test network windows_launch_probe_runs_inside_rust_test_job --locked -- --exact --nocapture
-      - name: Verify bundled mitmdump evidence and capture beyond two minutes
-        run: python scripts/probe-bundled-engine.py --package "${{ runner.temp }}/android-package" --payload "${{ runner.temp }}/${{ matrix.payload }}"
       - uses: actions/upload-artifact@v4
         with:
           name: MobileCaptureAndroid-${{ matrix.architecture }}-development
