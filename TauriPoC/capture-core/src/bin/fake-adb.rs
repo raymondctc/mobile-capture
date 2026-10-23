@@ -185,6 +185,8 @@ struct FakeState {
     commands: Vec<Vec<String>>,
     #[serde(default)]
     fail_command: Option<usize>,
+    #[serde(default)]
+    pushed_certificates: std::collections::BTreeMap<String, String>,
 }
 fn yes() -> bool {
     true
@@ -225,6 +227,36 @@ fn routing(args: &[String]) {
             }
         } else if args.len() == 3 && args[..2] == ["reverse", "--remove"] {
             state.reverse.remove(&args[2]);
+        } else if args.len() == 3 && args[0] == "push" {
+            let suffix = args[2]
+                .strip_prefix("/sdcard/Download/mobile-capture-ca-")
+                .and_then(|s| s.strip_suffix(".crt"))
+                .expect("fixture accepts only the public setup certificate destination");
+            assert!(suffix.len() == 12 && suffix.bytes().all(|b| b.is_ascii_hexdigit()));
+            let pem = std::fs::read_to_string(&args[1]).unwrap();
+            let middle = pem
+                .trim()
+                .strip_prefix("-----BEGIN CERTIFICATE-----")
+                .and_then(|s| s.strip_suffix("-----END CERTIFICATE-----"))
+                .expect("fixture accepts only public PEM certificate staging");
+            assert!(pem.len() <= 65536 && !pem.contains("PRIVATE") && !middle.contains("-----"));
+            state.pushed_certificates.insert(args[2].clone(), pem);
+        } else if args.len() == 7
+            && args[..6]
+                == [
+                    "shell",
+                    "am",
+                    "start",
+                    "-a",
+                    "android.intent.action.VIEW",
+                    "-d",
+                ]
+        {
+            let nonce = args[6]
+                .strip_prefix("https://mitm.it/mobile-capture-check/")
+                .and_then(|s| s.strip_suffix("/https"))
+                .expect("fixture accepts only an owned HTTPS check intent");
+            assert!(nonce.len() == 32 && nonce.bytes().all(|b| b.is_ascii_hexdigit()));
         } else if args.len() == 2 && args[0] == "shell" {
             let fields = shell_fields(&args[1]);
             assert!(fields.len() >= 4 && fields[0] == "settings" && fields[2] == "global");

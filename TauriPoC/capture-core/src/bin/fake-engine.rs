@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use std::{
     env, fs,
@@ -59,9 +60,13 @@ fn main() {
         .find_map(|s| s.strip_prefix("confdir="))
         .unwrap();
     fs::create_dir_all(ca).unwrap();
+    let fixture_der_envelope = [0x30; 256];
     fs::write(
         PathBuf::from(ca).join("mitmproxy-ca-cert.pem"),
-        b"FIXTURE PUBLIC CERTIFICATE",
+        format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+            STANDARD.encode(fixture_der_envelope)
+        ),
     )
     .unwrap();
     if !forwarding {
@@ -84,6 +89,7 @@ fn main() {
     });
     let started = Instant::now();
     let mut admission_closed = false;
+    let mut emitted_batch = None;
     loop {
         if !forwarding
             && !admission_closed
@@ -108,6 +114,24 @@ fn main() {
             .unwrap_or(json!({}));
         if mode["exit"] == true {
             std::process::exit(7);
+        }
+        if !forwarding && mode["event_batch"]["directory"].as_str() == directory.to_str() {
+            if let Some(batch) = mode["event_batch"]["id"].as_u64() {
+                if emitted_batch != Some(batch) {
+                    let mut events = fs::OpenOptions::new()
+                        .append(true)
+                        .open(directory.join("network/events.jsonl"))
+                        .unwrap();
+                    for record in mode["event_batch"]["records"].as_array().unwrap() {
+                        events
+                            .write_all(record.as_str().unwrap().as_bytes())
+                            .unwrap();
+                    }
+                    events.flush().unwrap();
+                    emitted_batch = Some(batch);
+                    fs::write(runtime.join("fake-engine-events.json"), batch.to_string()).unwrap();
+                }
+            }
         }
         if let Ok((mut stream, _)) = listener.accept() {
             let _ = stream.write_all(
