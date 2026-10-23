@@ -1,7 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The PoC uses only its narrow Rust capture commands.",
-  "windows": ["main"],
+  "description": "Android capture commands validate tool, device, operation, and evidence boundaries in Rust.",
+  "windows": [
+    "main"
+  ],
   "permissions": []
 }

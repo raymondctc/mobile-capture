@@ -49,5 +49,14 @@
         "displayLanguageSelector": false
       }
     }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "mobilecapture-android"
+        ]
+      }
+    }
   }
 }
