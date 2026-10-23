@@ -303,14 +303,29 @@ pub fn verify_architecture(path: &Path, target: &str) -> Result<()> {
 mod tests {
     use super::*;
     fn payload() -> (tempfile::TempDir, String) {
+        let mut bytes = vec![0xcf, 0xfa, 0xed, 0xfe, 12, 0, 0, 1];
+        bytes.extend([0; 24]);
+        payload_with_binaries(
+            "aarch64-apple-darwin",
+            &[
+                ("adb", bytes.clone()),
+                ("mitmdump", bytes.clone()),
+                ("worker", bytes.clone()),
+                ("guardian", bytes.clone()),
+                ("addon", bytes),
+            ],
+        )
+    }
+    fn payload_with_binaries(
+        target: &str,
+        binaries: &[(&str, Vec<u8>)],
+    ) -> (tempfile::TempDir, String) {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("android-tools");
         fs::create_dir(&root).unwrap();
         let mut files = Vec::new();
-        for name in ["adb", "mitmdump", "worker", "guardian", "addon"] {
-            let mut bytes = vec![0xcf, 0xfa, 0xed, 0xfe, 12, 0, 0, 1];
-            bytes.extend([0; 24]);
-            fs::write(root.join(name), &bytes).unwrap();
+        for (name, bytes) in binaries {
+            fs::write(root.join(name), bytes).unwrap();
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -318,10 +333,74 @@ mod tests {
             }
             files.push(serde_json::json!({"path":name,"kind":"file","bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes))}));
         }
-        let bytes = serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"target":"aarch64-apple-darwin","adbVersion":"37.0.1","mitmproxyVersion":"12.2.3","tools":{"adb":"adb","mitmdump":"mitmdump","worker":"worker","guardian":"guardian","addon":"addon"},"files":files})).unwrap();
+        let bytes = serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"target":target,"adbVersion":"37.0.1","mitmproxyVersion":"12.2.3","tools":{"adb":"adb","mitmdump":"mitmdump","worker":"worker","guardian":"guardian","addon":"addon"},"files":files})).unwrap();
         let digest = format!("{:x}", Sha256::digest(&bytes));
         fs::write(root.join("payload.json"), bytes).unwrap();
         (temp, digest)
+    }
+    fn pe(machine: u16) -> Vec<u8> {
+        let mut bytes = vec![0; 128];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[60..64].copy_from_slice(&64u32.to_le_bytes());
+        bytes[64..68].copy_from_slice(b"PE\0\0");
+        bytes[68..70].copy_from_slice(&machine.to_le_bytes());
+        bytes
+    }
+    fn windows_binaries() -> Vec<(&'static str, Vec<u8>)> {
+        vec![
+            ("adb", pe(0x014c)),
+            ("mitmdump", pe(0x8664)),
+            ("worker", pe(0x8664)),
+            ("guardian", pe(0x8664)),
+            ("addon", b"from mitmproxy import addons".to_vec()),
+        ]
+    }
+    #[test]
+    fn admits_pinned_windows_payload_with_i386_adb_and_amd64_native_tools() {
+        let (temp, digest) = payload_with_binaries("x86_64-pc-windows-msvc", &windows_binaries());
+        resolve_verified(temp.path(), &digest, "x86_64-pc-windows-msvc")
+            .expect("Pinned Windows ADB is I386 and the other executables are AMD64");
+    }
+    #[test]
+    fn rejects_i386_windows_native_tools() {
+        for role in ["mitmdump", "worker", "guardian"] {
+            let mut binaries = windows_binaries();
+            binaries
+                .iter_mut()
+                .find(|(name, _)| *name == role)
+                .unwrap()
+                .1 = pe(0x014c);
+            let (temp, digest) = payload_with_binaries("x86_64-pc-windows-msvc", &binaries);
+            let error =
+                resolve_verified(temp.path(), &digest, "x86_64-pc-windows-msvc").unwrap_err();
+            assert!(
+                error.contains("Wrong architecture for x86_64-pc-windows-msvc"),
+                "{error}"
+            );
+            assert!(error.ends_with(role), "{error}");
+        }
+    }
+    #[test]
+    fn rejects_amd64_windows_adb_for_the_pinned_i386_role() {
+        let mut binaries = windows_binaries();
+        binaries[0].1 = pe(0x8664);
+        let (temp, digest) = payload_with_binaries("x86_64-pc-windows-msvc", &binaries);
+        let error = resolve_verified(temp.path(), &digest, "x86_64-pc-windows-msvc").unwrap_err();
+        assert!(
+            error.contains("Wrong architecture for i686-pc-windows-msvc"),
+            "{error}"
+        );
+        assert!(error.ends_with("adb"), "{error}");
+    }
+    #[test]
+    fn rejects_i386_adb_for_mac_arm64_payload() {
+        let (temp, digest) = payload_with_binaries("aarch64-apple-darwin", &windows_binaries());
+        let error = resolve_verified(temp.path(), &digest, "aarch64-apple-darwin").unwrap_err();
+        assert!(
+            error.contains("Wrong architecture for aarch64-apple-darwin"),
+            "{error}"
+        );
+        assert!(error.ends_with("adb"), "{error}");
     }
     #[test]
     fn admits_complete_pinned_payload() {
