@@ -616,3 +616,58 @@ fn evidence_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     }
     result
 }
+
+#[test]
+fn middle_record_mutation_then_append_rebuilds_generation_and_search() {
+    let fixture = Fixture::new(false);
+    let old = "1700000000.0 1 2 I Tag: old-middle-record";
+    let new = "1700000000.0 1 2 I Tag: new-middle-record";
+    let padding = "1700000000.0 1 2 I Tag: padding-record\n".repeat(180);
+    let original = format!("{padding}{old}\n{padding}");
+    fixture.write("logs/device.log", &original);
+    let mut library = fixture.open(true);
+    finish(&mut library);
+    let first = all(&mut library);
+    let generation = library.index.generation.clone();
+    fixture.write("logs/device.log", original.replace(old, new));
+    fixture.append("logs/device.log", b"1700000001.0 1 2 I Tag: appended\n");
+    finish(&mut library);
+    assert_ne!(library.index.generation, generation, "mutated prefix must invalidate generation");
+    for (search, expected) in [("old-middle-record", 0), ("new-middle-record", 1), ("appended", 1)] {
+        let page = library.query(TimelineQuery { search: search.into(), ..Default::default() }).unwrap();
+        assert_eq!(page.matching, expected, "wrong search result for {search}");
+    }
+    let rows = all(&mut library);
+    assert_eq!(rows.len(), first.len() + 1);
+    assert_eq!(rows[0].event.id, first[0].event.id);
+    assert_eq!(library.raw_target(&rows[180].event.id).unwrap().line, 181);
+    let stable_generation = library.index.generation.clone();
+    fixture.append("logs/device.log", b"1700000002.0 1 2 I Tag: ordinary append\n");
+    finish(&mut library);
+    assert_eq!(library.index.generation, stable_generation);
+}
+
+#[test]
+fn hostile_body_metadata_stays_bounded_and_full_detail_is_chunked() {
+    for unavailable in [false, true] {
+        let fixture = Fixture::new(false);
+        let reason = format!("{}full-reason-tail", "reason".repeat(210_000));
+        fixture.write("network/events.jsonl", format!("{}\n", json!({
+            "timestamp": STARTED, "summary": "large metadata", "detail": {
+                "response_body": {"unavailable": unavailable, "reason": reason, "extra": "extra".repeat(210_000), "text": STANDARD.encode(b"body")}
+            }
+        })));
+        let mut library = fixture.open(false);
+        finish(&mut library);
+        let page = library.query(TimelineQuery::default()).unwrap();
+        let row = &page.rows[0];
+        assert!(serde_json::to_vec(row).unwrap().len() <= 6144, "query row exceeds 6 KiB");
+        let detail = library.event(&row.event.id).unwrap().unwrap();
+        assert!(!detail.detail_complete);
+        assert!(serde_json::to_vec(&detail).unwrap().len() <= 256 * 1024, "detail fallback exceeds 256 KiB");
+        let total = library.detail_chunk(&row.event.id, 0, 1).unwrap().total_bytes;
+        let tail = library.detail_chunk(&row.event.id, total - 128, 128).unwrap();
+        assert!(STANDARD.decode(tail.data_base64).unwrap().windows(16).any(|s| s == b"full-reason-tail"));
+        assert_eq!(library.query(TimelineQuery { search: "full-reason-tail".into(), ..Default::default() }).unwrap().matching, 1);
+    }
+}
