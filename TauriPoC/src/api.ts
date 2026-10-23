@@ -102,6 +102,32 @@ export const preferencesSchema = z.object({
   adb_override: z.string().nullable(),
   mitmdump_override: z.string().nullable(),
 });
+export type Handoff =
+  | { kind: "device"; serial: string; applicationId: string | null }
+  | { kind: "session"; id: string }
+  | { kind: "rejected"; message: string };
+export const handoffSchema = z
+  .object({
+    device: z.string().nullable().optional(),
+    application_id: z.string().nullable().optional(),
+    session_id: z.string().nullable().optional(),
+    message: z.string().nullable().optional(),
+  })
+  .transform((request): Handoff => {
+    if (request.message) return { kind: "rejected", message: request.message };
+    if (request.session_id && !request.device && !request.application_id)
+      return { kind: "session", id: request.session_id };
+    if (request.device && !request.session_id)
+      return {
+        kind: "device",
+        serial: request.device,
+        applicationId: request.application_id ?? null,
+      };
+    return {
+      kind: "rejected",
+      message: "The Android launch request is invalid.",
+    };
+  });
 const operationKindSchema = z.enum([
   "save",
   "certificate",
@@ -246,6 +272,8 @@ export const api = {
   recover: async () => snapshotSchema.parse(await invoke<unknown>("recover")),
   preferences: async () =>
     preferencesSchema.parse(await invoke<unknown>("preferences")),
+  pendingHandoff: async () =>
+    handoffSchema.nullable().parse(await invoke<unknown>("pending_handoff")),
   savePreferences: async (preferences: Preferences) =>
     preferencesSchema.parse(
       await invoke<unknown>("save_preferences", {
@@ -319,6 +347,12 @@ export function captureSafe(snapshot: Snapshot | undefined): boolean {
     ((network.state === "stopped" || network.state === "interrupted") &&
       network.detail.routing_restored)
   );
+}
+export function preferencesEditable(
+  snapshot: Snapshot | undefined,
+  operation: Operation,
+): boolean {
+  return !operationBusy(operation) && (!snapshot || captureSafe(snapshot));
 }
 export function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);

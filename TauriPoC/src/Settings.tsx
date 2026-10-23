@@ -8,6 +8,7 @@ export function Settings({
   preferences,
   save,
   idle,
+  editable,
   run,
   pending,
   setup,
@@ -16,6 +17,7 @@ export function Settings({
   preferences: Preferences | undefined;
   save: (preferences: Preferences) => Promise<void>;
   idle: boolean;
+  editable: boolean;
   run: RunAction;
   pending: string;
   setup: () => void;
@@ -30,7 +32,7 @@ export function Settings({
       .catch(() => setVersion("Unavailable outside the installed app"));
   }, []);
   useEffect(() => setDraft(preferences), [preferences]);
-  const locked = !idle || !!pending;
+  const locked = !editable || !!pending;
   function update(next: Preferences) {
     setDraft(next);
     setSaved(false);
@@ -54,10 +56,16 @@ export function Settings({
         Storage and tool changes apply to the next recording. Capture, saving,
         setup, and recovery must finish first.
       </p>
-      {!idle && (
+      {!editable && (
         <p className="notice">
           Settings are read-only until capture ownership and device routing are
           safely idle.
+        </p>
+      )}
+      {editable && !idle && (
+        <p className="notice">
+          Correct loaded preferences if a tool override prevents initialization.
+          The native app verifies capture ownership before saving.
         </p>
       )}
       {draft ? (
@@ -157,7 +165,7 @@ export function Settings({
           recovery before opening the Android release page.
         </p>
         <button
-          disabled={locked}
+          disabled={!idle || !!pending}
           onClick={() => void run("Opening Android releases", api.updates)}
         >
           Check for updates

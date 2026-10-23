@@ -14,6 +14,7 @@ import { timeLabel } from "./ui";
 export function Library({
   inspected,
   open,
+  close,
   snapshot,
   operation,
   onOperation,
@@ -23,6 +24,7 @@ export function Library({
 }: {
   inspected: SessionDescriptor | undefined;
   open: (directory: string) => Promise<void>;
+  close: () => void;
   snapshot: Snapshot | undefined;
   operation: Operation;
   onOperation: (operation: Operation) => void;
@@ -86,14 +88,19 @@ export function Library({
             Open folder
           </button>
           {inspected && (
-            <button
-              disabled={!!pending}
-              onClick={() =>
-                void run("Revealing session", () => product.reveal("session"))
-              }
-            >
-              Reveal
-            </button>
+            <>
+              <button
+                disabled={!!pending}
+                onClick={() =>
+                  void run("Revealing session", () => product.reveal("session"))
+                }
+              >
+                Reveal
+              </button>
+              <button disabled={!!pending} onClick={close}>
+                Close session
+              </button>
+            </>
           )}
         </div>
       </div>

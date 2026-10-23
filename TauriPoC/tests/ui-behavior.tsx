@@ -17,6 +17,7 @@ import {
 import { checkFreshness, initialDraft, timelineFence } from "../src/state";
 import { hexChunk } from "../src/Details";
 import { Capture } from "../src/Capture";
+import { checkHandoffBehavior } from "./handoff-behavior";
 
 const now = Date.parse("2026-10-23T12:00:00Z");
 const check: CheckResult = {
@@ -182,6 +183,7 @@ const session = {
   events: ["large legacy snapshot ignored"],
 };
 const stopped = snapshotSchema.parse({ phase: "stopped", session });
+assert.ok(stopped.phase === "stopped");
 assert.equal(captureSafe(stopped), true);
 assert.equal("events" in stopped.session, false);
 assert.equal(
@@ -238,7 +240,7 @@ const markup = renderToStaticMarkup(
   <Capture
     snapshot={idle}
     operation={{ state: "idle" }}
-    devices={[session.device]}
+    devices={[stopped.session.device]}
     draft={{ ...initialDraft, serial: "phone-a" }}
     change={() => {}}
     preferences={{
@@ -266,4 +268,10 @@ assert.match(
 assert.match(markup, /whole-device network capture/);
 assert.match(markup, /disabled="">Start recording/);
 assert.doesNotMatch(markup, /iPhone|Simulator|Homebrew/);
-console.log("Android UI behavior checks passed.");
+void checkHandoffBehavior().then(
+  () => console.log("Android UI behavior and launch-link checks passed."),
+  (cause: unknown) => {
+    console.error(cause);
+    process.exitCode = 1;
+  },
+);

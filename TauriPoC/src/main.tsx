@@ -5,6 +5,7 @@ import {
   captureSafe,
   errorMessage,
   operationBusy,
+  preferencesEditable,
   type Device,
   type Operation,
   type Preferences,
@@ -19,6 +20,13 @@ import { Setup } from "./Setup";
 import { Diagnostics } from "./Diagnostics";
 import { Settings } from "./Settings";
 import { OperationStatus } from "./Operation";
+import {
+  consumeHandoff,
+  handoffAvailable,
+  HandoffNotices,
+  resolveHandoff,
+  type HandoffNotice,
+} from "./Handoff";
 import { Dialog } from "./ui";
 import "./style.css";
 
@@ -45,13 +53,22 @@ function App() {
   const [revision, setRevision] = useState(0);
   const [pending, setPending] = useState("");
   const [error, setError] = useState("");
-  const [connection, setConnection] = useState("");
+  const [snapshotError, setSnapshotError] = useState("");
+  const [operationError, setOperationError] = useState("");
+  const connection = snapshotError || operationError;
+  const [handoffs, setHandoffs] = useState<HandoffNotice[]>([]);
+  const [handoffError, setHandoffError] = useState("");
   const busy = useRef(false);
   const generation = useRef(0);
   const openGeneration = useRef(0);
   const currentId = useRef("");
   const completedOperation = useRef("");
   const discoveryRequest = useRef(0);
+  const inspectedSession = useRef<SessionDescriptor | undefined>(undefined);
+  const nextHandoff = useRef(0);
+  const latestOperation = useRef(operation);
+  const operationVerified = useRef(false);
+  latestOperation.current = operation;
   const run: RunAction = useCallback(async (label, action) => {
     if (busy.current) return;
     busy.current = true;
@@ -71,8 +88,21 @@ function App() {
   const open = useCallback(async (directory: string) => {
     const request = ++openGeneration.current;
     const result = await product.open(directory);
-    if (request === openGeneration.current) setInspected(result);
+    if (request === openGeneration.current) {
+      inspectedSession.current = result;
+      setInspected(result);
+    }
   }, []);
+  function closeSession() {
+    generation.current += 1;
+    openGeneration.current += 1;
+    inspectedSession.current = undefined;
+    setInspected(undefined);
+  }
+  function changeDraft(next: typeof draft) {
+    generation.current += 1;
+    setDraft(next);
+  }
   const refresh = useCallback(async () => {
     setDevices(await api.discover());
   }, []);
@@ -80,25 +110,154 @@ function App() {
     setPreferences(await api.savePreferences(next));
     setRevision((value) => value + 1);
   }
-  useEffect(() => {
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      const request = generation.current;
-      if (!busy.current) {
+  const applyHandoff = useCallback(
+    async (notice: HandoffNotice) => {
+      if (busy.current || inspectedSession.current) return;
+      await run("Applying Android launch link", async () => {
+        const request = generation.current;
+        const update = (
+          message: string,
+          state: HandoffNotice["state"] = "received",
+        ) =>
+          setHandoffs((previous) =>
+            previous.map((entry) =>
+              entry.id === notice.id ? { ...entry, state, message } : entry,
+            ),
+          );
+        const conflict =
+          "Finish the current action and close any inspected session, then apply this link while capture control is idle. No recording has started.";
         try {
           const [capture, work] = await Promise.all([
             api.snapshot(),
             api.operation(),
           ]);
-          if (!disposed && request === generation.current) {
+          setSnapshot(capture);
+          setOperation(work);
+          if (
+            !handoffAvailable({
+              snapshot: capture,
+              operation: work,
+              inspected: inspectedSession.current,
+              pending: false,
+            })
+          ) {
+            update(conflict);
+            return;
+          }
+          const target = await resolveHandoff(notice.request, {
+            discover: api.discover,
+            applications: product.applications,
+            catalog: product.catalog,
+          });
+          if (target.kind === "blocked") {
+            update(target.message);
+            return;
+          }
+          const [verified, latestWork] = await Promise.all([
+            api.snapshot(),
+            api.operation(),
+          ]);
+          setSnapshot(verified);
+          setOperation(latestWork);
+          if (
+            request !== generation.current ||
+            !handoffAvailable({
+              snapshot: verified,
+              operation: latestWork,
+              inspected: inspectedSession.current,
+              pending: false,
+            })
+          ) {
+            update(conflict);
+            return;
+          }
+          if (target.kind === "session") {
+            await open(target.session.directory);
+            update(
+              "Opened the requested saved session. No recording has started.",
+              "applied",
+            );
+          } else {
+            setDevices((previous) => [
+              target.device,
+              ...previous.filter(
+                (device) => device.serial !== target.device.serial,
+              ),
+            ]);
+            setDraft((previous) => ({
+              ...previous,
+              serial: target.device.serial,
+              application_id: target.applicationId ?? "",
+              log_mode: "app",
+            }));
+            update(
+              "Selected the requested device and app scope. Review sources and consent before starting a recording.",
+              "applied",
+            );
+          }
+        } catch (cause) {
+          update(
+            `The launch link could not be applied. ${errorMessage(cause)}`,
+          );
+        }
+      });
+    },
+    [open, run, setDraft],
+  );
+  useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      const request = generation.current;
+      let capture: Snapshot | undefined;
+      if (!busy.current) {
+        try {
+          capture = await api.snapshot();
+          if (
+            !disposed &&
+            request === generation.current &&
+            operationVerified.current
+          ) {
             setSnapshot(capture);
-            setOperation(work);
-            setConnection("");
+            setSnapshotError("");
           }
         } catch (cause) {
           if (!disposed && request === generation.current)
-            setConnection(errorMessage(cause));
+            setSnapshotError(errorMessage(cause));
+        }
+      }
+      if (!disposed && !busy.current && request === generation.current) {
+        try {
+          await consumeHandoff({
+            read: api.pendingHandoff,
+            retain: (handoff) => {
+              const notice: HandoffNotice = {
+                id: ++nextHandoff.current,
+                request: handoff,
+                state: "received",
+                message:
+                  handoff.kind === "rejected"
+                    ? handoff.message
+                    : "Launch link received. Apply it while capture control is idle and no session is open. No recording has started.",
+              };
+              if (!disposed) setHandoffs((previous) => [...previous, notice]);
+              return notice;
+            },
+            canApply: () =>
+              !disposed &&
+              request === generation.current &&
+              operationVerified.current &&
+              handoffAvailable({
+                snapshot: capture,
+                operation: latestOperation.current,
+                inspected: inspectedSession.current,
+                pending: busy.current,
+              }),
+            apply: applyHandoff,
+          });
+          if (!disposed) setHandoffError("");
+        } catch (cause) {
+          if (!disposed) setHandoffError(errorMessage(cause));
         }
       }
       if (!disposed) timer = setTimeout(poll, 900);
@@ -128,7 +287,34 @@ function App() {
       disposed = true;
       clearTimeout(timer);
     };
-  }, [run]);
+  }, [run, applyHandoff]);
+  useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function pollOperation() {
+      const request = generation.current;
+      try {
+        const work = await api.operation();
+        if (!disposed && request === generation.current && !busy.current) {
+          operationVerified.current = true;
+          latestOperation.current = work;
+          setOperation(work);
+          setOperationError("");
+        }
+      } catch (cause) {
+        if (!disposed && request === generation.current && !busy.current) {
+          operationVerified.current = false;
+          setOperationError(errorMessage(cause));
+        }
+      }
+      if (!disposed) timer = setTimeout(pollOperation, 500);
+    }
+    void pollOperation();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, []);
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -193,6 +379,33 @@ function App() {
     setSnapshot(await api.recover());
     setOperation(await api.operation());
   }
+  const launchNotices = (
+    <>
+      {handoffError && (
+        <p className="notice" role="alert">
+          Android launch links could not be checked. {handoffError}
+        </p>
+      )}
+      <HandoffNotices
+        notices={handoffs}
+        available={
+          !connection &&
+          handoffAvailable({
+            snapshot,
+            operation,
+            inspected,
+            pending: !!pending,
+          })
+        }
+        apply={applyHandoff}
+        dismiss={(id) =>
+          setHandoffs((previous) =>
+            previous.filter((notice) => notice.id !== id),
+          )
+        }
+      />
+    </>
+  );
   return (
     <div className="app">
       <header className="app-header">
@@ -247,7 +460,7 @@ function App() {
             <p>{error || connection}</p>
           </div>
           <button
-            disabled={!!pending}
+            disabled={!!pending || operationBusy(operation)}
             onClick={() =>
               void run("Reconnecting", async () => {
                 const [capture, work, prefs] = await Promise.all([
@@ -259,7 +472,8 @@ function App() {
                 setOperation(work);
                 setPreferences(prefs);
                 await refresh();
-                setConnection("");
+                setSnapshotError("");
+                setOperationError("");
               })
             }
           >
@@ -274,13 +488,14 @@ function App() {
         pending={pending}
         recover={recoverSave}
       />
+      {!panel && launchNotices}
       <div className="layout">
         <Capture
           snapshot={snapshot}
           operation={operation}
           devices={devices}
           draft={draft}
-          change={setDraft}
+          change={changeDraft}
           preferences={preferences}
           savePreferences={savePreferences}
           refresh={refresh}
@@ -294,6 +509,7 @@ function App() {
           <Library
             inspected={inspected}
             open={open}
+            close={closeSession}
             snapshot={snapshot}
             operation={operation}
             onOperation={setOperation}
@@ -322,9 +538,10 @@ function App() {
           close={() => setPanel(null)}
           locked={setupLocked}
         >
-          {error && (
+          {launchNotices}
+          {(error || connection) && (
             <p className="error" role="alert">
-              {error}
+              {error || connection}
             </p>
           )}
           {setupLocked && (
@@ -340,7 +557,7 @@ function App() {
             <Setup
               serial={draft.serial}
               selectDevice={(serial) =>
-                setDraft({ ...draft, serial, application_id: "" })
+                changeDraft({ ...draft, serial, application_id: "" })
               }
               devices={devices}
               refresh={refresh}
@@ -367,6 +584,7 @@ function App() {
               preferences={preferences}
               save={savePreferences}
               idle={idle}
+              editable={preferencesEditable(snapshot, operation)}
               run={run}
               pending={pending}
               setup={() => setPanel("setup")}
