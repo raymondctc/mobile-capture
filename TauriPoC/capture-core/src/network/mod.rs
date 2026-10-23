@@ -927,3 +927,102 @@ pub(crate) fn admit_saved(directory: &Path, lock: &Path) -> Result<()> {
     let _network = FileLease::acquire(&directory.join("runtime/network.writer"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn config(root: &Path) -> Bootstrap {
+        Bootstrap {
+            paths: CapturePaths {
+                output_root: root.join("output"),
+                runtime_root: Some(root.join("private")),
+            },
+            tools: ToolSelection {
+                adb: std::env::current_exe().unwrap(),
+                worker: "unused-worker".into(),
+                guardian: "unused-guardian".into(),
+                mitmdump: None,
+                addon: "unused-addon".into(),
+            },
+            fixture: true,
+            request: StartRequest {
+                serial: "unused-device".into(),
+                whole_device_consent: true,
+                selection: CaptureSelection::Network(NetworkConsent { whole_device: true }),
+                limits: Limits::default(),
+                log_scope: LogScope::default(),
+                network_policy: NetworkPolicy::default(),
+                context: CaptureContext::default(),
+            },
+            directory: root.join("new-session"),
+            recovery: false,
+            fixture_drop_initial_reply: false,
+            ca: root.join("unused-ca"),
+            lock: root.join("private/owner.lock"),
+            resolved_logs: None,
+            descriptor_version: 1,
+        }
+    }
+    #[test]
+    fn guardian_refuses_missing_or_unverified_prior_metadata_before_publish() {
+        let states = [
+            None,
+            Some(json!({"phase":"saved"})),
+            Some(json!({"phase":"saved","routing_restored":null})),
+            Some(json!({"phase":"saved","routing_restored":false})),
+            Some(json!({"phase":"recording","routing_restored":true})),
+            Some(json!({"phase":"unknown","routing_restored":true})),
+        ];
+        for (index, state) in states.into_iter().enumerate() {
+            let root = tempfile::tempdir().unwrap();
+            let config = config(root.path());
+            let prior = root.path().join("previous-session");
+            if let Some(state) = state {
+                lease::write(&prior.join("session.json"), &state).unwrap();
+            }
+            let mut owner = FileLease::acquire_owner(&config.lock).unwrap();
+            owner.publish(&prior).unwrap();
+            drop(owner);
+            let locator = fs::read(&config.lock).unwrap();
+            let lock = config.lock.clone();
+            let directory = config.directory.clone();
+            let result = Guardian::open(config);
+            let Err(error) = result else {
+                panic!("Guardian accepted unverified prior state {index}");
+            };
+            assert!(error.contains(&prior.display().to_string()), "{error}");
+            assert!(error.contains("Restore"), "{error}");
+            assert!(error.contains("owning app"), "{error}");
+            assert_eq!(fs::read(&lock).unwrap(), locator);
+            assert!(!directory.exists());
+            assert!(FileLease::acquire_owner(&lock).is_ok());
+        }
+    }
+    #[test]
+    fn guardian_accepts_completed_prior_metadata_without_a_bootstrap() {
+        for phase in ["saved", "partial", "failed", "stopped"] {
+            let root = tempfile::tempdir().unwrap();
+            let config = config(root.path());
+            let prior = root.path().join("previous-session");
+            lease::write(
+                &prior.join("session.json"),
+                &json!({
+                    "phase":phase,"routing_restored":true
+                }),
+            )
+            .unwrap();
+            let mut owner = FileLease::acquire_owner(&config.lock).unwrap();
+            owner.publish(&prior).unwrap();
+            drop(owner);
+            let mut guardian = Guardian::open(config).unwrap();
+            assert_eq!(
+                guardian._lease.prior().unwrap(),
+                Some(guardian.config.directory.clone())
+            );
+            assert!(guardian.engine.is_none());
+            assert!(guardian.route.is_none());
+        }
+    }
+}

@@ -372,3 +372,65 @@ fn reap_later(mut child: Child) {
         let _ = child.wait();
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn release_clears_only_authenticated_missing_state_for_its_current_locator() {
+        for authenticated in [false, true] {
+            for matching_locator in [false, true] {
+                for missing in [None, Some("session.json"), Some("runtime/bootstrap.json")] {
+                    let root = tempfile::tempdir().unwrap();
+                    let lock = root.path().join("private/owner.lock");
+                    let directory = root.path().join("previous-session");
+                    fs::create_dir_all(directory.join("runtime")).unwrap();
+                    fs::write(directory.join("session.json"), b"{}").unwrap();
+                    fs::write(directory.join("runtime/bootstrap.json"), b"{}").unwrap();
+                    if let Some(missing) = missing {
+                        fs::remove_file(directory.join(missing)).unwrap();
+                    }
+                    let locator = if matching_locator {
+                        directory.clone()
+                    } else {
+                        root.path().join("another-session")
+                    };
+                    let mut owner = lease::FileLease::acquire_owner(&lock).unwrap();
+                    owner.publish(&locator).unwrap();
+                    drop(owner);
+                    let mut client = Client::detached(directory);
+                    if authenticated {
+                        client.completion = Some(AuthenticatedCompletion);
+                    }
+                    client.release(&lock).unwrap();
+                    let expected = if authenticated && matching_locator && missing.is_some() {
+                        None
+                    } else {
+                        Some(locator)
+                    };
+                    assert_eq!(
+                        prior(&lock).unwrap(), expected,
+                        "authenticated={authenticated}, matching={matching_locator}, missing={missing:?}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn authenticated_missing_state_cannot_clear_a_held_owner_locator() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = root.path().join("private/owner.lock");
+        let directory = root.path().join("missing-session");
+        let mut owner = lease::FileLease::acquire_owner(&lock).unwrap();
+        owner.publish(&directory).unwrap();
+        let mut client = Client::detached(directory.clone());
+        client.completion = Some(AuthenticatedCompletion);
+        assert_eq!(
+            client.release(&lock).unwrap_err(),
+            "Another capture owns this connection or source"
+        );
+        assert_eq!(owner.prior().unwrap(), Some(directory));
+    }
+}

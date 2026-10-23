@@ -407,6 +407,86 @@ fn outcome(snapshot: Snapshot) -> Result<StopOutcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn tools() -> ToolSelection {
+        ToolSelection {
+            adb: std::env::current_exe().unwrap(),
+            worker: "unused-worker".into(),
+            guardian: "unused-guardian".into(),
+            mitmdump: None,
+            addon: "unused-addon".into(),
+        }
+    }
+    #[test]
+    fn fresh_owner_refuses_missing_or_unverified_prior_metadata() {
+        let states = [
+            None,
+            Some(b"invalid".to_vec()),
+            Some(
+                serde_json::to_vec(&json!({"phase":"recording","routing_restored":true})).unwrap(),
+            ),
+            Some(serde_json::to_vec(&json!({"phase":"saved","routing_restored":false})).unwrap()),
+            Some(serde_json::to_vec(&json!({"phase":"saved"})).unwrap()),
+            Some(serde_json::to_vec(&json!({"phase":"unknown","routing_restored":true})).unwrap()),
+        ];
+        for (index, state) in states.into_iter().enumerate() {
+            let root = tempfile::tempdir().unwrap();
+            let runtime = root.path().join("runtime");
+            let prior = root.path().join("previous-session");
+            fs::create_dir(&runtime).unwrap();
+            if let Some(state) = state {
+                fs::create_dir(&prior).unwrap();
+                fs::write(prior.join("session.json"), state).unwrap();
+            }
+            let lock = runtime.join("owner.lock");
+            fs::write(&lock, prior.to_str().unwrap()).unwrap();
+            let locator = fs::read(&lock).unwrap();
+            let paths = CapturePaths {
+                output_root: root.path().join("output"),
+                runtime_root: Some(runtime),
+            };
+            let result = CaptureOwner::open(paths.clone(), tools(), true);
+            let Err(error) = result else {
+                panic!("Fresh owner accepted unverified prior state {index}");
+            };
+            assert!(error.contains(&prior.display().to_string()), "{error}");
+            assert!(error.contains("Restore"), "{error}");
+            assert!(error.contains("owning app"), "{error}");
+            assert_eq!(fs::read(lock).unwrap(), locator);
+            assert!(!paths.output_root.exists());
+        }
+    }
+    #[test]
+    fn fresh_owner_accepts_completed_swift_metadata_and_attaches_own_bootstrap() {
+        for phase in ["saved", "partial", "failed"] {
+            let root = tempfile::tempdir().unwrap();
+            let runtime = root.path().join("runtime");
+            let prior = root.path().join("swift-session");
+            fs::create_dir(&runtime).unwrap();
+            fs::create_dir(&prior).unwrap();
+            fs::write(runtime.join("owner.lock"), prior.to_str().unwrap()).unwrap();
+            fs::write(
+                prior.join("session.json"),
+                serde_json::to_vec(&json!({
+                    "phase": phase, "routing_restored": true
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let paths = CapturePaths {
+                output_root: root.path().join("output"),
+                runtime_root: Some(runtime),
+            };
+            let mut owner = CaptureOwner::open(paths.clone(), tools(), true).unwrap();
+            assert!(matches!(owner.status().unwrap(), Snapshot::Idle { .. }));
+            fs::create_dir(prior.join("runtime")).unwrap();
+            fs::write(prior.join("runtime/bootstrap.json"), b"{}").unwrap();
+            let owner = CaptureOwner::open(paths, tools(), true).unwrap();
+            assert_eq!(owner.directory(), Some(prior.as_path()));
+            assert!(!owner.network.unwrap().has_authenticated_completion());
+        }
+    }
     #[test]
     fn absent_namespace_is_idle_but_unreadable_prior_state_is_not_verified() {
         let root = tempfile::tempdir().unwrap();
