@@ -1,0 +1,172 @@
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
+import { api, type Preferences } from "./api";
+import { product } from "./product";
+import { Policies } from "./Policies";
+import type { RunAction } from "./state";
+export function Settings({
+  preferences,
+  save,
+  idle,
+  run,
+  pending,
+  setup,
+  doctor,
+}: {
+  preferences: Preferences | undefined;
+  save: (preferences: Preferences) => Promise<void>;
+  idle: boolean;
+  run: RunAction;
+  pending: string;
+  setup: () => void;
+  doctor: () => void;
+}) {
+  const [draft, setDraft] = useState(preferences);
+  const [version, setVersion] = useState("");
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    void getVersion()
+      .then(setVersion)
+      .catch(() => setVersion("Unavailable outside the installed app"));
+  }, []);
+  useEffect(() => setDraft(preferences), [preferences]);
+  const locked = !idle || !!pending;
+  function update(next: Preferences) {
+    setDraft(next);
+    setSaved(false);
+  }
+  const overridesValid =
+    draft &&
+    [draft.adb_override, draft.mitmdump_override].every(
+      (path) =>
+        path === null ||
+        path.startsWith("/") ||
+        /^\\\\[^\\]+\\[^\\]+\\/.test(path) ||
+        /^[A-Za-z]:[\\/]/.test(path),
+    );
+  return (
+    <div className="settings">
+      <div className="button-row">
+        <button onClick={setup}>Device setup</button>
+        <button onClick={doctor}>Host Doctor</button>
+      </div>
+      <p>
+        Storage and tool changes apply to the next recording. Capture, saving,
+        setup, and recovery must finish first.
+      </p>
+      {!idle && (
+        <p className="notice">
+          Settings are read-only until capture ownership and device routing are
+          safely idle.
+        </p>
+      )}
+      {draft ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (draft && overridesValid)
+              void run("Saving settings", async () => {
+                await save(draft);
+                setSaved(true);
+              });
+          }}
+        >
+          <fieldset disabled={locked}>
+            <legend>Capture storage</legend>
+            <label>
+              Session folder
+              <input
+                className="mono"
+                value={draft.output_root}
+                onChange={(event) =>
+                  update({ ...draft, output_root: event.target.value })
+                }
+                required
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() =>
+                void run("Choosing capture storage", async () => {
+                  const directory = await product.chooseFolder();
+                  if (directory) update({ ...draft, output_root: directory });
+                })
+              }
+            >
+              Choose folder
+            </button>
+          </fieldset>
+          <Policies value={draft} change={update} disabled={locked} />
+          <fieldset disabled={locked}>
+            <legend>Explicit tool overrides</legend>
+            <p className="hint">
+              Packaged tools are the default. Enter an absolute executable path
+              only when you deliberately use external tools. A damaged packaged
+              payload does not silently fall back to installed tools.
+            </p>
+            <label>
+              ADB executable
+              <input
+                className="mono"
+                value={draft.adb_override ?? ""}
+                placeholder="Use packaged ADB"
+                onChange={(event) =>
+                  update({ ...draft, adb_override: event.target.value || null })
+                }
+              />
+            </label>
+            <label>
+              mitmdump executable
+              <input
+                className="mono"
+                value={draft.mitmdump_override ?? ""}
+                placeholder="Use packaged network engine"
+                onChange={(event) =>
+                  update({
+                    ...draft,
+                    mitmdump_override: event.target.value || null,
+                  })
+                }
+              />
+            </label>
+            {!overridesValid && (
+              <p className="notice">
+                Each override must be an absolute executable path.
+              </p>
+            )}
+          </fieldset>
+          <button className="primary" disabled={locked || !overridesValid}>
+            Save settings
+          </button>
+          {saved && (
+            <p className="success" role="status">
+              Settings saved for future recordings.
+            </p>
+          )}
+        </form>
+      ) : (
+        <p className="notice">
+          Preferences could not be loaded. Retry connecting to the native app.
+        </p>
+      )}
+      <section className="about">
+        <h3>Mobile Capture Android</h3>
+        <p>Version {version || "…"}</p>
+        <p>
+          Updates use manual installation. Finish capture, save, setup, and
+          recovery before opening the Android release page.
+        </p>
+        <button
+          disabled={locked}
+          onClick={() => void run("Opening Android releases", api.updates)}
+        >
+          Check for updates
+        </button>
+        <p className="hint">
+          Closing the window keeps a normal recording alive. Reopen the app to
+          return. Quitting waits for routing restoration and safe shutdown.
+        </p>
+      </section>
+    </div>
+  );
+}

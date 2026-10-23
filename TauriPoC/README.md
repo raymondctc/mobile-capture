@@ -1,62 +1,97 @@
-# Mobile Capture Android desktop
+# Record Android evidence with Mobile Capture
 
-For complete macOS ARM64 and Windows x64 packages and the JSON Doctor contract, read [Android distribution](ANDROID-DISTRIBUTION.md). The prototype architecture notes below remain useful for development.
+Use Mobile Capture Android to record network traffic, app logs, or both on macOS and Windows. The desktop workspace opens saved evidence without capture tools. For installation and packaged dependencies, read [Android distribution](ANDROID-DISTRIBUTION.md).
 
-# Run the Tauri Android capture PoC
+## Connect and prepare a phone
 
-This isolated desktop app captures whole-device Android logs after explicit consent. Network capture is optional and requires separate consent. The timeline previews up to 500 recent events shared across sources, retaining each source's newest events. Sources with fewer events leave capacity for busier sources. The evidence ZIP contains admitted raw sources, normalized events, markers, context, coverage gaps, and a schema 1 manifest with checksums.
+1. Connect your Android phone with USB and unlock it.
+2. Enable Developer options and USB debugging in Android Settings.
+3. Approve this computer on the phone.
+4. Open **Device setup**, refresh the devices, and explicitly select your phone.
+5. Run **Host Doctor** to check the packaged tools and capture storage.
 
-App scope and iPhone capture are unavailable. This app does not replace the Swift application.
+Doctor checks this computer. A ready result does not prove phone traffic or certificate trust. If a packaged dependency is damaged, replace the app with the official Android release. Use **Settings** to choose a writable capture folder or an explicit absolute tool override.
 
-## Prerequisites and local run
+For HTTPS capture, continue through **Prepare** and **Check**.
 
-Install Node 22, Rust, the platform's Tauri build prerequisites, and Android platform-tools. The app looks for `adb` on `PATH`, in `ANDROID_HOME` or `ANDROID_SDK_ROOT`, and in the standard user SDK location. On macOS, it also checks `/opt/homebrew/bin` and `/usr/local/bin`. Network mode also requires an installed **mitmdump 12.2.3**. The proxy engine is not bundled. The app checks `PATH` and those macOS executable directories for mitmdump. Set `MOBILE_CAPTURE_POC_MITMDUMP` to its absolute executable path for another installation. The app packages its own PoC addon.
+1. Read and accept the setup network disclosure.
+2. Choose **Copy public certificate to phone**. Wait for routing restoration.
+3. On Android, open Settings and search for "Install a certificate" or "CA certificate".
+4. Select the public certificate in Downloads. Complete Android's manual installation steps.
+5. Compare the displayed public certificate fingerprint where Android provides it.
+6. Start the 45-second connection check.
+7. Open the check URL in the selected phone's browser. **Open on phone** opens that same URL through ADB.
+8. Confirm that you opened the URL on that phone.
+9. Finish the check and wait for routing restoration, or let its timer expire.
+
+A successful check requires the exact fresh HTTPS response and your phone-origin confirmation. A host request, a TLS error, or an installation acknowledgment cannot pass. A different device, a changed certificate, or an expired result requires another check. The browser check does not prove that every app trusts user certificates. Apps with certificate pinning may reject interception.
+
+Choose **Export readiness report** to save the current public host and setup facts. The report excludes captured bodies, logs, private keys, and routing files. **Set up later** leaves the phone unverified and keeps setup available in the toolbar.
+
+## Record a task
+
+1. Select a ready Android device. The app retains an unavailable selection so that reconnecting cannot silently target another phone.
+2. Choose **Network only**, **Logs only**, or **Logs and network**. Network only is the initial default.
+3. For logs, keep **Selected app** and choose **Refresh apps**. Search the installed apps, or enter the application ID manually.
+4. Enter a task title, notes, and reproduction steps if needed.
+5. Review **Capture limits** and save changes before recording.
+6. Accept each applicable consent disclosure and choose **Start recording**.
+
+Shared UID apps cannot be isolated. An app log recording checks identity before writing logs. If you choose whole-device logs, consent applies to that recording. Whole-device network capture has a separate disclosure. Stopping or changing the selected device clears both consent choices.
+
+Task context and display choices persist for the next recording. Source and policy changes apply to a new recording. Log limits and network limits are independent. Reaching a log limit does not stop network recording. When the network admission duration or budget ends, forwarding continues until you stop and restore routing.
+
+During a recording, add a marker to describe a reproduction step. If adding a marker fails, its text stays in the field. Closing the window keeps a normal recording alive. Reopen Mobile Capture Android to return.
+
+## Inspect complete evidence
+
+Open **Saved sessions** to choose a capture in the configured folder. Use **Open folder** for another saved session. Opening evidence does not replace the active capture controls.
+
+Search covers the complete indexed session, including full details and decoded body text. Select a source to include network events, logs, or markers. The indexing indicator shows any remaining backlog. Results can grow as indexing catches up.
+
+Use the reading controls as follows.
+
+- **Pause view** freezes the visible sequence while recording and indexing continue.
+- **Follow latest** keeps the newest page visible. Scrolling away turns following off.
+- **Jump to latest** returns to the newest page with the current search and source filter.
+- **Clear view** shows subsequent events. It preserves the saved evidence.
+- **Full session** removes the clear and pause boundaries.
+- The order control and page buttons let you read earlier or later evidence.
+- **Wrap lines** changes presentation without altering retained bytes.
+
+If a page cursor becomes invalid, the workspace reports the reason and reloads the first page with your filters preserved. A selected event stays open when it is outside the current page.
+
+Select an event to read full metadata, retained request bodies, or retained response bodies. Content loads in bounded 64 KiB chunks. Use the chunk buttons to read the complete retained content. Text uses UTF-8. Binary content has a hexadecimal view. Compressed bodies offer a decoded view when safe decoding is available. Original retained body bytes remain separate from decoded content. Unavailable bodies and decoding limits have explicit reasons.
+
+Use **Reveal raw source** to locate the admitted source file for the selected event. Read-only inspection never changes raw evidence.
+
+## Stop, recover, and save
+
+Choose **Stop & Save** to restore routing, verify source shutdown, and publish an archive. Progress shows the current stage. **Cancel save** is available before publication. An accepted cancellation preserves raw evidence and any previous archive. After a save failure, use **Retry save**.
+
+Use **Stop without archive** if you want to finish capture and inspect before saving. Choose **Save archive** for the inspected stopped session. **Copy archive to…** opens a native destination dialog. **Reveal archive** locates the published file.
+
+If routing recovery is required, reconnect the original phone and choose **Retry safe recovery**. Export and new recordings remain blocked until restoration and shutdown are verified. Do not change the phone's proxy configuration while recovery owns it. Verified partial evidence can retain coverage gaps, unavailable bodies, interruptions, and source limits. Review those facts and the raw evidence before sharing an archive.
+
+Quitting waits for safe shutdown and routing restoration. Unresolved recovery prevents exit. Updates use manual installation. Finish capture, save, setup, and recovery before choosing **Check for updates** in Settings.
+
+## Run the desktop workspace in development
+
+Install Node 22, Rust, and the platform's Tauri build prerequisites. Prepare the packaged Android tools as described in [Android distribution](ANDROID-DISTRIBUTION.md), or deliberately configure supported absolute development overrides.
 
 ```sh
 cd TauriPoC
-export PATH=/opt/homebrew/opt/node@22/bin:$PATH
 npm ci
 npm run dev
 ```
 
-The PATH line above is specific to the development Mac. On Windows PowerShell, run `npm ci` and `npm run dev` after installing the same prerequisites.
+On the development Mac, prepend `/opt/homebrew/opt/node@22/bin` to `PATH` if Node 22 is not the default.
 
-Connect an Android device or start an emulator. Enable USB debugging and accept the authorization prompt. Refresh devices, select a ready device, and check the whole-device logs consent box. To capture network traffic, also check the separate network consent box. Starting network mode configures temporary device proxy routing. The app shows the session certificate path and synthetic check URL supplied by the running engine. Install and trust that certificate on the Android device manually. The app does not alter host trust settings. HTTPS content whose trust or decryption fails is not observed as decoded HTTP.
-
-Add a marker to record a reproduction step. Search and source filtering cover the displayed preview. Selecting a network event shows decoded details and at most 1024 original body bytes as a labelled preview. Binary previews appear as base64. Admitted complete bytes may be retained in the ZIP; unavailable bodies and coverage gaps appear in the manifest. A TLS error count does not mean HTTP content was observed.
-
-Choose **Stop** to restore device routing and wait for source shutdown. If recovery is required, keep the device connected and choose **Retry recovery**. Export and a new capture stay disabled until restoration and source verification finish. A verified partial capture can be exported, with its limitations recorded in the manifest. Review raw evidence before sharing it.
-
-Normal sessions use the Tauri application's data directory under `dev.mobilecapture.tauri-poc`. Private runtime state is separate from exported evidence. A guardian process owns network session restoration after a GUI interruption. A hard guardian death can interrupt capture; recovery then reports partial evidence. An external launcher that stops its whole process tree can also interrupt the guardian. Reopen the app with the original device connected to recover. No saved process ID authorizes killing an unrelated process.
-
-## Verify without a phone
+Build the frontend and run its behavior checks with these commands.
 
 ```sh
-npm run verify
-npm run fixture
+npm run web:build
+node scripts/test-ui.mjs
 ```
 
-The verification command tests desktop tool discovery against synthetic files, builds the fake ADB and real collector, exercises the Rust owner, and checks an exported ZIP against `CaptureRuntime.evidence`. The fixture launcher compiles fake ADB and starts the native development app with fresh private output and runtime directories. Its banner identifies fake ADB. Selecting network mode uses the installed real proxy engine but does not capture phone traffic.
-
-The separate `scripts/probe-network-engine.py` check requires `CAPTURE_TEST_MITMDUMP` set to an absolute path to mitmdump 12.2.3. It uses loopback HTTP and HTTPS with private client trust, then compares original body bytes across native flows, HAR, and JSONL. CI runs this real-engine check on macOS and Windows.
-
-## Build and check the packaged app
-
-On macOS:
-
-```sh
-npm run build -- --bundles app
-npm run fixture -- "$PWD/target/release/bundle/macos/Mobile Capture PoC.app/Contents/MacOS/mobile-capture-tauri-poc"
-```
-
-On Windows PowerShell, build with `npm run build -- --bundles nsis` and launch the installed executable through the fixture script. The build packages `collector-worker`, `capture-guardian`, and `network_addon.py`. It does not package mitmdump. The Tauri adapter exposes capture commands without frontend shell access. The `tauri-poc.yml` workflow builds macOS app and Windows NSIS artifacts. A fixture and CI run do not establish physical-device acceptance.
-
-## Capture and evidence limits
-
-Raw log admission stops at 32 MiB, 100,000 newline-terminated records, or 120 seconds. Network admission is separately bounded to 32 HTTP flows and 120 seconds, with 256 KiB per retained request or response body, 16 KiB of headers per message, and a 96 MiB aggregate artifact budget. Reaching an evidence limit does not imply the proxy stopped forwarding while routing still points to it. Network omission counts, unavailable bodies, errors, forced stops, and interruptions make evidence partial.
-
-Raw logs retain CRLF, invalid UTF-8, malformed records, and partial tails. Network evidence includes admitted native flow copies, HAR, event records, and an incomplete-flow summary. Export includes only the documented raw sources and excludes private runtime state, routing records, control credentials, and the private CA. Event IDs derive from raw source, relative path, one-based line number, and original record bytes. Device clock uncertainty remains unknown; local markers use host time. The manifest is authoritative for source coverage, restoration, and completeness.
-
-The worker uses `adb -H 127.0.0.1 -P 5037` for collection. Discovery may prepare the shared ADB server. Capture does not kill that server. The PoC changes only selected Android device routing in network mode and restores it before export. Device disconnection or external routing changes can require a recovery retry. Keep the original device available until recovery finishes.
-
-Log-only shutdown still has platform limits. On macOS, a hard-killed worker can leave its ADB client running until that client exits; without a verified receipt, export stays disabled. On Windows, stopping the owned ADB client can require termination and is recorded as forced, partial evidence. Network recovery does not erase these source limitations.
+The frontend checks exercise consent defaults, UTF-8 context budgets, operation schemas, routing admission, setup freshness, reading boundaries, and chunk decoding. They do not certify native dialogs, packaged lifecycle behavior, phone trust, device restoration, or Windows hardware support. Use the native fixture and installed-package verification described in [Android distribution](ANDROID-DISTRIBUTION.md) for those separate checks. Physical phone acceptance still requires supported Android hardware.
