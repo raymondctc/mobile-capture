@@ -218,49 +218,6 @@ pub fn wait_bounded(child: &mut Child, timeout: Duration) -> Result<std::process
     }
 }
 
-pub fn discover(adb: &std::path::Path) -> Result<Vec<crate::model::Device>> {
-    use crate::model::{Device, DeviceState};
-    let mut command = Command::new(adb);
-    quiet(&mut command);
-    command.args(["devices", "-l"]);
-    let output =
-        output_bounded(&mut command, Duration::from_secs(5), None, 65536, 65536).map_err(|e| {
-            format!("Cannot run ADB. Install Android platform-tools and put adb on PATH. {e}")
-        })?;
-    if !output.status.success() {
-        return Err(format!(
-            "ADB discovery failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    let text = String::from_utf8(output.stdout).map_err(|_| "ADB discovery was not UTF-8")?;
-    Ok(text
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let serial = fields.next()?;
-            let state = fields.next()?;
-            if serial == "List" || serial.starts_with('*') {
-                return None;
-            }
-            let name = fields
-                .find_map(|field| field.strip_prefix("model:"))
-                .unwrap_or(serial)
-                .replace('_', " ");
-            Some(Device {
-                serial: serial.into(),
-                name,
-                state: match state {
-                    "device" => DeviceState::Ready,
-                    "unauthorized" => DeviceState::Unauthorized,
-                    "offline" => DeviceState::Offline,
-                    _ => DeviceState::Unavailable,
-                },
-            })
-        })
-        .collect())
-}
-
 #[cfg(windows)]
 pub struct Job(windows_sys::Win32::Foundation::HANDLE);
 #[cfg(windows)]

@@ -124,9 +124,6 @@ impl LogSession {
             session: None,
         }
     }
-    pub fn discover(&self) -> Result<Vec<Device>> {
-        process::discover(&self.adb)
-    }
     pub fn start(
         &mut self,
         request: StartRequest,
@@ -146,8 +143,7 @@ impl LogSession {
                 "Stop and verify the existing collector before starting another capture".into(),
             );
         }
-        let device = self
-            .discover()?
+        let device = crate::android::devices(&self.adb)?
             .into_iter()
             .find(|d| d.serial == serial && d.state == DeviceState::Ready)
             .ok_or("Select an authorized, ready Android device")?;

@@ -47,9 +47,6 @@ impl CaptureOwner {
         }
         Ok(owner)
     }
-    pub fn discover(&self) -> Result<Vec<Device>> {
-        crate::process::discover(&self.tools.adb)
-    }
     pub fn release_completed_control(&mut self) -> Result<()> {
         if self.network.is_some() {
             if !matches!(self.status()?, Snapshot::Stopped(_) | Snapshot::Failed(_)) {
@@ -90,9 +87,6 @@ impl CaptureOwner {
             return Err("Stop and verify the active log capture before releasing control".into());
         }
         Ok(())
-    }
-    pub fn applications(&self, serial: &str) -> Result<Vec<crate::android::AndroidApplication>> {
-        crate::android::applications(&self.tools.adb, serial)
     }
     pub fn open_saved(&mut self, directory: std::path::PathBuf) -> Result<Snapshot> {
         let directory = fs::canonicalize(directory).map_err(|e| e.to_string())?;
@@ -178,8 +172,7 @@ impl CaptureOwner {
                         "Explicit consent to whole-device HTTP(S) capture is required".into(),
                     );
                 }
-                if !self
-                    .discover()?
+                if !crate::android::devices(&self.tools.adb)?
                     .iter()
                     .any(|d| d.serial == request.serial && d.state == DeviceState::Ready)
                 {

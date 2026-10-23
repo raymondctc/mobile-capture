@@ -1,5 +1,5 @@
 use capture_poc_core::{
-    android::AndroidApplication,
+    android::{self, AndroidApplication},
     library::EvidenceLibrary,
     model::*,
     preferences::{self, Preferences},
@@ -168,11 +168,13 @@ impl Desktop {
     }
 
     pub fn discover(&self) -> Result<Vec<Device>> {
-        self.with_owner(|owner| owner.discover())
+        let tools = self.tools()?;
+        android::devices(&tools.adb)
     }
 
     pub fn applications(&self, serial: &str) -> Result<Vec<AndroidApplication>> {
-        self.with_owner(|owner| owner.applications(serial))
+        let tools = self.tools()?;
+        android::applications(&tools.adb, serial)
     }
 
     pub fn reconnect(&self) -> Result<Snapshot> {
@@ -603,6 +605,9 @@ mod tests {
                 assert_eq!(app.uid, 1010001);
                 assert!(app.shared_uid);
             }
+            assert!(
+                !CaptureOwner::prior_shutdown_verified(&desktop.paths().unwrap(), true).unwrap()
+            );
             assert_eq!(desktop.ensure_idle().unwrap_err(), error);
             assert_eq!(desktop.reconnect().unwrap_err(), error);
             assert_eq!(

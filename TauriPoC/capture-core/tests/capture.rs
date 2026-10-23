@@ -742,7 +742,11 @@ fn app_scope_discovers_active_user_and_persists_only_verified_owned_bytes() {
     for serial in ["fixture-app-uid", "fixture-app-pid"] {
         let root = tempfile::tempdir().unwrap();
         let (mut owner, _) = app_fixture(root.path());
-        let apps = owner.applications(serial).unwrap();
+        let adb = root
+            .path()
+            .join("app-tools")
+            .join(format!("fake-adb{}", std::env::consts::EXE_SUFFIX));
+        let apps = capture_poc_core::android::applications(&adb, serial).unwrap();
         assert_eq!(apps[0].application_id, "com.fixture.app");
         assert!(!apps[0].shared_uid);
         owner.start(app_request(serial)).unwrap();
