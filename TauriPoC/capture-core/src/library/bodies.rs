@@ -7,6 +7,23 @@ use std::io::Read;
 const DECODED_BOUND: usize = 32 * 1024 * 1024;
 
 pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescriptor, Vec<u8>) {
+    let bounded = |mut descriptor: BodyDescriptor| {
+        for text in [
+            &mut descriptor.reason,
+            &mut descriptor.decoded_reason,
+            &mut descriptor.content_encoding,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let mut end = text.len().min(1024);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+        }
+        descriptor
+    };
     let value = &event.detail[side.key()];
     let encoding = encoding(event, side);
     let unavailable = if value.is_null() {
@@ -46,7 +63,7 @@ pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescrip
     };
     let Ok(raw) = raw else {
         descriptor.decoded_reason = descriptor.reason.clone();
-        return (descriptor, vec![]);
+        return (bounded(descriptor), vec![]);
     };
     if encoding.is_none() {
         descriptor.decoded_available = raw.len() <= DECODED_BOUND;
@@ -58,9 +75,9 @@ pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescrip
             descriptor.reason = descriptor.decoded_reason.clone();
             descriptor.bytes = 0;
             descriptor.text = false;
-            return (descriptor, vec![]);
+            return (bounded(descriptor), vec![]);
         }
-        return (descriptor, raw);
+        return (bounded(descriptor), raw);
     }
     let content = decode(&raw, encoding.as_deref().unwrap());
     descriptor.decoded_available = content.is_ok();
@@ -70,9 +87,9 @@ pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescrip
         descriptor.reason = descriptor.decoded_reason.clone();
         descriptor.bytes = content.as_ref().map_or(0, |v| v.len() as u64);
         descriptor.text = content.as_ref().is_ok_and(|b| is_text(b));
-        (descriptor, content.unwrap_or_default())
+        (bounded(descriptor), content.unwrap_or_default())
     } else {
-        (descriptor, raw)
+        (bounded(descriptor), raw)
     }
 }
 

@@ -295,6 +295,7 @@ fn truncate(text: &mut String, max: usize) {
     }
 }
 pub(crate) fn preview(event: &mut Event) {
+    const EVENT_BOUND: usize = 6 * 1024 - 96;
     use base64::{engine::general_purpose::STANDARD, Engine};
     fn shorten(value: &mut serde_json::Value) {
         match value {
@@ -315,25 +316,54 @@ pub(crate) fn preview(event: &mut Event) {
             _ => {}
         }
     }
-    let original = event.detail.clone();
-    shorten(&mut event.detail);
+    let mut bodies = serde_json::Map::new();
     for key in ["request_body", "response_body"] {
-        if let Some(body) = original.get(key) {
-            let mut preview = body.clone();
+        if let Some(body) = event.detail.get(key) {
+            let mut fields = serde_json::Map::new();
+            for name in [
+                "encoding",
+                "unavailable",
+                "reason",
+                "byte_basis",
+                "retained_bytes",
+            ] {
+                if let Some(value) = body.get(name) {
+                    let mut value = value.clone();
+                    shorten(&mut value);
+                    fields.insert(name.into(), value);
+                }
+            }
             if body["unavailable"] != true {
                 if let Some(text) = body["text"].as_str() {
-                    if let Ok(bytes) = STANDARD.decode(text) {
-                        let n = bytes.len().min(1024);
-                        preview["text"] = json!(STANDARD.encode(&bytes[..n]));
-                        preview["preview"] = json!(true);
-                        preview["preview_bytes"] = json!(n);
-                        preview["retained_bytes"] = json!(bytes.len());
+                    // A multiple of four keeps the preview independently decodable.
+                    let prefix = &text.as_bytes()[..text.len().min(1368)];
+                    if let Ok(mut bytes) = STANDARD.decode(prefix) {
+                        bytes.truncate(1024);
+                        fields.insert("text".into(), json!(STANDARD.encode(&bytes)));
+                        fields.insert("preview".into(), json!(true));
+                        fields.insert("preview_bytes".into(), json!(bytes.len()));
+                        let retained = text.len() / 4 * 3
+                            - text
+                                .as_bytes()
+                                .iter()
+                                .rev()
+                                .take_while(|&&b| b == b'=')
+                                .take(2)
+                                .count();
+                        fields.insert("retained_bytes".into(), json!(retained));
                     }
                 }
             }
-            event.detail[key] = preview;
+            bodies.insert(key.into(), serde_json::Value::Object(fields));
         }
     }
+    shorten(&mut event.detail);
+    for (key, body) in bodies {
+        event.detail[key] = body;
+    }
+    truncate(&mut event.id, 128);
+    truncate(&mut event.source, 32);
+    truncate(&mut event.raw_ref, 512);
     truncate(&mut event.summary, 1024);
     truncate(&mut event.timestamp, 64);
     if let Some(original) = &mut event.original_timestamp {
@@ -344,7 +374,7 @@ pub(crate) fn preview(event: &mut Event) {
     }
     truncate(&mut event.kind, 128);
     event.detail["snapshot_preview"] = json!(true);
-    if serde_json::to_vec(event).map_or(true, |v| v.len() > 6144) {
+    if serde_json::to_vec(event).map_or(true, |v| v.len() > EVENT_BOUND) {
         let mut retained = serde_json::Map::new();
         retained.insert("snapshot_preview".into(), json!(true));
         retained.insert("detail_preview_omitted".into(), json!(true));
@@ -354,6 +384,12 @@ pub(crate) fn preview(event: &mut Event) {
             }
         }
         event.detail = serde_json::Value::Object(retained);
+    }
+    if serde_json::to_vec(event).map_or(true, |v| v.len() > EVENT_BOUND) {
+        event.detail = json!({"snapshot_preview":true,"detail_preview_omitted":true});
+        truncate(&mut event.summary, 256);
+        truncate(&mut event.raw_ref, 128);
+        truncate(&mut event.kind, 32);
     }
 }
 

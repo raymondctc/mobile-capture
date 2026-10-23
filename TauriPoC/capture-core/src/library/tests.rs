@@ -632,9 +632,21 @@ fn middle_record_mutation_then_append_rebuilds_generation_and_search() {
     fixture.write("logs/device.log", original.replace(old, new));
     fixture.append("logs/device.log", b"1700000001.0 1 2 I Tag: appended\n");
     finish(&mut library);
-    assert_ne!(library.index.generation, generation, "mutated prefix must invalidate generation");
-    for (search, expected) in [("old-middle-record", 0), ("new-middle-record", 1), ("appended", 1)] {
-        let page = library.query(TimelineQuery { search: search.into(), ..Default::default() }).unwrap();
+    assert_ne!(
+        library.index.generation, generation,
+        "mutated prefix must invalidate generation"
+    );
+    for (search, expected) in [
+        ("old-middle-record", 0),
+        ("new-middle-record", 1),
+        ("appended", 1),
+    ] {
+        let page = library
+            .query(TimelineQuery {
+                search: search.into(),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(page.matching, expected, "wrong search result for {search}");
     }
     let rows = all(&mut library);
@@ -642,7 +654,10 @@ fn middle_record_mutation_then_append_rebuilds_generation_and_search() {
     assert_eq!(rows[0].event.id, first[0].event.id);
     assert_eq!(library.raw_target(&rows[180].event.id).unwrap().line, 181);
     let stable_generation = library.index.generation.clone();
-    fixture.append("logs/device.log", b"1700000002.0 1 2 I Tag: ordinary append\n");
+    fixture.append(
+        "logs/device.log",
+        b"1700000002.0 1 2 I Tag: ordinary append\n",
+    );
     finish(&mut library);
     assert_eq!(library.index.generation, stable_generation);
 }
@@ -661,13 +676,59 @@ fn hostile_body_metadata_stays_bounded_and_full_detail_is_chunked() {
         finish(&mut library);
         let page = library.query(TimelineQuery::default()).unwrap();
         let row = &page.rows[0];
-        assert!(serde_json::to_vec(row).unwrap().len() <= 6144, "query row exceeds 6 KiB");
+        assert!(
+            serde_json::to_vec(row).unwrap().len() <= 6144,
+            "query row exceeds 6 KiB"
+        );
         let detail = library.event(&row.event.id).unwrap().unwrap();
         assert!(!detail.detail_complete);
-        assert!(serde_json::to_vec(&detail).unwrap().len() <= 256 * 1024, "detail fallback exceeds 256 KiB");
-        let total = library.detail_chunk(&row.event.id, 0, 1).unwrap().total_bytes;
-        let tail = library.detail_chunk(&row.event.id, total - 128, 128).unwrap();
-        assert!(STANDARD.decode(tail.data_base64).unwrap().windows(16).any(|s| s == b"full-reason-tail"));
-        assert_eq!(library.query(TimelineQuery { search: "full-reason-tail".into(), ..Default::default() }).unwrap().matching, 1);
+        assert!(
+            serde_json::to_vec(&detail).unwrap().len() <= 256 * 1024,
+            "detail fallback exceeds 256 KiB"
+        );
+        let total = library
+            .detail_chunk(&row.event.id, 0, 1)
+            .unwrap()
+            .total_bytes;
+        let tail = library
+            .detail_chunk(&row.event.id, total - 128, 128)
+            .unwrap();
+        assert!(STANDARD
+            .decode(tail.data_base64)
+            .unwrap()
+            .windows(16)
+            .any(|s| s == b"full-reason-tail"));
+        assert_eq!(
+            library
+                .query(TimelineQuery {
+                    search: "full-reason-tail".into(),
+                    ..Default::default()
+                })
+                .unwrap()
+                .matching,
+            1
+        );
     }
+}
+
+#[test]
+fn preview_bounds_escaped_outer_fields_and_body_metadata() {
+    let mut event = crate::model::Event {
+        id: "\u{0}".repeat(10000),
+        timestamp: "\u{0}".repeat(10000),
+        original_timestamp: Some("\u{0}".repeat(10000)),
+        received_at: Some("\u{0}".repeat(10000)),
+        source: "\u{0}".repeat(10000),
+        kind: "\u{0}".repeat(10000),
+        summary: "\u{0}".repeat(10000),
+        raw_ref: "\u{0}".repeat(10000),
+        detail: json!({"response_body":{"reason":"\u{0}".repeat(10000),"text":STANDARD.encode(vec![0; 2048])}}),
+        clock_uncertainty_ms: None,
+    };
+    timeline::preview(&mut event);
+    let row = TimelineRow {
+        sequence: u64::MAX,
+        event,
+    };
+    assert!(serde_json::to_vec(&row).unwrap().len() <= 6144);
 }

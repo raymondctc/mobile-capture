@@ -2,6 +2,7 @@ use super::{normalize, IndexProgress, SessionDescriptor};
 use crate::{files, model::Result, timeline};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fs::{File, Metadata},
     io::{Read, Seek, SeekFrom},
@@ -26,6 +27,8 @@ pub(super) struct Source {
     pub observed_len: u64,
     modified: String,
     checkpoint: String,
+    #[serde(skip)]
+    prefix_hasher: Option<Sha256>,
     terminal_tail: bool,
     #[serde(skip)]
     pending: Vec<u8>,
@@ -74,10 +77,10 @@ impl Index {
             })
             .optional()
             .map_err(|e| e.to_string())?;
-        if version.as_deref() != Some("1") {
+        if version.as_deref() != Some("2") {
             db.execute_batch("DELETE FROM events; DELETE FROM meta;")
                 .map_err(|e| e.to_string())?;
-            db.execute("INSERT INTO meta VALUES ('version','1')", [])
+            db.execute("INSERT INTO meta VALUES ('version','2')", [])
                 .map_err(|e| e.to_string())?;
         }
         let generation = db
@@ -139,7 +142,7 @@ impl Index {
     }
 
     pub fn validate(&mut self, root: &Path) -> Result<bool> {
-        for source in &self.sources {
+        for source in &mut self.sources {
             match open_optional(root, &source.path)? {
                 None if !source.identity.is_empty() => {
                     self.reset()?;
@@ -151,16 +154,37 @@ impl Index {
                     if !metadata.is_file() {
                         return Err("Evidence is not a regular file".into());
                     }
-                    if !source.identity.is_empty()
-                        && (identity(&file, &metadata)? != source.identity
-                            || metadata.len() < source.offset + source.pending.len() as u64
-                            || (source.terminal_tail && metadata.len() != source.observed_len)
-                            || (metadata.len() <= source.observed_len
-                                && modified(&metadata) != source.modified)
-                            || checkpoint(&mut file, source.offset)? != source.checkpoint)
+                    if source.identity.is_empty() {
+                        continue;
+                    }
+                    if identity(&file, &metadata)? != source.identity
+                        || metadata.len() < source.offset + source.pending.len() as u64
+                        || (source.terminal_tail && metadata.len() != source.observed_len)
                     {
                         self.reset()?;
                         return Ok(false);
+                    }
+                    if metadata.len() != source.observed_len
+                        || modified(&metadata) != source.modified
+                        || source.prefix_hasher.is_none()
+                    {
+                        let hasher = checkpoint(&mut file, source.offset)?;
+                        if format!("{:x}", hasher.clone().finalize()) != source.checkpoint {
+                            self.reset()?;
+                            return Ok(false);
+                        }
+                        let mut buffer = [0u8; 64 * 1024];
+                        for expected in source.pending.chunks(buffer.len()) {
+                            file.read_exact(&mut buffer[..expected.len()])
+                                .map_err(|e| e.to_string())?;
+                            if buffer[..expected.len()] != *expected {
+                                self.reset()?;
+                                return Ok(false);
+                            }
+                        }
+                        source.prefix_hasher = Some(hasher);
+                        source.observed_len = metadata.len();
+                        source.modified = modified(&metadata);
                     }
                 }
             }
@@ -175,7 +199,18 @@ impl Index {
         live: bool,
     ) -> Result<IndexProgress> {
         self.validate(root)?;
-        let mut sources = self.sources.clone();
+        let mut sources: Vec<_> = self
+            .sources
+            .iter_mut()
+            .map(|source| {
+                let pending = std::mem::take(&mut source.pending);
+                let scanned_pending = std::mem::take(&mut source.scanned_pending);
+                let mut state = source.clone();
+                state.pending = pending;
+                state.scanned_pending = scanned_pending;
+                state
+            })
+            .collect();
         let mut records = Vec::new();
         let mut raw_bytes = 0;
         let mut caught_up = true;
@@ -192,11 +227,16 @@ impl Index {
             let read_offset = state.offset + state.pending.len() as u64;
             file.seek(SeekFrom::Start(read_offset))
                 .map_err(|e| e.to_string())?;
-            let read = file
-                .by_ref()
-                .take(READ_BUDGET as u64)
-                .read_to_end(&mut state.pending)
-                .map_err(|e| e.to_string())?;
+            let read = if state.scanned_pending == state.pending.len()
+                || state.pending.get(state.scanned_pending) == Some(&b'\r')
+            {
+                file.by_ref()
+                    .take(READ_BUDGET as u64)
+                    .read_to_end(&mut state.pending)
+                    .map_err(|e| e.to_string())?
+            } else {
+                0
+            };
             let at_end = read_offset + read as u64 == metadata.len();
             let mut start = 0;
             let mut position = state.scanned_pending;
@@ -247,6 +287,9 @@ impl Index {
                 start = position;
                 state.terminal_tail = true;
             }
+            let hasher = state.prefix_hasher.get_or_insert_with(Sha256::new);
+            hasher.update(&state.pending[..start]);
+            state.checkpoint = format!("{:x}", hasher.clone().finalize());
             state.pending.drain(..start);
             state.scanned_pending = position - start;
             state.offset += start as u64;
@@ -255,7 +298,6 @@ impl Index {
             }
             state.observed_len = metadata.len();
             state.modified = modified(&metadata);
-            state.checkpoint = checkpoint(&mut file, state.offset)?;
             caught_up &= at_end && (state.pending.is_empty() || (live && count < RECORD_BUDGET));
         }
         let transaction = self.db.transaction().map_err(|e| e.to_string())?;
@@ -361,16 +403,19 @@ pub(super) fn open_optional(root: &Path, path: &str) -> Result<Option<File>> {
     }
 }
 
-fn checkpoint(file: &mut File, offset: u64) -> Result<String> {
-    let mut bytes = Vec::new();
-    for start in [0, offset.saturating_sub(4096)] {
-        file.seek(SeekFrom::Start(start))
+fn checkpoint(file: &mut File, offset: u64) -> Result<Sha256> {
+    file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut remaining = offset;
+    let mut buffer = [0u8; 64 * 1024];
+    while remaining > 0 {
+        let length = remaining.min(buffer.len() as u64) as usize;
+        file.read_exact(&mut buffer[..length])
             .map_err(|e| e.to_string())?;
-        file.take((offset - start).min(4096))
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
+        hasher.update(&buffer[..length]);
+        remaining -= length as u64;
     }
-    Ok(timeline::hash(&bytes))
+    Ok(hasher)
 }
 
 fn modified(metadata: &Metadata) -> String {
