@@ -78,6 +78,7 @@ export function Timeline({
         const result = await product.query(input);
         if (disposed || request !== generation.current) return;
         setPage(result);
+        setError("");
         setLoading(false);
         if (
           follow.current &&
@@ -142,7 +143,8 @@ export function Timeline({
       query,
     );
     reset(next);
-    if (action !== "pause") setReading({ ...reading, follow: true });
+    if (action !== "pause")
+      setReading({ ...reading, follow: reading.order === "newest_first" });
   }
   function latest() {
     reset({ through: null });
@@ -335,30 +337,31 @@ export function Timeline({
         ) : (
           <div role="list" aria-label="Timeline events">
             {page.rows.map(({ sequence, event }) => (
-              <button
-                role="listitem"
-                className={`event ${selected?.event.id === event.id ? "selected" : ""}`}
-                key={event.id}
-                onClick={() =>
-                  void run("Reading event", () => select(event.id))
-                }
-              >
-                <span className="event-time" title={event.timestamp}>
-                  {new Date(event.timestamp).toLocaleTimeString()}
-                  <small>#{sequence}</small>
-                </span>
-                <span className={`source ${event.source}`}>
-                  {event.source === "network"
-                    ? "NET"
-                    : event.source === "marker"
-                      ? "MARK"
-                      : "LOG"}
-                </span>
-                <span className="event-text">
-                  <strong>{event.kind.replaceAll("_", " ")}</strong>
-                  <span>{event.summary}</span>
-                </span>
-              </button>
+              <div role="listitem" key={event.id}>
+                <button
+                  aria-pressed={selected?.event.id === event.id}
+                  className={`event ${selected?.event.id === event.id ? "selected" : ""}`}
+                  onClick={() =>
+                    void run("Reading event", () => select(event.id))
+                  }
+                >
+                  <span className="event-time" title={event.timestamp}>
+                    {new Date(event.timestamp).toLocaleTimeString()}
+                    <small>#{sequence}</small>
+                  </span>
+                  <span className={`source ${event.source}`}>
+                    {event.source === "network"
+                      ? "NET"
+                      : event.source === "marker"
+                        ? "MARK"
+                        : "LOG"}
+                  </span>
+                  <span className="event-text">
+                    <strong>{event.kind.replaceAll("_", " ")}</strong>
+                    <span>{event.summary}</span>
+                  </span>
+                </button>
+              </div>
             ))}
           </div>
         )}

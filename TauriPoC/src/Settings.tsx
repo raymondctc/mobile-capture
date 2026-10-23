@@ -41,7 +41,7 @@ export function Settings({
       (path) =>
         path === null ||
         path.startsWith("/") ||
-        /^\\\\[^\\]+\\[^\\]+\\/.test(path) ||
+        path.startsWith("\\\\") ||
         /^[A-Za-z]:[\\/]/.test(path),
     );
   return (
