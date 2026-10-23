@@ -883,16 +883,49 @@ fn closing_app_source_cancels_an_inflight_identity_probe_before_worker_escalatio
     });
     let mut slow: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
     slow["probe_delay_ms"] = serde_json::json!(7000);
-    fs::write(state, serde_json::to_vec(&slow).unwrap()).unwrap();
-    thread::sleep(Duration::from_millis(300));
-    let StopOutcome::Ready(stopped) = owner.stop().unwrap() else {
-        panic!("Cancelled probe must still produce verified collector shutdown")
+    fs::write(&state, serde_json::to_vec(&slow).unwrap()).unwrap();
+    let probe_started = state.with_file_name("fake-android-probe-started");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !probe_started.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "Slow identity probe did not start"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!owner.directory().unwrap().join("receipt.json").exists());
+    let started = Instant::now();
+    let outcome = owner.stop().unwrap();
+    let StopOutcome::Ready(stopped) = outcome else {
+        panic!("Cancelled probe must still produce verified collector shutdown: {outcome:?}")
     };
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "Identity probe cancellation exceeded the worker shutdown deadline"
+    );
     let receipt = stopped.receipt.unwrap();
     assert_eq!(receipt.reason, StopReason::LeaseClosed);
     assert!(receipt.child_reaped);
-    assert!(!receipt.forced);
-    assert!(owner.export().unwrap().is_file());
+    assert_eq!(
+        receipt.forced,
+        cfg!(windows),
+        "Windows normally terminates the owned ADB child; the worker must publish its own receipt"
+    );
+    let entries = zip_entries(&owner.export().unwrap());
+    let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+    assert_eq!(
+        manifest["collector_status"],
+        serde_json::to_value(&receipt).unwrap()
+    );
+    if cfg!(windows) {
+        assert_eq!(receipt.exit_code, Some(1));
+        assert!(stopped
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("forced termination")));
+        assert_eq!(manifest["package_state"], "partial");
+        assert_eq!(manifest["completeness"]["partial"], true);
+    }
 }
 
 #[test]

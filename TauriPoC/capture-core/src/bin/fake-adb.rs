@@ -380,6 +380,13 @@ fn android(serial: &str, args: &[String]) -> bool {
         }
     } else if args.len() == 2 && args[0] == "shell" && args[1].contains("__MC_FENCE__") {
         if let Some(delay) = state["probe_delay_ms"].as_u64() {
+            std::fs::write(
+                env::current_exe()
+                    .unwrap()
+                    .with_file_name("fake-android-probe-started"),
+                b"ready",
+            )
+            .unwrap();
             thread::sleep(Duration::from_millis(delay));
         }
         let epoch = chrono::Utc::now().timestamp_micros() as f64 / 1_000_000.0
