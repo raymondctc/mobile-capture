@@ -338,6 +338,8 @@ fn export_impl(
             archive.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
             completed += n as u64;
             save::update(control, Stage::Archive, completed, Some(total))?;
+            #[cfg(test)]
+            after_archive_chunk(&path, streamed);
         }
         if format!("{:x}", hasher.finalize()) != checksums[&path] {
             return Err("Sealed evidence changed during export".into());
@@ -354,6 +356,21 @@ fn export_impl(
     }
     Ok(target)
 }
+
+#[cfg(test)]
+type ArchiveWriteHook = Box<dyn FnOnce(&str, u64)>;
+#[cfg(test)]
+thread_local! {
+    static ARCHIVE_WRITE_HOOK: std::cell::RefCell<Option<ArchiveWriteHook>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(test)]
+fn after_archive_chunk(path: &str, bytes: u64) {
+    let hook = ARCHIVE_WRITE_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook(path, bytes);
+    }
+}
+
 fn digest(file: &mut fs::File, limit: u64, control: Option<&SaveHandle>) -> Result<(u64, String)> {
     let mut hash = Sha256::new();
     let mut count = 0;
@@ -398,17 +415,14 @@ impl<W: Write> Write for CheckedWriter<'_, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        thread,
-        time::{Duration, Instant},
-    };
+    use std::{sync::mpsc, thread, time::Duration};
 
     #[test]
     fn cancellation_during_real_zip_write_preserves_raw_and_prior_zip_then_retry_succeeds() {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("logs")).unwrap();
         fs::create_dir(root.path().join("timeline")).unwrap();
-        let logs = vec![b'x'; 8 * 1024 * 1024];
+        let logs = vec![b'x'; 2 * save::CHUNK];
         fs::write(root.path().join("logs/device.log"), &logs).unwrap();
         fs::write(root.path().join("timeline/markers.jsonl"), b"").unwrap();
         let target = root.path().join("capture-package.zip");
@@ -434,7 +448,15 @@ mod tests {
         let directory = root.path().to_path_buf();
         let receipt_copy = receipt.clone();
         let device_copy = device.clone();
+        let (written_tx, written_rx) = mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
+            ARCHIVE_WRITE_HOOK.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move |path, bytes| {
+                    written_tx.send((path.to_owned(), bytes)).unwrap();
+                    resume_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+                }));
+            });
             handle.run(|| {
                 export_controlled(
                     &directory,
@@ -449,23 +471,16 @@ mod tests {
                 )
             })
         });
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            let progress = cancel.progress().unwrap();
-            if progress.stage == "archive" && progress.completed > 0 {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "never observed archive progress {progress:?}"
-            );
-            assert!(
-                !worker.is_finished(),
-                "archive completed before cancellation was exercised"
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
+        let (path, bytes) = written_rx
+            .recv_timeout(Duration::from_secs(20))
+            .expect("export should reach a real ZIP source write before publication");
+        assert_eq!(path, "logs/device.log");
+        assert_eq!(bytes, save::CHUNK as u64);
+        let progress = cancel.progress().unwrap();
+        assert_eq!(progress.stage, "archive");
+        assert!(progress.completed > 0);
         assert_eq!(cancel.cancel().unwrap(), save::CancelOutcome::Accepted);
+        resume_tx.send(()).unwrap();
         assert!(worker.join().unwrap().unwrap_err().contains("cancelled"));
         assert_eq!(fs::read(&target).unwrap(), b"prior archive");
         assert_eq!(fs::read(root.path().join("logs/device.log")).unwrap(), logs);

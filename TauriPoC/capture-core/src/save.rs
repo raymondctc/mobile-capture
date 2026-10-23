@@ -178,14 +178,21 @@ impl SaveHandle {
                 FILE_SHARE_READ, FILE_SHARE_WRITE,
             };
             let _directory = files::open(&self.session, &format!("runtime/exports/{}", self.id))
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| {
+                    format!(
+                        "Admit private save directory {}: {e}",
+                        self.directory.display()
+                    )
+                })?;
             // Polling must not prevent the guardian from atomically replacing progress.
             let file = fs::OpenOptions::new()
                 .read(true)
                 .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
                 .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
                 .open(self.directory.join("state.json"))
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| {
+                    format!("Open private save state {}: {e}", self.directory.display())
+                })?;
             let metadata = file.metadata().map_err(|e| e.to_string())?;
             if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
             {
@@ -611,6 +618,51 @@ mod tests {
         }
         assert_eq!(job.cancel().unwrap(), CancelOutcome::Accepted);
         polling.join().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn held_state_readers_keep_their_snapshot_across_repeated_atomic_updates() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let job = SaveHandle::create(root.path()).unwrap();
+        let state = job.directory.join("state.json");
+        let open_snapshot = || {
+            fs::OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .open(&state)
+                .unwrap()
+        };
+        let mut original = open_snapshot();
+        let mut snapshots = Vec::new();
+        for completed in 1..=4 {
+            job.update(Stage::Archive, completed, Some(4)).unwrap();
+            assert_eq!(job.progress().unwrap().completed, completed);
+            snapshots.push((completed, open_snapshot()));
+        }
+        let mut bytes = String::new();
+        original.read_to_string(&mut bytes).unwrap();
+        let initial: JobState = serde_json::from_str(&bytes).unwrap();
+        assert!(matches!(
+            initial.state,
+            State::Running {
+                stage: Stage::Validate,
+                completed: 0,
+                ..
+            }
+        ));
+        for (expected, mut snapshot) in snapshots {
+            bytes.clear();
+            snapshot.read_to_string(&mut bytes).unwrap();
+            let state: JobState = serde_json::from_str(&bytes).unwrap();
+            assert!(
+                matches!(state.state, State::Running { completed, .. } if completed == expected)
+            );
+        }
     }
 
     #[test]

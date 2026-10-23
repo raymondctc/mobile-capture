@@ -36,40 +36,89 @@ pub(crate) fn private_directory(path: &Path) -> Result<()> {
 
 pub(crate) fn write<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let parent = path.parent().ok_or("Missing private parent")?;
-    private_directory(parent)?;
-    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    serde_json::to_writer(&mut file, value).map_err(|e| e.to_string())?;
-    file.as_file().sync_all().map_err(|e| e.to_string())?;
+    private_directory(parent)
+        .map_err(|e| format!("Secure private state directory {}: {e}", parent.display()))?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
+        format!(
+            "Create private state temporary file for {}: {e}",
+            path.display()
+        )
+    })?;
+    serde_json::to_writer(&mut file, value)
+        .map_err(|e| format!("Serialize private state {}: {e}", path.display()))?;
+    file.as_file()
+        .sync_all()
+        .map_err(|e| format!("Flush private state {}: {e}", path.display()))?;
     #[cfg(not(windows))]
     file.persist(path).map_err(|e| e.to_string())?;
     #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::Storage::FileSystem::{
-            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-        };
-        let from: Vec<_> = file
-            .path()
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
-        let to: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        if unsafe {
-            MoveFileExW(
-                from.as_ptr(),
-                to.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
-    }
+    replace_windows(file.as_file(), path)?;
     #[cfg(unix)]
     File::open(parent)
         .and_then(|f| f.sync_all())
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn replace_windows(source: &File, target: &Path) -> Result<()> {
+    use std::{
+        mem::{offset_of, size_of},
+        os::windows::{
+            ffi::OsStrExt,
+            io::{AsRawHandle, FromRawHandle},
+        },
+    };
+    use windows_sys::Win32::{
+        Foundation::INVALID_HANDLE_VALUE,
+        Storage::FileSystem::{
+            FileRenameInfoEx, ReOpenFile, SetFileInformationByHandle, DELETE, FILE_RENAME_INFO,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        },
+    };
+    const FILE_RENAME_REPLACE_IF_EXISTS: u32 = 0x1;
+    const FILE_RENAME_POSIX_SEMANTICS: u32 = 0x2;
+    let handle = unsafe {
+        ReOpenFile(
+            source.as_raw_handle() as _,
+            DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "Open private state for atomic replacement {}: {}",
+            target.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    let source = unsafe { File::from_raw_handle(handle as _) };
+    let target = std::path::absolute(target).map_err(|e| e.to_string())?;
+    let name: Vec<_> = target.as_os_str().encode_wide().collect();
+    let name_bytes = std::mem::size_of_val(name.as_slice());
+    let length = (offset_of!(FILE_RENAME_INFO, FileName) + name_bytes + size_of::<u16>())
+        .max(size_of::<FILE_RENAME_INFO>());
+    let mut storage = vec![0usize; length.div_ceil(size_of::<usize>())];
+    let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    unsafe {
+        (*info).Anonymous.Flags = FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS;
+        (*info).FileNameLength = name_bytes as u32;
+        std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).FileName.as_mut_ptr(), name.len());
+        if SetFileInformationByHandle(
+            source.as_raw_handle() as _,
+            FileRenameInfoEx,
+            info.cast(),
+            length as u32,
+        ) == 0
+        {
+            return Err(format!(
+                "Atomically replace private state {} with FileRenameInfoEx: {}",
+                target.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -253,10 +302,13 @@ fn secure_windows_directory(path: &Path) -> Result<()> {
                     sid,
                 ) != 0
                 && InitializeSecurityDescriptor(descriptor_ptr, 1) != 0
+                && SetSecurityDescriptorOwner(descriptor_ptr, sid, 0) != 0
                 && SetSecurityDescriptorDacl(descriptor_ptr, 1, acl, 0) != 0
                 && SetFileSecurityW(
                     name.as_ptr(),
-                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    OWNER_SECURITY_INFORMATION
+                        | DACL_SECURITY_INFORMATION
+                        | PROTECTED_DACL_SECURITY_INFORMATION,
                     descriptor_ptr,
                 ) != 0
         };

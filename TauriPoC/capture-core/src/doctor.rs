@@ -284,8 +284,10 @@ fn storage(path: &Path) -> Result<()> {
         }
     }
     #[cfg(windows)]
-    windows_private(path)?;
-    let free = available_space(path)?;
+    windows_private(path)
+        .map_err(|e| format!("Storage privacy check failed for {}: {e}", path.display()))?;
+    let free = available_space(path)
+        .map_err(|e| format!("Check available storage space for {}: {e}", path.display()))?;
     if free < 512 * 1024 * 1024 {
         return Err(format!(
             "Storage has {free} bytes free. At least 512 MiB is required."
@@ -397,9 +399,13 @@ fn windows_private(path: &Path) -> Result<()> {
         }
         let mut defaulted = 0;
         let mut owner = std::ptr::null_mut();
-        if unsafe { GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted) } == 0
-            || unsafe { EqualSid(owner, user_sid) } == 0
-        {
+        if unsafe { GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted) } == 0 {
+            return Err(format!(
+                "Read storage owner: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        if unsafe { EqualSid(owner, user_sid) } == 0 {
             return Err("Storage belongs to another user".into());
         }
         let mut present = 0;
@@ -488,7 +494,7 @@ mod tests {
         }
         #[cfg(windows)]
         crate::lease::private_directory(dir.path()).unwrap();
-        assert!(storage(dir.path()).is_ok());
+        storage(dir.path()).expect("current-user private storage should pass admission");
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
     #[cfg(unix)]
