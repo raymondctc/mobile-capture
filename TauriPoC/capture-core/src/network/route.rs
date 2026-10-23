@@ -2,9 +2,8 @@ use crate::{lease, model::Result, process};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     thread,
     time::{Duration, Instant},
 };
@@ -343,49 +342,18 @@ impl Route {
     fn command(&self, args: &[String]) -> Result<String> {
         let mut command = Command::new(&self.adb);
         process::quiet(&mut command);
-        let mut child = command
+        command
             .args(["-H", "127.0.0.1", "-P", "5037", "-s", &self.device_id])
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        let mut stdout = child.stdout.take().ok_or("ADB stdout unavailable")?;
-        let mut stderr = child.stderr.take().ok_or("ADB stderr unavailable")?;
-        let out = thread::spawn(move || {
-            let mut v = vec![];
-            stdout.by_ref().take(65537).read_to_end(&mut v).map(|_| v)
-        });
-        let err = thread::spawn(move || {
-            let mut v = vec![];
-            stderr.by_ref().take(8193).read_to_end(&mut v).map(|_| v)
-        });
-        let status = match process::wait_bounded(&mut child, Duration::from_secs(5)) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(e);
-            }
-        };
-        let output = out
-            .join()
-            .map_err(|_| "ADB reader panicked")?
-            .map_err(|e| e.to_string())?;
-        let errors = err
-            .join()
-            .map_err(|_| "ADB reader panicked")?
-            .map_err(|e| e.to_string())?;
-        if output.len() > 65536 || errors.len() > 8192 {
-            return Err("ADB output exceeded the command bound".into());
-        }
-        if !status.success() {
+            .args(args);
+        let output =
+            process::output_bounded(&mut command, Duration::from_secs(5), None, 65536, 8192)
+                .map_err(|error| format!("ADB command failed: {error}"))?;
+        if !output.status.success() {
             return Err(format!(
                 "ADB connection unavailable. {}",
-                String::from_utf8_lossy(&errors)
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
-        String::from_utf8(output).map_err(|_| "ADB state was not UTF-8".into())
+        String::from_utf8(output.stdout).map_err(|_| "ADB state was not UTF-8".into())
     }
 }

@@ -6,10 +6,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    thread,
+    process::Command,
     time::Duration,
 };
 
@@ -249,48 +248,24 @@ fn probe(path: &Path, args: &[&str]) -> Result<String> {
         .env("PATH", "")
         .env("PYTHONNOUSERSITE", "1")
         .env_remove("PYTHONPATH")
-        .env_remove("PYTHONHOME")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("Local tool could not start: {e}"))?;
-    let output = child.stdout.take().ok_or("Tool stdout missing")?;
-    let errors = child.stderr.take().ok_or("Tool stderr missing")?;
-    let read = |mut pipe: Box<dyn Read + Send>| {
-        let mut bytes = Vec::new();
-        pipe.by_ref()
-            .take(256 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map(|_| bytes)
-    };
-    let out = thread::spawn(move || read(Box::new(output)));
-    let err = thread::spawn(move || read(Box::new(errors)));
-    let status = process::wait_bounded(&mut child, Duration::from_secs(30));
-    if status.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    let bytes = out
-        .join()
-        .map_err(|_| "Tool reader failed")?
-        .map_err(|e| e.to_string())?;
-    let errors = err
-        .join()
-        .map_err(|_| "Tool error reader failed")?
-        .map_err(|e| e.to_string())?;
-    if !status?.success() {
+        .env_remove("PYTHONHOME");
+    let output = process::output_bounded(
+        &mut command,
+        Duration::from_secs(30),
+        None,
+        256 * 1024,
+        256 * 1024,
+    )
+    .map_err(|error| format!("Local tool probe failed: {error}"))?;
+    if !output.status.success() {
         return Err(format!(
             "Local tool probe failed: {}",
-            String::from_utf8_lossy(&errors[..errors.len().min(1024)])
+            String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(1024)])
         ));
     }
-    if bytes.len() > 256 * 1024 || errors.len() > 256 * 1024 {
-        return Err("Local tool probe exceeded output bound".into());
-    }
-    String::from_utf8(bytes).map_err(|_| "Local tool probe was not UTF-8".into())
+    String::from_utf8(output.stdout).map_err(|_| "Local tool probe was not UTF-8".into())
 }
+
 fn storage(path: &Path) -> Result<()> {
     if !path.is_absolute() {
         return Err("Storage must be an absolute existing private directory".into());

@@ -3,13 +3,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
-    io::Read,
-    path::Path,
-    process::{Command, Stdio},
-    sync::atomic::{AtomicBool, Ordering},
-    thread,
-    time::{Duration, Instant},
+    collections::BTreeMap, path::Path, process::Command, sync::atomic::AtomicBool, time::Duration,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -92,53 +86,31 @@ fn execute_with_cancel(
     validate_serial(serial)?;
     let mut command = Command::new(adb);
     process::quiet(&mut command);
-    let mut child = command
+    command
         .args(["-H", "127.0.0.1", "-P", "5037", "-s", serial])
-        .args(arguments)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Android identity probe failed: {e}"))?;
-    let read = |mut pipe: Box<dyn Read + Send>| -> Result<String> {
-        let mut bytes = Vec::new();
-        pipe.by_ref()
-            .take(2 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err("Android identity metadata exceeded 2 MiB".into());
+        .args(arguments);
+    let output = process::output_bounded(
+        &mut command,
+        Duration::from_secs(8),
+        cancelled,
+        2 * 1024 * 1024,
+        2 * 1024 * 1024,
+    )
+    .map_err(|error| match error {
+        process::OutputError::Cancelled => {
+            "Android identity probe cancelled by source lease closure".into()
         }
-        String::from_utf8(bytes).map_err(|_| "Android identity metadata was not UTF-8".into())
-    };
-    let stdout = child.stdout.take().ok_or("Android probe stdout missing")?;
-    let stderr = child.stderr.take().ok_or("Android probe stderr missing")?;
-    let out = thread::spawn(move || read(Box::new(stdout)));
-    let err = thread::spawn(move || read(Box::new(stderr)));
-    let deadline = Instant::now() + Duration::from_secs(8);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) => {}
-            Err(error) => break Err(error.to_string()),
+        process::OutputError::TimedOut => {
+            "Android identity probe exceeded its eight second deadline".into()
         }
-        if cancelled.is_some_and(|c| c.load(Ordering::Acquire)) {
-            break Err("Android identity probe cancelled by source lease closure".into());
-        }
-        if Instant::now() >= deadline {
-            break Err("Android identity probe exceeded its eight second deadline".into());
-        }
-        thread::sleep(Duration::from_millis(20));
-    };
-    if status.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    let stdout = out
-        .join()
-        .map_err(|_| "Android metadata reader panicked")??;
-    let stderr = err.join().map_err(|_| "Android error reader panicked")??;
-    if !status?.success() {
+        process::OutputError::Limit { .. } => "Android identity metadata exceeded 2 MiB".into(),
+        process::OutputError::Io(error) => format!("Android identity probe failed: {error}"),
+    })?;
+    let stdout =
+        String::from_utf8(output.stdout).map_err(|_| "Android identity metadata was not UTF-8")?;
+    let stderr =
+        String::from_utf8(output.stderr).map_err(|_| "Android identity metadata was not UTF-8")?;
+    if !output.status.success() {
         return Err(format!(
             "Android identity probe failed. {}",
             stderr.chars().take(1200).collect::<String>()
@@ -146,6 +118,7 @@ fn execute_with_cancel(
     }
     Ok((stdout, stderr))
 }
+
 fn packages(output: &str, user: u32) -> Result<BTreeMap<String, u32>> {
     let mut result = BTreeMap::new();
     for line in output.lines().filter(|line| line.starts_with("package:")) {

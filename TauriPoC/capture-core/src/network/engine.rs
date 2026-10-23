@@ -49,27 +49,11 @@ impl Engine {
         }
         let mut check = Command::new(executable);
         process::quiet(&mut check);
-        let mut version = check
-            .arg("--version")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        let status =
-            process::wait_bounded(&mut version, Duration::from_secs(5)).inspect_err(|_| {
-                let _ = version.kill();
-                let _ = version.wait();
-            })?;
-        use std::io::Read;
-        let mut text = String::new();
-        version
-            .stdout
-            .take()
-            .ok_or("Engine version output missing")?
-            .take(8193)
-            .read_to_string(&mut text)
-            .map_err(|e| e.to_string())?;
-        if !status.success() || !pinned_version(&text) {
+        check.arg("--version");
+        let output = process::output_bounded(&mut check, Duration::from_secs(5), None, 8192, 8192)
+            .map_err(|error| format!("Engine version probe failed: {error}"))?;
+        let text = String::from_utf8(output.stdout).map_err(|_| "Engine version was not UTF-8")?;
+        if !output.status.success() || !pinned_version(&text) {
             return Err("Installed engine must be mitmdump 12.2.3".into());
         }
         lease::private_directory(ca)?;
