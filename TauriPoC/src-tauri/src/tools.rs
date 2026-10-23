@@ -1,3 +1,9 @@
+use capture_poc_core::toolchain::{self, Toolchain};
+
+pub(crate) fn bundled_tools(resource_dir: &std::path::Path) -> Result<Toolchain, String> {
+    toolchain::resolve_bundled(resource_dir)
+}
+
 use std::{ffi::OsString, path::PathBuf};
 
 const ADB: &str = if cfg!(windows) { "adb.exe" } else { "adb" };

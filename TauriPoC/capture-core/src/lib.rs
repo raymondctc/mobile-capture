@@ -1,4 +1,5 @@
 mod controller;
+pub mod doctor;
 mod evidence;
 mod files;
 mod lease;
@@ -8,6 +9,7 @@ mod network;
 mod owner;
 mod process;
 mod timeline;
+pub mod toolchain;
 pub mod worker;
 pub use controller::CaptureOwner;
 pub use network::run as run_guardian;
