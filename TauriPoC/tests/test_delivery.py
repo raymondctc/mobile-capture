@@ -68,11 +68,9 @@ class DeliveryTests(unittest.TestCase):
                 with zipfile.ZipFile(archive, "w") as output:
                     output.writestr("tools/adb", b"safe executable bytes")
                     entry = zipfile.ZipInfo(name)
-                    # Preserve the hostile name in both ZIP headers.
                     entry.filename = name
                     output.writestr(entry, b"untrusted")
                 self.assertEqual(archive.read_bytes().count(name.encode("ascii")), 2)
-                # Execute the stdlib's Windows separator branch on every host.
                 with patch.object(zipfile.os, "sep", "\\"):
                     with zipfile.ZipFile(archive) as source:
                         entry = source.infolist()[1]

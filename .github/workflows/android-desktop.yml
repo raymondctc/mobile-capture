@@ -47,9 +47,22 @@ jobs:
       - run: npm ci
       - run: npm run web:build
       - run: cargo fmt --all -- --check
+      - run: npm run test:delivery
       - name: Probe Windows process lifetimes
         if: runner.os == 'Windows'
         run: python scripts/probe-windows-launch.py
+      - name: Build complete development bundle
+        run: python scripts/package-android.py --channel development --cache "${{ runner.temp }}/android-dependency-cache" --output "${{ runner.temp }}/android-package"
+      - name: Install Windows bundle in user scope
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "${{ runner.temp }}/android-package/*.exe" | Select-Object -First 1
+          $destination = "${{ runner.temp }}\android-installed"
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$destination" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "NSIS installation failed with $($process.ExitCode)" }
+          python scripts/smoke-installed.py --app "$destination"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Windows Doctor failed' }
       - name: Verify Windows missing-state handoff before the crash matrix
         if: runner.os == 'Windows'
         shell: pwsh
@@ -64,25 +77,18 @@ jobs:
             cargo test -p capture-poc-core --test network $case --locked -- --exact --test-threads=1
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Verify completed capture handoff before the crash matrix
+        run: cargo test -p capture-poc-core --test network completed_control_release_allows_isolated_setup_and_original_export --locked -- --exact --test-threads=1
+      - name: Verify setup releases completed control
+        run: cargo test -p capture-poc-core --test setup completed_setup_releases_control_before_export_and_stays_finished_during_next_capture --locked -- --exact --test-threads=1
+      - name: Verify setup waits for held control
+        run: cargo test -p capture-poc-core --test setup restored_setup_remains_retryable_until_completed_control_is_released --locked -- --exact --test-threads=1
       - name: Verify serial core fixtures, desktop adapter, and normalized evidence
         run: npm run verify
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Probe Windows process lifetimes inside the Rust test Job
         if: runner.os == 'Windows'
         run: cargo test -p capture-poc-core --test network windows_launch_probe_runs_inside_rust_test_job --locked -- --exact --nocapture
-      - run: npm run test:delivery
-      - name: Build complete development bundle
-        run: python scripts/package-android.py --channel development --cache "${{ runner.temp }}/android-dependency-cache" --output "${{ runner.temp }}/android-package"
-      - name: Install Windows bundle in user scope
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem "${{ runner.temp }}/android-package/*.exe" | Select-Object -First 1
-          $destination = "${{ runner.temp }}\android-installed"
-          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$destination" -PassThru -Wait
-          if ($process.ExitCode -ne 0) { throw "NSIS installation failed with $($process.ExitCode)" }
-          python scripts/smoke-installed.py --app "$destination"
-          if ($LASTEXITCODE -ne 0) { throw 'Installed Windows Doctor failed' }
       - name: Verify bundled mitmdump evidence and capture beyond two minutes
         run: python scripts/probe-bundled-engine.py --package "${{ runner.temp }}/android-package" --payload "${{ runner.temp }}/${{ matrix.payload }}"
       - uses: actions/upload-artifact@v4
