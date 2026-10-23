@@ -921,3 +921,19 @@ fn controlled_save_admits_verified_logs_cancels_preserves_and_retries_real_zip()
     });
     assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
 }
+
+#[test]
+fn immediate_stop_after_log_start_verifies_shutdown_and_can_save() {
+    let root = tempfile::tempdir().unwrap();
+    let mut owner = owner(root.path());
+    for attempt in 0..8 {
+        start(&mut owner, "fixture-stream", Limits::default());
+        let stopped = owner.stop().unwrap();
+        assert!(
+            matches!(stopped, StopOutcome::Ready(_)),
+            "immediate stop {attempt}: {stopped:?}"
+        );
+        let save = owner.prepare_save().unwrap();
+        assert!(owner.export_with_control(&save).unwrap().is_file());
+    }
+}

@@ -9,7 +9,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub(crate) struct LogCollector {
@@ -46,11 +46,28 @@ impl LogCollector {
             let _ = child.wait();
             return Err(error.to_string());
         }
-        Ok(Self {
+        let mut collector = Self {
             child,
             input: Some(input),
             _job: job,
-        })
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while config.source_lease
+            && !crate::lease::read::<bool>(&config.directory.join("runtime/log-ready.json"))
+                .unwrap_or(false)
+        {
+            if collector
+                .child
+                .try_wait()
+                .map_err(|e| e.to_string())?
+                .is_some()
+                || Instant::now() >= deadline
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(collector)
     }
     pub(crate) fn close(&mut self) -> Result<()> {
         self.input.take();
