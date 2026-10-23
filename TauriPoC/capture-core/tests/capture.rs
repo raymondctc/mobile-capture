@@ -947,8 +947,12 @@ fn controlled_save_admits_verified_logs_cancels_preserves_and_retries_real_zip()
         assert_eq!(format!("{:x}", Sha256::digest(&entries[name])), hash);
     }
     let copied = root.path().join("copied.zip");
+    fs::write(&copied, b"previous destination").unwrap();
     copy_evidence_archive(&archive, &copied).unwrap();
-    assert_eq!(fs::read(copied).unwrap(), prior);
+    assert_eq!(fs::read(&copied).unwrap(), prior);
+    copy_evidence_archive(&archive, &copied).unwrap();
+    assert_eq!(fs::read(&copied).unwrap(), prior);
+    assert_eq!(fs::read(&archive).unwrap(), prior);
     start(&mut owner, "fixture-stream", Limits::default());
     assert!(owner.export_with_control(&first).is_err());
     wait(&mut owner, |v| {

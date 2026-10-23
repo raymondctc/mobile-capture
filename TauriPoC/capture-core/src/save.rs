@@ -768,6 +768,59 @@ mod tests {
     }
 
     #[test]
+    fn evidence_copy_verifies_before_replacement_and_removes_staging_files() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.zip");
+        let destination = root.path().join("copy.zip");
+        let write_evidence = |invalid_checksum: bool| {
+            let entries: [(&str, &[u8]); 5] = [
+                (
+                    "manifest.json",
+                    br#"{"format":"device-capture-evidence","schema_version":1}"#,
+                ),
+                ("context.json", b"{}"),
+                ("README.txt", b"fixture evidence"),
+                ("timeline/events.jsonl", b""),
+                ("logs/device.log", b"original raw log\n"),
+            ];
+            let mut checksums = String::new();
+            let mut archive = zip::ZipWriter::new(fs::File::create(&source).unwrap());
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            for (name, bytes) in entries {
+                let checksum = if invalid_checksum && name == "logs/device.log" {
+                    format!("{:x}", Sha256::digest(b"different raw log\n"))
+                } else {
+                    format!("{:x}", Sha256::digest(bytes))
+                };
+                checksums.push_str(&format!("{checksum}  {name}\n"));
+                archive.start_file(name, options).unwrap();
+                archive.write_all(bytes).unwrap();
+            }
+            archive.start_file("SHA256SUMS", options).unwrap();
+            archive.write_all(checksums.as_bytes()).unwrap();
+            archive.finish().unwrap();
+        };
+        write_evidence(false);
+        let expected = fs::read(&source).unwrap();
+        copy_evidence_archive(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), expected);
+        fs::write(&destination, b"previous destination").unwrap();
+        copy_evidence_archive(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), expected);
+        assert_eq!(fs::read(&source).unwrap(), expected);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+        write_evidence(true);
+        let invalid_source = fs::read(&source).unwrap();
+        assert!(copy_evidence_archive(&source, &destination)
+            .unwrap_err()
+            .contains("Evidence checksum failed for logs/device.log"));
+        assert_eq!(fs::read(&destination).unwrap(), expected);
+        assert_eq!(fs::read(&source).unwrap(), invalid_source);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+
+    #[test]
     fn invalid_or_oversized_evidence_never_replaces_destination() {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("invalid.zip");
