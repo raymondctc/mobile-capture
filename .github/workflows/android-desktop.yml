@@ -50,6 +50,20 @@ jobs:
       - name: Probe Windows process lifetimes
         if: runner.os == 'Windows'
         run: python scripts/probe-windows-launch.py
+      - name: Verify Windows missing-state handoff before the crash matrix
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cases = @(
+            'completed_network_handoff_after_directory_moves_preserves_evidence',
+            'missing_network_state_cannot_release_active_or_recovery_required_session',
+            'missing_completed_state_still_requires_actual_owner_lease_handoff',
+            'missing_completed_state_can_retry_a_launch_failure_before_pending_routing'
+          )
+          foreach ($case in $cases) {
+            cargo test -p capture-poc-core --test network $case --locked -- --exact --test-threads=1
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Verify serial core fixtures, desktop adapter, and normalized evidence
         run: npm run verify
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
