@@ -54,10 +54,35 @@ class DeliveryTests(unittest.TestCase):
                 archive = Path(directory) / "archive.zip"
                 with zipfile.ZipFile(archive, "w") as output:
                     for name in names:
-                        output.writestr(name, "untrusted")
+                        entry = zipfile.ZipInfo(name)
+                        entry.filename = name
+                        output.writestr(entry, "untrusted")
                 with self.assertRaises(ValueError):
                     payload.extract(archive, Path(directory) / "result")
                 self.assertFalse((Path(directory) / "escape").exists())
+
+    def test_zip_rejects_original_names_after_windows_normalization(self):
+        for name, normalized in [("a\\escape", "a/escape"), ("tool\0escape", "tool")]:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                archive = Path(directory) / "archive.zip"
+                with zipfile.ZipFile(archive, "w") as output:
+                    output.writestr("tools/adb", b"safe executable bytes")
+                    entry = zipfile.ZipInfo(name)
+                    # Preserve the hostile name in both ZIP headers.
+                    entry.filename = name
+                    output.writestr(entry, b"untrusted")
+                self.assertEqual(archive.read_bytes().count(name.encode("ascii")), 2)
+                # Execute the stdlib's Windows separator branch on every host.
+                with patch.object(zipfile.os, "sep", "\\"):
+                    with zipfile.ZipFile(archive) as source:
+                        entry = source.infolist()[1]
+                        self.assertEqual(entry.orig_filename, name)
+                        self.assertEqual(entry.filename, normalized)
+                        self.assertEqual(source.read(entry), b"untrusted")
+                    destination = Path(directory) / "result"
+                    with self.assertRaises(ValueError):
+                        payload.extract(archive, destination)
+                self.assertEqual(list(destination.iterdir()), [])
 
     def test_tar_rejects_escaping_symlink_and_hardlink(self):
         for kind, link in [(tarfile.SYMTYPE, "../../escape"), (tarfile.LNKTYPE, "tool")]:

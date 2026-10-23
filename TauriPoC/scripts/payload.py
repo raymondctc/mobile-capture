@@ -62,6 +62,7 @@ def extract(archive, destination):
     if zipfile.is_zipfile(archive):
         with zipfile.ZipFile(archive) as source:
             for entry in source.infolist():
+                safe_name(entry.orig_filename)
                 mode = entry.external_attr >> 16
                 if stat.S_ISLNK(mode):
                     raise ValueError("ZIP symlinks are refused")
