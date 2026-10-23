@@ -17,6 +17,7 @@ try {
     jsx: "automatic",
   });
   await import(pathToFileURL(output).href);
+  await import(new URL("./test-reading.mjs", import.meta.url));
 } finally {
   await rm(directory, { recursive: true, force: true });
 }

@@ -295,14 +295,14 @@ function App() {
       const request = generation.current;
       try {
         const work = await api.operation();
-        if (!disposed && request === generation.current && !busy.current) {
+        if (!disposed && request === generation.current) {
           operationVerified.current = true;
           latestOperation.current = work;
           setOperation(work);
           setOperationError("");
         }
       } catch (cause) {
-        if (!disposed && request === generation.current && !busy.current) {
+        if (!disposed && request === generation.current) {
           operationVerified.current = false;
           setOperationError(errorMessage(cause));
         }

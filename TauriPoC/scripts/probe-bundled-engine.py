@@ -28,7 +28,7 @@ def bundled_engine(package, payload):
     if not engine.is_relative_to(payload):
         raise ValueError("Packaged engine escapes the payload")
     result = subprocess.run([str(engine), "--version"], check=True, capture_output=True, text=True, timeout=30)
-    version = re.search(r"(?m)^Mitmproxy:\s*(\S+)\s*$", result.stdout)
+    version = re.search(r"(?m)^Mitmproxy:\s*(\S+)(?:\s+binary)?\s*$", result.stdout)
     if version is None or version[1] != lock["mitmproxyVersion"]:
         raise ValueError("Bundled mitmdump reports an unexpected version: " + result.stdout)
     return engine

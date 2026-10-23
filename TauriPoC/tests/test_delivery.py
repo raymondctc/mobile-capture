@@ -5,14 +5,42 @@ import json
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
+import sys
 import zipfile
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/payload.py"
 spec = importlib.util.spec_from_file_location("payload", SCRIPT)
 payload = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(payload)
+sys.path.insert(0, str(SCRIPT.parent))
+probe_spec = importlib.util.spec_from_file_location("probe_bundled_engine", SCRIPT.with_name("probe-bundled-engine.py"))
+probe = importlib.util.module_from_spec(probe_spec)
+probe_spec.loader.exec_module(probe)
 
 class DeliveryTests(unittest.TestCase):
+    def test_official_binary_version_suffix_preserves_exact_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory)
+            tools = package / "tools"
+            tools.mkdir()
+            engine = tools / "mitmdump"
+            engine.write_bytes(b"fixture engine bytes")
+            version = json.loads((SCRIPT.parents[1] / "dependencies/downloads.lock.json").read_text())["mitmproxyVersion"]
+            manifest = {"target":"aarch64-apple-darwin", "mitmproxyVersion":version, "files":payload.inventory(tools), "tools":{"mitmdump":"mitmdump"}}
+            manifest_path = tools / "payload.json"
+            manifest_path.write_text(json.dumps(manifest))
+            (package / "payload.json").write_bytes(manifest_path.read_bytes())
+            (package / "BUILD.json").write_text(json.dumps({"target":manifest["target"], "payloadSHA256":payload.digest(manifest_path)}))
+            for reported in [version, version + " binary"]:
+                with patch.object(probe.subprocess, "run", return_value=SimpleNamespace(stdout=f"Mitmproxy: {reported}\nPython: fixture\n")):
+                    self.assertEqual(probe.bundled_engine(package, tools), engine.resolve())
+            for reported in ["0.0.0 binary", version + " unexpected"]:
+                with patch.object(probe.subprocess, "run", return_value=SimpleNamespace(stdout=f"Mitmproxy: {reported}\n")):
+                    with self.assertRaisesRegex(ValueError, "unexpected version"):
+                        probe.bundled_engine(package, tools)
+
     def test_archive_sha256_precedes_extraction(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory)

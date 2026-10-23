@@ -82,8 +82,10 @@ Install Node 22, Rust, and the platform's Tauri build prerequisites. Prepare the
 ```sh
 cd TauriPoC
 npm ci
-npm run dev
+MOBILE_CAPTURE_EXTERNAL_TOOLS=1 npm run dev
 ```
+
+Development mode requires installed ADB and mitmdump, or explicit absolute overrides after the app opens. The environment flag deliberately selects external tools. Complete distributed apps use their verified bundled payload. On Windows PowerShell, set `$env:MOBILE_CAPTURE_EXTERNAL_TOOLS = "1"` before `npm run dev`.
 
 On the development Mac, prepend `/opt/homebrew/opt/node@22/bin` to `PATH` if Node 22 is not the default.
 

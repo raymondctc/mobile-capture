@@ -222,13 +222,14 @@ export function Timeline({
           <input
             type="checkbox"
             checked={reading.follow}
-            onChange={(event) =>
+            onChange={(event) => {
+              if (event.target.checked) reset({ through: null });
               setReading({
                 ...reading,
                 follow: event.target.checked,
                 order: event.target.checked ? "newest_first" : reading.order,
-              })
-            }
+              });
+            }}
           />
           Follow latest
         </label>

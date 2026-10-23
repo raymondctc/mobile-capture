@@ -1,4 +1,3 @@
-"""Real 12.2.3 loopback proof, with private SSLContext trust and native replay."""
 import base64
 import gzip
 import http.client
@@ -356,7 +355,7 @@ def owned_session(mode):
                 context = ssl.create_default_context(cafile=coverage["public_certificate"])
                 connection = http.client.HTTPSConnection("127.0.0.1", port, context=context, timeout=10)
                 connection.set_tunnel("mitm.it", 443)
-                path = coverage["synthetic_check_url"].split("mitm.it", 1)[1] + "/https"
+                path = coverage["synthetic_check_url"].split("mitm.it", 1)[1]
                 connection.request("GET", path)
                 assert connection.getresponse().status == 200
                 connection.close()
@@ -493,9 +492,72 @@ def production_policy_proof():
         errors.close()
 
 production_proof = production_policy_proof()
+body_fault_addon = root / "body-fault-addon.py"
+body_fault_addon.write_text("""import importlib.util
+spec=importlib.util.spec_from_file_location('body_storage_base', BASE)
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+class Broken:
+    def __init__(self,file): self.file=file
+    def write(self,data): raise OSError('fixture body storage full')
+    def __getattr__(self,name): return getattr(self.file,name)
+class Fault(module.Capture):
+    def requestheaders(self,flow):
+        super().requestheaders(flow)
+        slot=self.pending.get(flow.id)
+        if slot: slot['request'].data=Broken(slot['request'].data)
+addons=[Fault()]
+""".replace("BASE", repr(str(Path(__file__).resolve().parents[1] / "resources/network_addon.py"))))
+body_fault, _, body_port, body_proc, body_errors = start("body-storage-failure", addon=body_fault_addon)
+try:
+    connection = http.client.HTTPConnection("127.0.0.1", body_port, timeout=10)
+    connection.request("POST", f"http://127.0.0.1:{server.server_port}/encoded", request_body)
+    assert connection.getresponse().read() == encoded_response
+    connection.close()
+    (body_fault / "runtime/engine-stop.json").write_text(json.dumps({"nonce": nonce}))
+    assert body_proc.wait(timeout=10) == 0
+    facts = json.loads((body_fault / "network/incomplete.json").read_text())
+    assert facts["unavailable_bodies"] == 1
+    assert facts["errors"] == ["Body storage failed: fixture body storage full"]
+    entry = json.loads((body_fault / "network/capture.har").read_text())["log"]["entries"][0]
+    assert entry["request"]["_bodyUnavailable"] and entry["request"]["bodySize"] == -1
+    assert json.loads((body_fault / "runtime/engine-receipt.json").read_text())["partial"]
+finally:
+    if body_proc.poll() is None:
+        body_proc.kill()
+        body_proc.wait()
+    body_errors.close()
+
+def duration_policy_proof():
+    delay = 121 if os.environ.get("CAPTURE_TEST_LONG_POLICY") == "1" else 0.4
+    policy = dict(legacy_policy, duration_ms=150000 if delay > 1 else 200)
+    saved, _, port, proc, errors = start("policy-duration", policy=policy)
+    try:
+        time.sleep(delay)
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        connection.request("GET", f"http://127.0.0.1:{server.server_port}/bounded")
+        assert connection.getresponse().read() == b"bounded"
+        connection.close()
+        (saved / "runtime/engine-stop.json").write_text(json.dumps({"nonce": nonce}))
+        assert proc.wait(timeout=10) == 0
+        entries = json.loads((saved / "network/capture.har").read_text())["log"]["entries"]
+        assert len(entries) == (1 if delay > 1 else 0)
+        facts = json.loads((saved / "network/incomplete.json").read_text())
+        assert facts["omitted_flows"] == (0 if delay > 1 else 1)
+        return {"elapsed_seconds": delay, "retained_after_120_seconds": delay > 120,
+                "configured_expiry_checked": delay < 1}
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        errors.close()
+
+duration_proof = duration_policy_proof()
 owned_proofs = [owned_session(mode) for mode in ["success", "tls-error", "http-error", "flush-error", "binary-header"]]
 server.shutdown()
 result = {"root": str(root), "real_engine": "12.2.3", "native_har_jsonl_ids_and_raw_bytes_match": True, "http_binary_gzip_forwarded": True, "https_private_client_trust": True, "admitted_flows": 32, "omitted_flows": 4, "oversize_body_unavailable_everywhere": True, "private_nonce_shutdown": True, "owner_eof_graceful_done": True, "source_lease_failure_stops_unready_listener": True, "cross_file_write_failure_truthfully_partial": True, "flush_failure_closes_writers_before_source_lease_release": True, "partial_writer_initialization_closes_before_lease_release": True, "binary_headers_forward_but_decline_retention_truthfully": True, "device_routing": "compiled_private_fake_only", "rust_owner_guardian_real_engine": owned_proofs}
 result["production_policy"] = production_proof
+result["duration_policy"] = duration_proof
+result["body_storage_failure_keeps_forwarding"] = True
 (root / "result.json").write_text(json.dumps(result, indent=2))
 print(json.dumps(result))

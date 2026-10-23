@@ -14,6 +14,7 @@ function run(command, args, options = {}) {
   if (result.status !== 0) process.exit(result.status ?? 1);
   return result;
 }
+run(process.execPath, ["scripts/test-ui.mjs"]);
 run("cargo", [
   "test",
   "-p",

@@ -1,4 +1,3 @@
-"""Original-byte network evidence under an explicit session admission policy."""
 import asyncio
 import base64
 import datetime as dt

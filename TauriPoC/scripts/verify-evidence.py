@@ -21,7 +21,8 @@ with zipfile.ZipFile(archive) as package:
     assert manifest["format"] == "device-capture-evidence"
     assert manifest["schema_version"] == 1
     assert manifest["context"]["fixture"] is True
-    assert manifest["context"]["log_scope"]["explicit_consent"] is True
+    assert manifest["context"]["log_scope"] == {"mode": "whole_device"}
+    assert manifest["context"]["log_attribution"]["strategy"] == "whole_device"
     assert manifest["sources"]["network"] == "not_selected"
     assert manifest["package_state"] == "partial"
     assert not names & {"session.json", "receipt.json", "receipt.pending"}

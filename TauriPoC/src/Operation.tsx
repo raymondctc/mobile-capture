@@ -1,4 +1,5 @@
 import { api, type Operation } from "./api";
+import { useState } from "react";
 import { product } from "./product";
 import type { RunAction } from "./state";
 export function OperationStatus({
@@ -14,6 +15,19 @@ export function OperationStatus({
   pending: string;
   recover: () => Promise<void>;
 }) {
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState("");
+  async function cancelSave(id: string) {
+    setCancelling(true);
+    setCancelError("");
+    try {
+      change(await api.cancel(id));
+    } catch (cause) {
+      setCancelError(String(cause));
+    } finally {
+      setCancelling(false);
+    }
+  }
   if (operation.state === "idle") return null;
   if (
     operation.state === "checking_connection" ||
@@ -46,15 +60,12 @@ export function OperationStatus({
             : ""}
         </span>
         <button
-          disabled={!operation.cancel_allowed || !!pending}
-          onClick={() =>
-            void run("Cancelling save", async () =>
-              change(await api.cancel(operation.id)),
-            )
-          }
+          disabled={!operation.cancel_allowed || cancelling}
+          onClick={() => void cancelSave(operation.id)}
         >
           Cancel save
         </button>
+        {cancelError && <span role="alert">{cancelError}</span>}
       </div>
     );
   if (operation.state === "restoring")
@@ -121,7 +132,7 @@ export function OperationStatus({
         </div>
         <button
           onClick={() =>
-            void run("Revealing archive", () => product.reveal("archive"))
+              void run("Revealing archive", () => product.reveal("archive", operation.id))
           }
         >
           Reveal archive

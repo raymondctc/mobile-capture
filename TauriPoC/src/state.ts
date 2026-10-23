@@ -61,7 +61,6 @@ export function useStored<T>(key: string, schema: z.ZodType<T>, fallback: T) {
     try {
       localStorage.setItem(key, JSON.stringify(value));
     } catch {
-      /* The current window keeps display preferences when storage is unavailable. */
     }
   }, [key, value]);
   const result: [T, typeof setValue] = [value, setValue];
