@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::{
     fs,
     io::{Read, Write},
+    net::TcpListener,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -10,13 +11,16 @@ use std::{
 };
 
 fn owner(root: &Path) -> CaptureOwner {
+    owner_with_adb(root, env!("CARGO_BIN_EXE_fake-adb").into())
+}
+fn owner_with_adb(root: &Path, adb: PathBuf) -> CaptureOwner {
     CaptureOwner::open(
         CapturePaths {
             output_root: root.into(),
             runtime_root: Some(root.join("fixture-runtime")),
         },
         ToolSelection {
-            adb: env!("CARGO_BIN_EXE_fake-adb").into(),
+            adb,
             worker: env!("CARGO_BIN_EXE_collector-worker").into(),
             guardian: PathBuf::new(),
             mitmdump: None,
@@ -624,21 +628,44 @@ fn worker_failure_without_a_receipt_never_claims_verified_stop() {
 #[test]
 fn recent_window_is_bounded_while_export_contains_every_record() {
     let root = tempfile::tempdir().unwrap();
-    let mut owner = owner(root.path());
+    let tools = root.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    let adb = tools.join(format!("fake-adb{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(env!("CARGO_BIN_EXE_fake-adb"), &adb).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    fs::write(
+        tools.join("fake-adb-flood-control"),
+        listener.local_addr().unwrap().to_string(),
+    )
+    .unwrap();
+    let mut owner = owner_with_adb(root.path(), adb);
     start(
         &mut owner,
-        "fixture-flood",
+        "fixture-flood-gated",
         Limits {
             records: 650,
             ..Limits::default()
         },
     );
+    let ready = wait(&mut owner, |v| {
+        v["session"]["logs"].as_u64().unwrap_or(0) >= 4
+    });
+    assert_eq!(ready["phase"], "recording");
+    let (mut flood, _) = listener
+        .accept()
+        .expect("Flood fixture must connect before emitting its readiness records");
+    let marker =
+        b"{\"timestamp\":\"2026-10-15T00:00:01.500000Z\",\"text\":\"older fixture marker\"}\n";
     fs::write(
         owner.directory().unwrap().join("timeline/markers.jsonl"),
-        b"{\"timestamp\":\"2026-10-15T00:00:01.500000Z\",\"text\":\"older fixture marker\"}\n",
+        marker,
     )
     .unwrap();
+    flood.write_all(&[1]).unwrap();
     let state = wait(&mut owner, |v| v["phase"] == "stopped");
+    assert_eq!(state["session"]["receipt"]["reason"], "record_limit");
+    assert_eq!(state["session"]["receipt"]["records"], 650);
     assert_eq!(state["session"]["events"].as_array().unwrap().len(), 500);
     assert_eq!(state["session"]["markers"], 1);
     assert_eq!(
@@ -651,12 +678,20 @@ fn recent_window_is_bounded_while_export_contains_every_record() {
         1
     );
     let entries = zip_entries(&owner.export().unwrap());
+    assert_eq!(entries["timeline/markers.jsonl"], marker);
+    assert_eq!(
+        entries["logs/device.log"]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count(),
+        650
+    );
     let count = entries["timeline/events.jsonl"]
         .split(|b| *b == b'\n')
         .filter(|line| !line.is_empty())
         .count();
     assert_eq!(count as u64, state["session"]["logs"].as_u64().unwrap() + 1);
-    assert!(count > 500);
+    assert_eq!(count, 650);
 }
 
 fn app_fixture(root: &Path) -> (CaptureOwner, PathBuf) {

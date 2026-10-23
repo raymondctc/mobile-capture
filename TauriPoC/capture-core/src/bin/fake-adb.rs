@@ -1,6 +1,7 @@
 use std::{
     env,
-    io::{self, Write},
+    io::{self, Read, Write},
+    net::TcpStream,
     thread,
     time::Duration,
 };
@@ -8,7 +9,7 @@ use std::{
 fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
     if args == ["devices", "-l"] {
-        println!("List of devices attached\nfixture-stream\tdevice product:poc model:Fixture_Android device:fixture\nfixture-offline\toffline\nfixture-denied\tunauthorized\nfixture-disconnect\tdevice model:Disconnect_Fixture\nfixture-flood\tdevice model:Limit_Fixture\nfixture-app-uid\tdevice model:App_UID_Fixture\nfixture-app-pid\tdevice model:App_PID_Fixture");
+        println!("List of devices attached\nfixture-stream\tdevice product:poc model:Fixture_Android device:fixture\nfixture-offline\toffline\nfixture-denied\tunauthorized\nfixture-disconnect\tdevice model:Disconnect_Fixture\nfixture-flood\tdevice model:Limit_Fixture\nfixture-flood-gated\tdevice model:Gated_Limit_Fixture\nfixture-app-uid\tdevice model:App_UID_Fixture\nfixture-app-pid\tdevice model:App_PID_Fixture");
         #[cfg(unix)]
         println!("fixture-stop-exit\tdevice model:Stop_Exit_Fixture\nfixture-stop-signal\tdevice model:Stop_Signal_Fixture\nfixture-stop-clean\tdevice model:Clean_Stop_Fixture");
         return;
@@ -48,6 +49,19 @@ fn main() {
     if serial.starts_with("fixture-descendant-") {
         exited_leader(serial);
     }
+    let mut flood = (serial == "fixture-flood-gated").then(|| {
+        let address = std::fs::read_to_string(
+            env::current_exe()
+                .unwrap()
+                .with_file_name("fake-adb-flood-control"),
+        )
+        .unwrap();
+        let stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        stream
+    });
     let mut output = io::stdout().lock();
     #[cfg(unix)]
     if matches!(
@@ -79,6 +93,11 @@ fn main() {
     )
     .unwrap();
     output.flush().unwrap();
+    if let Some(flood) = &mut flood {
+        let mut release = [0];
+        flood.read_exact(&mut release).unwrap();
+        assert_eq!(release, [1]);
+    }
     if serial == "fixture-disconnect" {
         output.write_all(b"incomplete tail").unwrap();
         output.flush().unwrap();
@@ -90,7 +109,7 @@ fn main() {
         count += 1;
         writeln!(output, "1792022402.000 123 456 I Fixture: live {count}").unwrap();
         output.flush().unwrap();
-        if serial != "fixture-flood" {
+        if serial != "fixture-flood" && serial != "fixture-flood-gated" {
             thread::sleep(Duration::from_millis(150));
         }
     }
