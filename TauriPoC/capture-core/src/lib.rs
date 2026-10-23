@@ -2,6 +2,7 @@ mod controller;
 mod evidence;
 mod files;
 mod lease;
+pub mod library;
 pub mod model;
 mod network;
 mod owner;
