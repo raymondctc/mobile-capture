@@ -78,6 +78,10 @@ async fn snapshot(state: tauri::State<'_, DesktopState>) -> Result<Snapshot> {
     execute(state.inner().clone(), |s| s.with_owner(|o| o.status())).await
 }
 #[tauri::command]
+async fn reconnect(state: tauri::State<'_, DesktopState>) -> Result<Snapshot> {
+    execute(state.inner().clone(), |s| s.reconnect()).await
+}
+#[tauri::command]
 async fn marker(state: tauri::State<'_, DesktopState>, text: String) -> Result<Snapshot> {
     execute(state.inner().clone(), move |s| {
         accepting(&s)?;
@@ -597,6 +601,7 @@ pub fn run() {
             applications,
             start,
             snapshot,
+            reconnect,
             marker,
             stop,
             recover,

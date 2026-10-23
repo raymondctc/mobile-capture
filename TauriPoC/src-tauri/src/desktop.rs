@@ -7,7 +7,10 @@ use capture_poc_core::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 use tauri::Manager;
 
@@ -161,6 +164,38 @@ impl Desktop {
     ) -> Result<T> {
         let mut owner = self.owner.lock().map_err(|_| "Capture owner lock failed")?;
         operation(owner.as_mut().map_err(|error| error.clone())?)
+    }
+
+    pub fn reconnect(&self) -> Result<Snapshot> {
+        let _admission = self
+            .admission
+            .lock()
+            .map_err(|_| "Operation admission failed")?;
+        if self.quitting.load(Ordering::Acquire) {
+            return Err("Quit is waiting for safe shutdown".into());
+        }
+        if self.operations.busy()? {
+            return Err("Finish or recover the current operation first".into());
+        }
+        let initialized = self.owner.lock().map_err(|_| "Owner lock failed")?.is_ok();
+        if !initialized {
+            let preferences = self
+                .preferences
+                .lock()
+                .map_err(|_| "Preferences lock failed")?
+                .clone();
+            let selected = selected_tools(&self.base_tools, &preferences)?;
+            let replacement = CaptureOwner::open(
+                CapturePaths {
+                    output_root: preferences.output_root,
+                    runtime_root: self.runtime_root.clone(),
+                },
+                selected.selection(),
+                self.fixture,
+            )?;
+            *self.owner.lock().map_err(|_| "Owner lock failed")? = Ok(replacement);
+        }
+        self.with_owner(|owner| owner.status())
     }
 
     pub fn paths(&self) -> Result<CapturePaths> {
@@ -446,6 +481,54 @@ pub fn open_release_page() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reconnect_rechecks_restored_metadata_after_initialization_failed() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("runtime");
+        let prior = root.path().join("prior-session");
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::write(runtime.join("owner.lock"), prior.to_str().unwrap()).unwrap();
+        let desktop = Desktop {
+            admission: Mutex::new(()),
+            owner: Mutex::new(Err("Previous capture state is missing".into())),
+            reader: Mutex::new(None),
+            preferences: Mutex::new(Preferences::defaults(root.path().join("sessions"))),
+            operations: Operations::new(),
+            base_tools: Ok(Toolchain {
+                adb: root.path().join("adb"),
+                worker: root.path().join("worker"),
+                guardian: root.path().join("guardian"),
+                mitmdump: root.path().join("mitmdump"),
+                addon: root.path().join("addon"),
+                source: ToolSource::Fixture,
+                target: toolchain::host_target().into(),
+            }),
+            data: root.path().join("desktop"),
+            cache: root.path().join("cache"),
+            preferences_path: root.path().join("preferences.json"),
+            fixture: true,
+            runtime_root: Some(runtime),
+            pending_handoff: Mutex::new(None),
+            quitting: AtomicBool::new(false),
+            exit_ready: AtomicBool::new(false),
+        };
+        assert!(desktop.reconnect().is_err());
+        assert!(desktop.owner.lock().unwrap().is_err());
+        std::fs::create_dir(&prior).unwrap();
+        std::fs::write(
+            prior.join("session.json"),
+            br#"{"phase":"saved","routing_restored":true}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            desktop.reconnect().unwrap(),
+            Snapshot::Idle { .. }
+        ));
+        assert!(desktop.owner.lock().unwrap().is_ok());
+        desktop.quitting.store(true, Ordering::Release);
+        assert!(desktop.reconnect().unwrap_err().contains("Quit"));
+    }
+
     #[test]
     fn failed_session_open_preserves_previous_inspected_evidence() {
         let temporary = tempfile::tempdir().unwrap();

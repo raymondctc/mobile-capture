@@ -464,7 +464,7 @@ function App() {
             onClick={() =>
               void run("Reconnecting", async () => {
                 const [capture, work, prefs] = await Promise.all([
-                  api.snapshot(),
+                  api.reconnect(),
                   api.operation(),
                   api.preferences(),
                 ]);

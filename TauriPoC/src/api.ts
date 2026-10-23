@@ -260,6 +260,7 @@ export const api = {
   discover: async () =>
     z.array(deviceSchema).parse(await invoke<unknown>("discover")),
   snapshot: async () => snapshotSchema.parse(await invoke<unknown>("snapshot")),
+  reconnect: async () => snapshotSchema.parse(await invoke<unknown>("reconnect")),
   start: async (request: StartRequest) =>
     snapshotSchema.parse(
       await invoke<unknown>("start", {
