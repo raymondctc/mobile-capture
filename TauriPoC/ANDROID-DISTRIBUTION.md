@@ -14,6 +14,8 @@ On Windows, use absolute Windows paths and run the equivalent command from a dev
 
 macOS development packages are ad-hoc signed and unnotarized. Normal macOS approval still applies. The script signs nested payload files and bundles before writing their manifest, asks Tauri to retain those signatures, signs adjacent application executables, and signs the outer app last. It verifies the final app signature before its installed Doctor smoke test and computes checksums after the final ZIP exists.
 
+Windows capture storage must use a local filesystem that supports private ACLs and POSIX file replacement, such as NTFS. The private state writer requires `FileRenameInfoEx` support and fails closed if the OS or filesystem cannot preserve open-reader snapshots during replacement. The native acceptance target is Windows Server 2022 x64 CI; Windows desktop and hardware acceptance remain separate checks.
+
 Windows development installers are unsigned. Install with the normal installer UI or `/S /D=C:\absolute\new-installation` for the CI user-scope smoke test. The installation directory must be new and must not replace an app that owns an active or recoverable session.
 
 The output includes the final archive or installer, `SHA256SUMS`, `BUILD.json`, the payload manifest, and the pinned dependency lock. `BUILD.json` distinguishes development and release channels and records whether the source checkout was dirty. The build script never publishes an artifact.

@@ -4,6 +4,11 @@ A standalone macOS companion for collecting Android and iOS device logs and full
 HTTP(S) requests/responses in one shared timeline, then exporting one evidence ZIP.
 It is generic and does not require Oh My Android or a company-specific app.
 
+The Android-only Tauri desktop port targets Apple Silicon macOS and Windows x64.
+See the [Android workspace guide](TauriPoC/README.md) for capture, setup, and saved
+evidence, and [Android distribution](TauriPoC/ANDROID-DISTRIBUTION.md) for development
+packages. The Swift app continues to provide iPhone support.
+
 For agent installation, follow the [Agent setup guide](docs/AGENT_SETUP.md) to
 select an authorized release, inspect the installer, and check Mac prerequisites.
 

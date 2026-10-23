@@ -288,7 +288,7 @@ export function Capture({
                 <label className="consent">
                   <input
                     type="checkbox"
-                    checked={logConsent}
+                    checked={active ? session?.log_scope.mode === "whole_device" : logConsent}
                     onChange={(event) => setLogConsent(event.target.checked)}
                   />
                   <span>
@@ -303,7 +303,7 @@ export function Capture({
             <label className="consent">
               <input
                 type="checkbox"
-                checked={networkConsent}
+                checked={active ? session?.selection.mode !== "logs" : networkConsent}
                 onChange={(event) => setNetworkConsent(event.target.checked)}
               />
               <span>
@@ -449,8 +449,8 @@ export function Capture({
         {session && (
           <>
             <div className="metrics">
-              <span>{session.logs.toLocaleString()} logs</span>
-              <span>{formatBytes(session.bytes)}</span>
+              <span>{session.selection.mode === "network" ? "Network only" : `${formatBytes(session.bytes)} raw log data`}</span>
+              {session.receipt && session.selection.mode !== "network" && <span>{session.receipt.records.toLocaleString()} raw records</span>}
             </div>
             <p className="hint">
               {session.receipt

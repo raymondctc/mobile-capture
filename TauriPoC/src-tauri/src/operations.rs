@@ -256,6 +256,9 @@ impl Operations {
             if job.view.id() != Some(id) {
                 return Err("Operation is no longer current".into());
             }
+            if matches!(job.view, View::Finished { .. } | View::Cancelled { .. }) {
+                return Ok(job.view.clone());
+            }
             if !matches!(
                 job.view,
                 View::Saving { .. }
@@ -690,5 +693,29 @@ mod tests {
             )
             .unwrap();
         assert!(operations.reserve(Kind::Save).is_ok());
+    }
+    #[test]
+    fn late_cancel_reports_the_published_save_without_claiming_cancellation() {
+        let operations = Operations::new();
+        let (id, _, _) = operations.reserve(Kind::Save).unwrap();
+        let archive = PathBuf::from("published.zip");
+        operations
+            .update(
+                &id,
+                View::Finished {
+                    id: id.clone(),
+                    result: OperationResult::Save {
+                        archive: archive.clone(),
+                        directory: PathBuf::from("session"),
+                    },
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            operations.cancel(&id).unwrap(),
+            View::Finished { .. }
+        ));
+        assert_eq!(operations.saved_archive(&id).unwrap(), archive);
+        assert!(operations.saved_archive("other-save").is_err());
     }
 }

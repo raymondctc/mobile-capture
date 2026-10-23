@@ -361,7 +361,19 @@ impl Guardian {
         for event in &mut events {
             timeline::preview(event);
         }
-        let mut warnings=vec![format!("Log selection {:?}; scope {:?}. Whole-device HTTP(S) proxy evidence requires manual CA trust; certificate pinning can prevent observation.", self.config.request.selection,self.config.request.log_scope),"Device clock uncertainty is unknown. Time proximity is inferred.".into()];
+        let log_notice = if !self.config.request.selection.includes_logs() {
+            "Device logs were not selected.".to_owned()
+        } else {
+            match &self.config.request.log_scope {
+                LogScope::App { application_id } => {
+                    format!("Device logs are limited to {application_id}.")
+                }
+                LogScope::WholeDevice => {
+                    "Device logs cover all apps and system processes.".to_owned()
+                }
+            }
+        };
+        let mut warnings = vec![format!("{log_notice} Network capture covers whole-device HTTP(S). HTTPS requires manual CA trust; certificate pinning can prevent observation."), "Timestamp proximity does not prove causation.".into()];
         if self.config.fixture {
             warnings.push("FIXTURE MODE. Compiled fake ADB evidence, not a phone.".into());
         }

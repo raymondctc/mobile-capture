@@ -4,12 +4,16 @@ on:
   pull_request:
     paths: ['TauriPoC/**', 'Dependencies/Capture/**', 'CaptureRuntime/evidence.py', '.github/workflows/android-desktop.yml']
   push:
-    branches: ['main', 'codex/android-full-port', 'codex/tauri-poc', 'codex/tauri-network-capture']
+    branches: ['main']
     paths: ['TauriPoC/**', 'Dependencies/Capture/**', 'CaptureRuntime/evidence.py', '.github/workflows/android-desktop.yml']
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: android-desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   package:

@@ -268,6 +268,26 @@ assert.match(
 assert.match(markup, /whole-device network capture/);
 assert.match(markup, /disabled="">Start recording/);
 assert.doesNotMatch(markup, /iPhone|Simulator|Homebrew/);
+const activeMarkup = renderToStaticMarkup(
+  <Capture
+    snapshot={snapshotSchema.parse({ phase: "recording", session: { ...session, bytes: 1024, selection: { mode: "logs_and_network", consent: { whole_device: true } }, log_scope: { mode: "whole_device" }, network: { state: "recording", detail: completion.coverage } } })}
+    operation={{ state: "idle" }}
+    devices={[stopped.session.device]}
+    draft={{ ...initialDraft, serial: "phone-a", selection: "logs_and_network", log_mode: "whole_device" }}
+    change={() => {}}
+    preferences={{ output_root: "/capture", limits, network_policy: policy, adb_override: null, mitmdump_override: null }}
+    savePreferences={async () => {}}
+    refresh={async () => {}}
+    run={async (_label, action) => { await action(); }}
+    pending=""
+    onSnapshot={() => {}}
+    onOperation={() => {}}
+    setup={() => {}}
+  />,
+);
+assert.equal((activeMarkup.match(/checked=""/g) ?? []).length, 2);
+assert.match(activeMarkup, /raw log data/);
+assert.doesNotMatch(activeMarkup, />0 logs</);
 void checkHandoffBehavior().then(
   () => console.log("Android UI behavior and launch-link checks passed."),
   (cause: unknown) => {
