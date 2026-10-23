@@ -25,6 +25,9 @@ setup_nonce = "9c" * 16
 request_body = b"\x00\xff\x80original request\x00"
 encoded_response = gzip.compress(b"\x00\xff\x80encoded original response" * 8, mtime=0)
 large = b"\xff" * (256 * 1024 + 1)
+production_body = (b"full body search tail " * 100000) + b"end-of-production-body"
+legacy_policy = {"max_flows": 32, "max_body_bytes": 262144, "max_header_bytes": 16384,
+                 "max_total_bytes": 100663296, "duration_ms": 120000}
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -33,13 +36,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/binary-request-header":
             assert self.headers.get("X-Fixture") == "\xff"
-        self.respond(large if self.path == "/large" else b"bounded", False)
+        self.respond(production_body if self.path == "/production-body" else large if self.path == "/large" else b"bounded", False)
     def respond(self, body, compressed):
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))
         if self.path == "/binary-header":
             self.send_header("X-Fixture", "\xff")
+        if self.path == "/large-header":
+            self.send_header("X-Large-Fixture", "x" * 40000)
         if compressed:
             self.send_header("Content-Encoding", "gzip")
         self.end_headers()
@@ -49,7 +54,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
-def start(name, blocked=False, addon=None, unready=False):
+def start(name, blocked=False, addon=None, unready=False, policy=None):
     session = root / name
     runtime = session / "runtime"
     runtime.mkdir(parents=True, mode=0o700)
@@ -71,7 +76,8 @@ def start(name, blocked=False, addon=None, unready=False):
             import fcntl
             fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
     config = runtime / "config.json"
-    config.write_text(json.dumps({"directory": str(session), "nonce": nonce, "setup_nonce": setup_nonce, "forwarding": False}))
+    config.write_text(json.dumps({"directory": str(session), "nonce": nonce, "setup_nonce": setup_nonce,
+                                  "forwarding": False, "policy": legacy_policy if policy is None else policy}))
     errors = open(session / "stderr.private", "wb")
     proc = subprocess.Popen([engine, "--quiet", "--listen-host", "127.0.0.1", "--listen-port", str(port), "--set", "confdir=" + str(ca), "--set", "connection_strategy=lazy", "--set", "upstream_cert=false", "-s", str(addon or Path(__file__).resolve().parents[1] / "resources/network_addon.py")], env=dict(os.environ, CAPTURE_ENGINE_CONFIG=str(config)), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=errors)
     if blocked or unready:
@@ -443,8 +449,53 @@ def owned_session(mode):
             owner.wait()
         errors.close()
 
+def production_policy_proof():
+    policy = {"max_flows": 100, "max_body_bytes": 4 * 1024 * 1024,
+              "max_header_bytes": 65536, "max_total_bytes": 128 * 1024 * 1024,
+              "duration_ms": 180000}
+    saved, ca, port, proc, errors = start("production-policy", policy=policy)
+    try:
+        for path in ["/bounded"] * 40 + ["/production-body", "/large-header"]:
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+            connection.request("GET", f"http://127.0.0.1:{server.server_port}{path}")
+            response = connection.getresponse()
+            expected = production_body if path == "/production-body" else b"bounded"
+            assert response.read() == expected
+            if path == "/large-header":
+                assert len(response.getheader("X-Large-Fixture")) == 40000
+            connection.close()
+        (saved / "runtime/engine-stop.json").write_text(json.dumps({"nonce": nonce}))
+        assert proc.wait(timeout=15) == 0
+        entries = json.loads((saved / "network/capture.har").read_text())["log"]["entries"]
+        assert len(entries) == 42, f"production policy retained {len(entries)} of 42 forwarded flows"
+        retained = next(entry for entry in entries if entry["request"]["url"].endswith("/production-body"))
+        assert base64.b64decode(retained["response"]["content"]["text"]) == production_body
+        facts = json.loads((saved / "network/incomplete.json").read_text())
+        assert facts["omitted_flows"] == 0 and facts["missing_bodies"] == []
+        assert facts["policy"]["body_bytes"] == policy["max_body_bytes"]
+        assert not json.loads((saved / "runtime/engine-receipt.json").read_text())["partial"]
+        replay_result = saved / "native-replay.json"
+        subprocess.run([engine, "--quiet", "--no-server", "--set", "confdir=" + str(ca), "-s", str(replay)],
+                       env=dict(os.environ, CAPTURE_REPLAY_FILE=str(saved / "network/capture.mitm"),
+                                CAPTURE_REPLAY_RESULT=str(replay_result)), check=True, timeout=15)
+        flows = json.loads(replay_result.read_text())
+        flow = next(flow for flow in flows if flow["id"] == retained["_flow_id"])
+        assert base64.b64decode(flow["response"]) == production_body
+        events = [json.loads(line) for line in (saved / "network/events.jsonl").read_text().splitlines()]
+        event = next(event for event in events if event["kind"] == "response" and event["detail"]["flow_id"] == flow["id"])
+        assert base64.b64decode(event["detail"]["response_body"]["text"]) == production_body
+        return {"forwarded_and_retained_flows": 42, "body_bytes": len(production_body), "response_header_bytes": 40000,
+                "native_har_jsonl_bytes_match": True}
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        errors.close()
+
+production_proof = production_policy_proof()
 owned_proofs = [owned_session(mode) for mode in ["success", "tls-error", "http-error", "flush-error", "binary-header"]]
 server.shutdown()
 result = {"root": str(root), "real_engine": "12.2.3", "native_har_jsonl_ids_and_raw_bytes_match": True, "http_binary_gzip_forwarded": True, "https_private_client_trust": True, "admitted_flows": 32, "omitted_flows": 4, "oversize_body_unavailable_everywhere": True, "private_nonce_shutdown": True, "owner_eof_graceful_done": True, "source_lease_failure_stops_unready_listener": True, "cross_file_write_failure_truthfully_partial": True, "flush_failure_closes_writers_before_source_lease_release": True, "partial_writer_initialization_closes_before_lease_release": True, "binary_headers_forward_but_decline_retention_truthfully": True, "device_routing": "compiled_private_fake_only", "rust_owner_guardian_real_engine": owned_proofs}
+result["production_policy"] = production_proof
 (root / "result.json").write_text(json.dumps(result, indent=2))
 print(json.dumps(result))
