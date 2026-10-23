@@ -13,6 +13,8 @@ The [official mitmproxy object listing](https://downloads.mitmproxy.org/list?del
 
 Google's [repository metadata](https://dl.google.com/android/repository/repository2-3.xml) names the Windows archive `platform-tools_r37.0.1-win.zip`. The complete platform-tools tree is retained, including `AdbWinApi.dll`, `AdbWinUsbApi.dll`, `libwinpthread-1.dll`, `NOTICE.txt`, and `source.properties`. Google describes the version in its [platform-tools release notes](https://developer.android.com/tools/releases/platform-tools).
 
+The pinned Windows archive's `adb.exe` is PE I386 (`0x014c`, PE32 optional header `0x010b`). The Windows x64 payload validates this exact ADB architecture and requires AMD64 for `mitmdump`, `collector-worker`, and `capture-guardian`. The macOS payload requires arm64 for all four executables. Archive hashes, payload inventory, pinned versions, and runtime capability probes remain required.
+
 `payload.py` verifies archive hashes before extraction. It refuses absolute paths, traversal, duplicate paths, ZIP symlinks, hard links, special files, and out-of-tree TAR symlinks. It bounds download and expanded sizes. It builds a manifest of exact installed bytes and relative symlink targets after macOS nested signing. The app and Doctor compile the manifest SHA256 into their binaries. Runtime resolution verifies that digest, all declared bytes, the complete file set, and executable architecture. Missing or damaged packaged components fail without external discovery.
 
 A pinned archive hash is a reviewed byte identity, not an independent publisher signature. Preserve the complete notices and distribution metadata when redistributing the product. Dependency upgrades require downloaded-byte review and native acceptance on each supported target.

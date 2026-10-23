@@ -237,13 +237,17 @@ fn resolve_verified(resource_dir: &Path, digest: &str, target: &str) -> Result<T
         source: ToolSource::Bundled,
         target: manifest.target,
     };
-    for path in [
-        &result.adb,
-        &result.mitmdump,
-        &result.worker,
-        &result.guardian,
+    let adb_target = match target {
+        "x86_64-pc-windows-msvc" => "i686-pc-windows-msvc",
+        _ => target,
+    };
+    for (path, executable_target) in [
+        (&result.adb, adb_target),
+        (&result.mitmdump, target),
+        (&result.worker, target),
+        (&result.guardian, target),
     ] {
-        verify_architecture(path, target)?;
+        verify_architecture(path, executable_target)?;
     }
     Ok(result)
 }
@@ -270,11 +274,18 @@ pub fn verify_architecture(path: &Path, target: &str) -> Result<()> {
     let count = file.read(&mut bytes).map_err(|e| e.to_string())?;
     let bytes = &bytes[..count];
     let valid = match target {
-        "x86_64-pc-windows-msvc" if bytes.starts_with(b"MZ") && bytes.len() >= 64 => {
+        "x86_64-pc-windows-msvc" | "i686-pc-windows-msvc"
+            if bytes.starts_with(b"MZ") && bytes.len() >= 64 =>
+        {
             let offset = u32::from_le_bytes(bytes[60..64].try_into().unwrap()) as usize;
+            let expected = if target == "i686-pc-windows-msvc" {
+                b"PE\0\0\x4c\x01"
+            } else {
+                b"PE\0\0\x64\x86"
+            };
             bytes
                 .get(offset..offset + 6)
-                .is_some_and(|header| header == b"PE\0\0\x64\x86")
+                .is_some_and(|header| header == expected)
         }
         "aarch64-apple-darwin" => {
             if bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]) {
@@ -331,7 +342,7 @@ mod tests {
                 use std::os::unix::fs::PermissionsExt;
                 fs::set_permissions(root.join(name), fs::Permissions::from_mode(0o755)).unwrap();
             }
-            files.push(serde_json::json!({"path":name,"kind":"file","bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes))}));
+            files.push(serde_json::json!({"path":name,"kind":"file","bytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(bytes))}));
         }
         let bytes = serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"target":target,"adbVersion":"37.0.1","mitmproxyVersion":"12.2.3","tools":{"adb":"adb","mitmdump":"mitmdump","worker":"worker","guardian":"guardian","addon":"addon"},"files":files})).unwrap();
         let digest = format!("{:x}", Sha256::digest(&bytes));
