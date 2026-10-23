@@ -417,15 +417,17 @@ pub fn copy_archive(source: &Path, destination: &Path) -> Result<PathBuf> {
 pub fn copy_evidence_archive(source: &Path, destination: &Path) -> Result<PathBuf> {
     let parent = fs::canonicalize(destination.parent().ok_or("Destination has no directory")?)
         .map_err(|e| e.to_string())?;
-    let temporary = tempfile::NamedTempFile::new_in(&parent).map_err(|e| e.to_string())?;
-    copy_archive(source, temporary.path())?;
-    verify_evidence_archive(temporary.path())?;
+    let temporary = tempfile::NamedTempFile::new_in(&parent)
+        .map_err(|e| e.to_string())?
+        .into_temp_path();
+    copy_archive(source, &temporary)?;
+    verify_evidence_archive(&temporary)?;
     let target = parent.join(
         destination
             .file_name()
             .ok_or("Destination has no filename")?,
     );
-    publish(temporary.path(), &target)?;
+    publish(&temporary, &target)?;
     Ok(target)
 }
 
