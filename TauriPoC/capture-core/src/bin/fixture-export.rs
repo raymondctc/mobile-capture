@@ -33,6 +33,9 @@ fn main() {
             whole_device_consent: true,
             selection: CaptureSelection::Logs,
             limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);

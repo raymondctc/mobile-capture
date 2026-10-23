@@ -50,6 +50,9 @@ fn start(owner: &mut CaptureOwner, serial: &str, limits: Limits) {
             whole_device_consent: true,
             selection: CaptureSelection::Logs,
             limits,
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .unwrap();
 }
@@ -74,7 +77,10 @@ fn consent_is_required_and_unready_devices_are_refused() {
             serial: "fixture-stream".into(),
             whole_device_consent: false,
             selection: CaptureSelection::Logs,
-            limits: Limits::default()
+            limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .unwrap_err()
         .contains("consent"));
@@ -83,7 +89,10 @@ fn consent_is_required_and_unready_devices_are_refused() {
             serial: "fixture-offline".into(),
             whole_device_consent: true,
             selection: CaptureSelection::Logs,
-            limits: Limits::default()
+            limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .is_err());
     assert!(owner
@@ -91,7 +100,10 @@ fn consent_is_required_and_unready_devices_are_refused() {
             serial: "fixture-denied".into(),
             whole_device_consent: true,
             selection: CaptureSelection::Logs,
-            limits: Limits::default()
+            limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .is_err());
     assert!(owner.directory().is_none());
@@ -245,6 +257,8 @@ fn startup_requires_a_newline_terminated_config_before_collection() {
             serial: "fixture-stream".into(),
             directory: root.path().into(),
             limits: Limits::default(),
+            log_scope: LogScope::default(),
+            resolved_logs: None,
         };
         let json = serde_json::to_vec(&config).unwrap();
         let bytes = match frame {
@@ -270,6 +284,8 @@ fn parent_eof_stops_the_collector_after_a_complete_startup_frame() {
         serial: "fixture-stream".into(),
         directory: root.path().into(),
         limits: Limits::default(),
+        log_scope: LogScope::default(),
+        resolved_logs: None,
     };
     let mut child = Command::new(env!("CARGO_BIN_EXE_collector-worker"))
         .stdin(Stdio::piped())
@@ -596,7 +612,10 @@ fn worker_failure_without_a_receipt_never_claims_verified_stop() {
             serial: "fixture-stream".into(),
             whole_device_consent: true,
             selection: CaptureSelection::Logs,
-            limits: Limits::default()
+            limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .is_err());
 }
@@ -637,4 +656,205 @@ fn recent_window_is_bounded_while_export_contains_every_record() {
         .count();
     assert_eq!(count as u64, state["session"]["logs"].as_u64().unwrap() + 1);
     assert!(count > 500);
+}
+
+fn app_fixture(root: &Path) -> (CaptureOwner, PathBuf) {
+    let tools = root.join("app-tools");
+    fs::create_dir(&tools).unwrap();
+    let adb = tools.join(format!("fake-adb{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(env!("CARGO_BIN_EXE_fake-adb"), &adb).unwrap();
+    let state = tools.join("fake-android-state.json");
+    fs::write(&state,serde_json::to_vec(&serde_json::json!({"user":0,"uid":10001,"install":"v1","shared":false,"uid_supported":true,"processes":true})).unwrap()).unwrap();
+    (
+        CaptureOwner::open(
+            CapturePaths {
+                output_root: root.join("output"),
+                runtime_root: Some(root.join("private")),
+            },
+            ToolSelection {
+                adb,
+                worker: env!("CARGO_BIN_EXE_collector-worker").into(),
+                guardian: PathBuf::new(),
+                mitmdump: None,
+                addon: PathBuf::new(),
+            },
+            true,
+        )
+        .unwrap(),
+        state,
+    )
+}
+fn app_request(serial: &str) -> StartRequest {
+    StartRequest {
+        serial: serial.into(),
+        whole_device_consent: false,
+        selection: CaptureSelection::Logs,
+        limits: Limits::default(),
+        log_scope: LogScope::App {
+            application_id: "com.fixture.app".into(),
+        },
+        network_policy: NetworkPolicy::default(),
+        context: CaptureContext {
+            title: "App regression".into(),
+            notes: "Private app scope".into(),
+            steps: vec!["Open screen".into()],
+        },
+    }
+}
+#[test]
+fn app_scope_discovers_active_user_and_persists_only_verified_owned_bytes() {
+    for serial in ["fixture-app-uid", "fixture-app-pid"] {
+        let root = tempfile::tempdir().unwrap();
+        let (mut owner, _) = app_fixture(root.path());
+        let apps = owner.applications(serial).unwrap();
+        assert_eq!(apps[0].application_id, "com.fixture.app");
+        assert!(!apps[0].shared_uid);
+        owner.start(app_request(serial)).unwrap();
+        wait(&mut owner, |v| {
+            v["session"]["logs"].as_u64().unwrap_or(0) > 2
+        });
+        let status = serde_json::to_value(owner.status().unwrap()).unwrap();
+        assert!(status["session"]["events"].as_array().unwrap().is_empty());
+        assert!(status["session"]["bytes"].as_u64().unwrap() > 0);
+        owner.stop().unwrap();
+        let directory = owner.directory().unwrap();
+        let raw = fs::read_to_string(directory.join("logs/device.log")).unwrap();
+        assert!(raw.contains("owned-"));
+        assert!(raw.contains("owned-stack-"));
+        assert!(!raw.contains("private-other"));
+        assert!(!raw.contains("orphan private"));
+        let entries = zip_entries(&owner.export().unwrap());
+        let descriptor: Value = serde_json::from_slice(&entries["capture.json"]).unwrap();
+        let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+        assert_eq!(descriptor["context"]["title"], "App regression");
+        assert_eq!(descriptor["log_scope"]["application_id"], "com.fixture.app");
+        assert_eq!(
+            descriptor["log_attribution"]["strategy"],
+            if serial.ends_with("uid") {
+                "android_uid"
+            } else {
+                "android_process_map"
+            }
+        );
+        assert_eq!(manifest["context"]["log_scope"], descriptor["log_scope"]);
+        assert!(!entries.keys().any(|p| p.starts_with("runtime/")));
+    }
+}
+#[test]
+fn app_identity_changes_stop_before_unverified_raw_persistence() {
+    for (field, value) in [
+        ("install", serde_json::json!("v2")),
+        ("user", serde_json::json!(10)),
+        ("shared", serde_json::json!(true)),
+        ("clock_offset", serde_json::json!(-60.0)),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let (mut owner, state) = app_fixture(root.path());
+        owner.start(app_request("fixture-app-uid")).unwrap();
+        wait(&mut owner, |v| {
+            v["session"]["logs"].as_u64().unwrap_or(0) > 2
+        });
+        let mut changed: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        changed[field] = value;
+        fs::write(&state, serde_json::to_vec(&changed).unwrap()).unwrap();
+        let failed = wait(&mut owner, |v| v["phase"] == "failed");
+        assert_eq!(failed["session"]["receipt"]["reason"], "identity_gap");
+        let directory = owner.directory().unwrap();
+        let size = fs::metadata(directory.join("logs/device.log"))
+            .unwrap()
+            .len();
+        thread::sleep(Duration::from_millis(250));
+        assert_eq!(
+            fs::metadata(directory.join("logs/device.log"))
+                .unwrap()
+                .len(),
+            size
+        );
+        assert!(failed["session"]["receipt"]["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("gap"));
+        let entries = zip_entries(&owner.export().unwrap());
+        let manifest: Value = serde_json::from_slice(&entries["manifest.json"]).unwrap();
+        assert_eq!(manifest["package_state"], "partial");
+    }
+}
+#[test]
+fn invalid_or_shared_app_never_broadens_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut owner, state) = app_fixture(root.path());
+    let mut request = app_request("fixture-app-uid");
+    request.log_scope = LogScope::App {
+        application_id: "x'; reboot".into(),
+    };
+    assert!(owner.start(request).is_err());
+    let mut shared: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+    shared["shared"] = serde_json::json!(true);
+    fs::write(state, serde_json::to_vec(&shared).unwrap()).unwrap();
+    assert!(owner
+        .start(app_request("fixture-app-uid"))
+        .unwrap_err()
+        .contains("shares"));
+    assert!(owner.directory().is_none());
+    assert!(!root.path().join("output").exists());
+}
+#[test]
+fn saved_logs_reopen_and_export_only_with_private_verified_completion() {
+    let root = tempfile::tempdir().unwrap();
+    let mut first = owner(root.path());
+    start(&mut first, "fixture-stream", Limits::default());
+    wait(&mut first, |v| {
+        v["session"]["logs"].as_u64().unwrap_or(0) > 2
+    });
+    let directory = first.directory().unwrap().to_owned();
+    assert!(owner(root.path()).open_saved(directory.clone()).is_err());
+    first.stop().unwrap();
+    drop(first);
+    let mut reopened = owner(root.path());
+    assert!(matches!(
+        reopened.open_saved(directory.clone()).unwrap(),
+        Snapshot::Stopped(_)
+    ));
+    assert!(reopened.export().unwrap().is_file());
+    fs::write(directory.join("capture.json"), b"{}").unwrap();
+    assert!(reopened.export().is_err());
+    drop(reopened);
+    let root2 = tempfile::tempdir().unwrap();
+    fs::create_dir(root2.path().join("timeline")).unwrap();
+    fs::create_dir(root2.path().join("logs")).unwrap();
+    fs::write(
+        root2.path().join("session.json"),
+        b"{\"phase\":\"stopped\"}",
+    )
+    .unwrap();
+    fs::write(
+        root2.path().join("receipt.json"),
+        b"{\"child_reaped\":true}",
+    )
+    .unwrap();
+    assert!(owner(root.path())
+        .open_saved(root2.path().to_owned())
+        .is_err());
+}
+
+#[test]
+fn closing_app_source_cancels_an_inflight_identity_probe_before_worker_escalation() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut owner, state) = app_fixture(root.path());
+    owner.start(app_request("fixture-app-uid")).unwrap();
+    wait(&mut owner, |v| {
+        v["session"]["logs"].as_u64().unwrap_or(0) > 2
+    });
+    let mut slow: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+    slow["probe_delay_ms"] = serde_json::json!(7000);
+    fs::write(state, serde_json::to_vec(&slow).unwrap()).unwrap();
+    thread::sleep(Duration::from_millis(300));
+    let StopOutcome::Ready(stopped) = owner.stop().unwrap() else {
+        panic!("Cancelled probe must still produce verified collector shutdown")
+    };
+    let receipt = stopped.receipt.unwrap();
+    assert_eq!(receipt.reason, StopReason::LeaseClosed);
+    assert!(receipt.child_reaped);
+    assert!(!receipt.forced);
+    assert!(owner.export().unwrap().is_file());
 }

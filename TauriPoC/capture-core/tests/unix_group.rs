@@ -88,6 +88,8 @@ fn check_descendants(prefix: &str, forced: bool) {
             serial: serial.clone(),
             directory: root.path().into(),
             limits: Limits::default(),
+            log_scope: capture_poc_core::model::LogScope::default(),
+            resolved_logs: None,
         };
         writeln!(
             worker.child.stdin.as_mut().unwrap(),

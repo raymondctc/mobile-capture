@@ -9,7 +9,7 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
@@ -82,7 +82,26 @@ fn main() {
         let _ = std::io::stdin().read(&mut [0]);
         signal.store(true, Ordering::Release);
     });
+    let started = Instant::now();
+    let mut admission_closed = false;
     loop {
+        if !forwarding
+            && !admission_closed
+            && started.elapsed().as_millis()
+                >= config["policy"]["duration_ms"]
+                    .as_u64()
+                    .unwrap_or(3_600_000) as u128
+        {
+            let mut coverage: Value =
+                serde_json::from_slice(&fs::read(runtime.join("coverage.json")).unwrap()).unwrap();
+            coverage["admission_closed"] = json!(true);
+            fs::write(
+                runtime.join("coverage.json"),
+                serde_json::to_vec(&coverage).unwrap(),
+            )
+            .unwrap();
+            admission_closed = true;
+        }
         let mode: Value = fs::read(&control)
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())

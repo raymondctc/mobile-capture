@@ -156,14 +156,14 @@ pub(crate) fn network_events(
     loop {
         let mut bytes = vec![];
         let n = std::io::Read::by_ref(&mut reader)
-            .take(2 * 1024 * 1024 + 1)
+            .take(128 * 1024 * 1024 + 1)
             .read_until(b'\n', &mut bytes)
             .map_err(|e| e.to_string())?;
         if n == 0 {
             break;
         }
-        if n > 2 * 1024 * 1024 {
-            return Err("Network record exceeds enforced 2 MiB serialization bound".into());
+        if n > 128 * 1024 * 1024 {
+            return Err("Network record exceeds enforced 128 MiB serialization bound".into());
         }
         line += 1;
         if live && !bytes.ends_with(b"\n") {
@@ -576,6 +576,12 @@ print(json.dumps(evidence._read_events(root, {"started_at": sys.argv[3]}, raw_fi
             archive: None,
             warnings: vec![],
             network: NetworkView::Recording(CoverageView::default()),
+            descriptor_version: 1,
+            selection: CaptureSelection::Logs,
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
+            log_attribution: None,
         }));
         assert!(serde_json::to_vec(&reply).unwrap().len() < 4 * 1024 * 1024);
     }

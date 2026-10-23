@@ -18,6 +18,8 @@ pub(super) struct EngineConfig {
     pub nonce: String,
     pub setup_nonce: String,
     pub forwarding: bool,
+    #[serde(default)]
+    pub policy: crate::model::NetworkPolicy,
 }
 pub(super) struct EngineStop {
     pub forced: bool,
@@ -36,6 +38,7 @@ impl Engine {
         ca: &Path,
         port: u16,
         forwarding: bool,
+        policy: &crate::model::NetworkPolicy,
     ) -> Result<Self> {
         let executable = tools
             .mitmdump
@@ -75,6 +78,7 @@ impl Engine {
             nonce: lease::random_token()?,
             setup_nonce: lease::random_token()?[..32].to_owned(),
             forwarding,
+            policy: policy.clone(),
         };
         let path = directory.join("runtime/engine-config.json");
         lease::write(&path, &config)?;

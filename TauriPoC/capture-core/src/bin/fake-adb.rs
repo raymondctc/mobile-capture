@@ -8,9 +8,15 @@ use std::{
 fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
     if args == ["devices", "-l"] {
-        println!("List of devices attached\nfixture-stream\tdevice product:poc model:Fixture_Android device:fixture\nfixture-offline\toffline\nfixture-denied\tunauthorized\nfixture-disconnect\tdevice model:Disconnect_Fixture\nfixture-flood\tdevice model:Limit_Fixture");
+        println!("List of devices attached\nfixture-stream\tdevice product:poc model:Fixture_Android device:fixture\nfixture-offline\toffline\nfixture-denied\tunauthorized\nfixture-disconnect\tdevice model:Disconnect_Fixture\nfixture-flood\tdevice model:Limit_Fixture\nfixture-app-uid\tdevice model:App_UID_Fixture\nfixture-app-pid\tdevice model:App_PID_Fixture");
         #[cfg(unix)]
         println!("fixture-stop-exit\tdevice model:Stop_Exit_Fixture\nfixture-stop-signal\tdevice model:Stop_Signal_Fixture\nfixture-stop-clean\tdevice model:Clean_Stop_Fixture");
+        return;
+    }
+    if args.len() >= 7
+        && args[..5] == ["-H", "127.0.0.1", "-P", "5037", "-s"]
+        && android(&args[5], &args[6..])
+    {
         return;
     }
     if args.len() >= 7
@@ -20,14 +26,24 @@ fn main() {
         routing(&args[6..]);
         return;
     }
-    if args.len() != 11
-        || args[..5] != ["-H", "127.0.0.1", "-P", "5037", "-s"]
-        || args[6..] != ["logcat", "-v", "epoch", "-T", "1"]
+    let legacy = args.len() == 11 && args[6..] == ["logcat", "-v", "epoch", "-T", "1"];
+    let modern = args.len() >= 18
+        && args[6..17]
+            == [
+                "logcat", "-b", "main", "-b", "system", "-b", "crash", "-v", "epoch", "-T", "1",
+            ]
+        && (args.len() == 18 && args[17] == "*:V"
+            || args.len() == 19 && args[17].starts_with("--uid=") && args[18] == "*:V");
+    if args.len() < 7 || args[..5] != ["-H", "127.0.0.1", "-P", "5037", "-s"] || !(legacy || modern)
     {
         eprintln!("fixture rejects unexpected ADB arguments: {args:?}");
         std::process::exit(2);
     }
     let serial = &args[5];
+    if serial.starts_with("fixture-app-") {
+        app_stream(&args);
+    }
+
     #[cfg(unix)]
     if serial.starts_with("fixture-descendant-") {
         exited_leader(serial);
@@ -271,4 +287,97 @@ fn shell_fields(script: &str) -> Vec<String> {
     }
     assert!(!quoted && !escaped);
     fields
+}
+
+fn android_state() -> serde_json::Value {
+    std::fs::read(env::current_exe().unwrap().with_file_name("fake-android-state.json")).ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_else(||serde_json::json!({"user":0,"uid":10001,"install":"v1","shared":false,"uid_supported":true,"processes":true,"clock_offset":0.0}))
+}
+fn android(serial: &str, args: &[String]) -> bool {
+    let state = android_state();
+    let user = state["user"].as_u64().unwrap_or(0);
+    let uid = state["uid"].as_u64().unwrap_or(10001);
+    let packages = format!(
+        "package:com.fixture.app uid:{uid}\npackage:com.fixture.other uid:{}\n",
+        if state["shared"] == true {
+            uid
+        } else {
+            uid + 1
+        }
+    );
+    let install = format!(
+        "codePath=/data/app/fixture-{}\nfirstInstallTime=2026-01-01\nlastUpdateTime={}\n",
+        state["install"].as_str().unwrap_or("v1"),
+        state["install"].as_str().unwrap_or("v1")
+    );
+    if args == ["shell", "am", "get-current-user"] {
+        println!("{user}");
+    } else if args.len() == 7 && args[..4] == ["shell", "pm", "list", "packages"] {
+        print!("{packages}");
+    } else if args.len() == 4 && args[..3] == ["shell", "dumpsys", "package"] {
+        print!("{install}");
+    } else if args == ["shell", "logcat", "--help"] {
+        if state["uid_supported"] != false && serial != "fixture-app-pid" {
+            println!("--uid=<uid> only show matching UID");
+        }
+    } else if args.len() == 7
+        && args[0] == "logcat"
+        && args[1].starts_with("--uid=")
+        && args[2..] == ["-d", "-t", "1", "-v", "epoch"]
+    {
+        if state["uid_supported"] == false || serial == "fixture-app-pid" {
+            std::process::exit(1);
+        }
+    } else if args.len() == 2 && args[0] == "shell" && args[1].contains("__MC_FENCE__") {
+        if let Some(delay) = state["probe_delay_ms"].as_u64() {
+            thread::sleep(Duration::from_millis(delay));
+        }
+        let epoch = chrono::Utc::now().timestamp_micros() as f64 / 1_000_000.0
+            + state["clock_offset"].as_f64().unwrap_or(0.0);
+        println!("__MC_FENCE__\n{epoch:.6}\n__MC_USER__\n{user}\n__MC_PACKAGES__\n{packages}__MC_PACKAGE__\n{install}");
+        if args[1].contains("__MC_CLOCK__") {
+            println!(
+                "__MC_CLOCK__\n{epoch:.6}\n100.0 100.0\n{epoch:.6}\n100\n__MC_PS__\nPID UID NAME"
+            );
+            if state["processes"] != false {
+                println!("123 {uid} com.fixture.custom");
+            }
+            println!("__MC_DETAILS__");
+            if state["processes"] != false {
+                let mut fields = vec!["0"; 20];
+                fields[0] = "S";
+                fields[19] = "500";
+                println!("__MC_PID_123\n123 (fixture worker) {}\nUid: {uid} {uid} {uid} {uid}\ncom.fixture.custom", fields.join(" "));
+            }
+        }
+        println!("__MC_END__");
+    } else {
+        return false;
+    }
+    true
+}
+fn app_stream(args: &[String]) -> ! {
+    let uid_filtered = args.iter().any(|a| a.starts_with("--uid="));
+    let mut output = io::stdout().lock();
+    let mut count = 0;
+    loop {
+        let epoch = chrono::Utc::now().timestamp_micros() as f64 / 1_000_000.0;
+        if count == 0 {
+            writeln!(output, "orphan private continuation").unwrap();
+        }
+        if !uid_filtered {
+            writeln!(
+                output,
+                "{epoch:.6} 999 999 I Other: private-other\nprivate-other-continuation"
+            )
+            .unwrap();
+        }
+        writeln!(
+            output,
+            "{epoch:.6} 123 456 V App: owned-{count}\nowned-stack-{count}"
+        )
+        .unwrap();
+        output.flush().unwrap();
+        count += 1;
+        thread::sleep(Duration::from_millis(50));
+    }
 }

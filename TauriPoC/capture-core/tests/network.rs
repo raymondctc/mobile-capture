@@ -78,6 +78,9 @@ impl Fixture {
                 whole_device_consent: true,
                 selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
                 limits: Limits::default(),
+                log_scope: LogScope::default(),
+                network_policy: NetworkPolicy::default(),
+                context: CaptureContext::default(),
             })
             .unwrap()
     }
@@ -163,6 +166,9 @@ fn recent_preview_retains_network_after_log_flood_and_export_keeps_every_record(
                 records: 600,
                 ..Limits::default()
             },
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .unwrap();
     let directory = owner.directory().unwrap().to_owned();
@@ -442,6 +448,9 @@ fn every_claim_command_failure_preserves_exact_originals_on_retry() {
             whole_device_consent: true,
             selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
             limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         });
         f.edit(|s| s["fail_command"] = Value::Null);
         if owner.directory().is_some() {
@@ -743,6 +752,9 @@ fn completed_network_handoff_waits_for_previous_guardian_release() {
         whole_device_consent: true,
         selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
         limits: Limits::default(),
+        log_scope: LogScope::default(),
+        network_policy: NetworkPolicy::default(),
+        context: CaptureContext::default(),
     });
     assert!(resume.join().unwrap().success());
     assert!(matches!(started, Ok(Snapshot::Recording(_))), "{started:?}");
@@ -767,6 +779,9 @@ fn completed_network_handoff_refuses_other_client_and_preserves_export() {
         whole_device_consent: true,
         selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
         limits: Limits::default(),
+        log_scope: LogScope::default(),
+        network_policy: NetworkPolicy::default(),
+        context: CaptureContext::default(),
     });
     assert!(refusal.elapsed() < Duration::from_secs(8));
     assert_eq!(
@@ -809,6 +824,9 @@ fn completed_network_handoff_after_directory_moves_preserves_evidence() {
         whole_device_consent: true,
         selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
         limits: Limits::default(),
+        log_scope: LogScope::default(),
+        network_policy: NetworkPolicy::default(),
+        context: CaptureContext::default(),
     });
     if started.is_err() {
         fs::rename(&moved, &directory).unwrap();
@@ -857,6 +875,9 @@ fn missing_network_state_cannot_release_active_or_recovery_required_session() {
             whole_device_consent: true,
             selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
             limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         });
         let unchanged_commands = f.state()["commands"] == commands;
         let unchanged_locator = fs::read(&lock).unwrap() == locator;
@@ -893,6 +914,9 @@ fn offline_completion_cannot_authorize_handoff_after_state_disappears() {
         whole_device_consent: true,
         selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
         limits: Limits::default(),
+        log_scope: LogScope::default(),
+        network_policy: NetworkPolicy::default(),
+        context: CaptureContext::default(),
     });
     let original_absent = !directory.exists();
     fs::rename(&moved, &directory).unwrap();
@@ -918,6 +942,9 @@ fn missing_completed_state_still_requires_actual_owner_lease_handoff() {
         whole_device_consent: true,
         selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
         limits: Limits::default(),
+        log_scope: LogScope::default(),
+        network_policy: NetworkPolicy::default(),
+        context: CaptureContext::default(),
     });
     if started.as_ref().err().map(String::as_str)
         != Some("Another capture owns this connection or source")
@@ -960,6 +987,9 @@ fn missing_completed_state_can_retry_a_launch_failure_before_pending_routing() {
         whole_device_consent: true,
         selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
         limits: Limits::default(),
+        log_scope: LogScope::default(),
+        network_policy: NetworkPolicy::default(),
+        context: CaptureContext::default(),
     });
     fs::rename(&unavailable, &f.tools.guardian).unwrap();
     assert!(started
@@ -1000,6 +1030,9 @@ fn completed_network_handoff_repeats_network_then_log_capture() {
                 whole_device_consent: true,
                 selection: CaptureSelection::Logs,
                 limits: Limits::default(),
+                log_scope: LogScope::default(),
+                network_policy: NetworkPolicy::default(),
+                context: CaptureContext::default(),
             })
             .unwrap(),
         Snapshot::Recording(_)
@@ -1155,6 +1188,9 @@ fn missing_engine_is_a_prerequisite_refusal_before_device_mutation() {
             whole_device_consent: true,
             selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
             limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .unwrap_err();
     assert!(error.contains("mitmdump 12.2.3"));
@@ -1263,7 +1299,10 @@ fn lost_startup_reply_keeps_same_controller_recovery_and_does_not_hide_mutation(
             serial: "fixture-stream".into(),
             whole_device_consent: true,
             selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
-            limits: Limits::default()
+            limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .is_err());
     let directory = owner
@@ -1390,4 +1429,280 @@ fn split_control_frame_survives_nonblocking_listener_accept_before_device_mutati
     let trace = fs::read_to_string(directory.join("runtime/guardian-events.jsonl")).unwrap();
     assert!(!trace.contains("frame_rejected"), "{trace}");
     assert!(trace.contains("exit_quiescent_no_clients"), "{trace}");
+}
+
+#[test]
+fn independent_network_selection_omits_logs_without_claiming_missing_evidence() {
+    let f = Fixture::new();
+    let mut owner = f.owner();
+    let policy = NetworkPolicy {
+        max_flows: 321,
+        duration_ms: 10_000,
+        ..NetworkPolicy::default()
+    };
+    owner
+        .start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: false,
+            selection: CaptureSelection::Network(NetworkConsent { whole_device: true }),
+            limits: Limits::default(),
+            log_scope: LogScope::App {
+                application_id: "ignored.when.logs.off".into(),
+            },
+            network_policy: policy.clone(),
+            context: CaptureContext::default(),
+        })
+        .unwrap();
+    let directory = owner.directory().unwrap().to_owned();
+    assert!(!directory.join("logs/device.log").exists());
+    assert!(!directory.join("receipt.json").exists());
+    assert!(listener(&directory));
+    let status = owner.status().unwrap();
+    assert!(matches!(status,Snapshot::Recording(ref view) if view.events.is_empty()));
+    let config: Value =
+        serde_json::from_slice(&fs::read(directory.join("runtime/engine-config.json")).unwrap())
+            .unwrap();
+    assert_eq!(config["policy"]["max_flows"], 321);
+    let outcome = owner.stop().unwrap();
+    assert!(
+        matches!(outcome,StopOutcome::Ready(ref view) if matches!(&view.network,NetworkView::Stopped(n) if !n.partial))
+    );
+    let archive = owner.export().unwrap();
+    let mut zip = zip::ZipArchive::new(fs::File::open(archive).unwrap()).unwrap();
+    let mut manifest = String::new();
+    zip.by_name("manifest.json")
+        .unwrap()
+        .read_to_string(&mut manifest)
+        .unwrap();
+    let manifest: Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(manifest["capture_logs"], false);
+    assert_eq!(manifest["sources"]["logs"], "not_selected");
+    assert_eq!(
+        manifest["completeness"]["sources"]["logs"]["requested"],
+        false
+    );
+    assert_eq!(manifest["package_state"], "complete");
+    assert_eq!(manifest["completeness"]["missing_artifacts"], json!([]));
+    assert!(zip.by_name("logs/device.log").is_err());
+    assert!(zip.by_name("capture.json").is_ok());
+}
+#[test]
+fn network_outlives_log_duration_limit_and_app_identity_gap() {
+    for app in [false, true] {
+        let f = Fixture::new();
+        let app_state = f.tools.adb.with_file_name("fake-android-state.json");
+        fs::write(&app_state,serde_json::to_vec(&json!({"user":0,"uid":10001,"install":"v1","shared":false,"uid_supported":true,"processes":true})).unwrap()).unwrap();
+        let mut owner = f.owner();
+        owner
+            .start(StartRequest {
+                serial: if app {
+                    "fixture-app-uid"
+                } else {
+                    "fixture-stream"
+                }
+                .into(),
+                whole_device_consent: !app,
+                selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+                limits: Limits {
+                    duration_ms: if app { 5000 } else { 100 },
+                    ..Limits::default()
+                },
+                log_scope: if app {
+                    LogScope::App {
+                        application_id: "com.fixture.app".into(),
+                    }
+                } else {
+                    LogScope::WholeDevice
+                },
+                network_policy: NetworkPolicy {
+                    duration_ms: 10_000,
+                    ..NetworkPolicy::default()
+                },
+                context: CaptureContext::default(),
+            })
+            .unwrap();
+        let directory = owner.directory().unwrap().to_owned();
+        if app {
+            wait_until(|| {
+                fs::metadata(directory.join("logs/device.log")).is_ok_and(|m| m.len() > 0)
+            });
+            fs::write(
+                &app_state,
+                serde_json::to_vec(
+                    &json!({"user":0,"uid":10001,"install":"v2","uid_supported":true}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        wait_until(|| directory.join("receipt.json").is_file());
+        let receipt: Receipt =
+            serde_json::from_slice(&fs::read(directory.join("receipt.json")).unwrap()).unwrap();
+        assert_eq!(
+            receipt.reason,
+            if app {
+                StopReason::IdentityGap
+            } else {
+                StopReason::DurationLimit
+            }
+        );
+        thread::sleep(Duration::from_millis(300));
+        assert!(matches!(owner.status().unwrap(), Snapshot::Recording(_)));
+        assert!(listener(&directory));
+        assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+        assert_eq!(f.state()["settings"], json!({}));
+        assert_eq!(f.state()["reverse"], json!({}));
+        assert!(owner.export().unwrap().is_file());
+    }
+}
+
+#[test]
+fn completed_control_release_allows_isolated_setup_and_original_export() {
+    let f = Fixture::new();
+    let mut original = f.owner();
+    f.start(&mut original);
+    assert!(original.release_completed_control().is_err());
+    original.stop().unwrap();
+    let original_directory = original.directory().unwrap().to_owned();
+    original.release_completed_control().unwrap();
+    let mut setup = f.owner();
+    setup
+        .start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: false,
+            selection: CaptureSelection::Network(NetworkConsent { whole_device: true }),
+            limits: Limits::default(),
+            log_scope: LogScope::WholeDevice,
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
+        })
+        .unwrap();
+    assert_ne!(setup.directory().unwrap(), original_directory);
+    setup.stop().unwrap();
+    drop(setup);
+    assert!(original.export().unwrap().is_file());
+    assert_eq!(original.directory().unwrap(), original_directory);
+    assert_eq!(f.state()["settings"], json!({}));
+    assert_eq!(f.state()["reverse"], json!({}));
+}
+
+#[test]
+fn admitted_large_network_record_survives_preview_and_full_export() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let f = Fixture::new();
+    let mut owner = f.owner();
+    f.start(&mut owner);
+    let directory = owner.directory().unwrap().to_owned();
+    let body = vec![b'z'; 3 * 1024 * 1024];
+    let base64 = STANDARD.encode(&body);
+    let record = json!({"timestamp":"2026-10-15T00:00:01.5Z","kind":"response","summary":"large full body","detail":{"response_body":{"text":base64,"encoding":"base64","byte_basis":"raw_content","unavailable":false}},"clock_uncertainty_ms":1});
+    fs::write(
+        directory.join("network/events.jsonl"),
+        format!("{record}\n"),
+    )
+    .unwrap();
+    let live = owner.snapshot().unwrap();
+    assert!(
+        matches!(live,Snapshot::Recording(ref view) if view.events.iter().any(|e|e.source=="network"))
+    );
+    owner.stop().unwrap();
+    let archive = owner.export().unwrap();
+    let mut zip = zip::ZipArchive::new(fs::File::open(archive).unwrap()).unwrap();
+    let mut timeline = String::new();
+    zip.by_name("timeline/events.jsonl")
+        .unwrap()
+        .read_to_string(&mut timeline)
+        .unwrap();
+    let event: Value = timeline
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .find(|v| v["source"] == "network")
+        .unwrap();
+    let saved = STANDARD
+        .decode(event["detail"]["response_body"]["text"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(saved, body);
+    let mut public: Value =
+        serde_json::from_slice(&fs::read(directory.join("capture.json")).unwrap()).unwrap();
+    public["selection"] = json!({"mode":"network","consent":{"whole_device":true}});
+    fs::write(
+        directory.join("capture.json"),
+        serde_json::to_vec(&public).unwrap(),
+    )
+    .unwrap();
+    assert!(owner.export().unwrap_err().contains("descriptor differs"));
+}
+
+#[test]
+fn saved_network_selection_uses_private_admission_and_exports_without_device_actions() {
+    let f = Fixture::new();
+    let mut first = f.owner();
+    f.start(&mut first);
+    first.stop().unwrap();
+    let older = first.directory().unwrap().to_owned();
+    first.release_completed_control().unwrap();
+    let mut second = f.owner();
+    f.start(&mut second);
+    second.stop().unwrap();
+    let newer = second.directory().unwrap().to_owned();
+    drop(second);
+    wait_until(|| {
+        fs::read_to_string(newer.join("runtime/guardian-events.jsonl"))
+            .unwrap_or_default()
+            .contains("exit_quiescent_no_clients")
+    });
+    drop(first);
+    fs::remove_file(&f.tools.adb).unwrap();
+    let commands = f.state()["commands"].clone();
+    let mut reopened = f.owner();
+    assert!(matches!(
+        reopened.open_saved(older.clone()).unwrap(),
+        Snapshot::Stopped(_)
+    ));
+    assert_eq!(reopened.directory().unwrap(), older);
+    assert_eq!(f.state()["commands"], commands);
+    assert!(reopened.export().unwrap().is_file());
+    assert_eq!(f.state()["commands"], commands);
+}
+
+#[test]
+fn network_admission_duration_does_not_end_selected_logs_or_routing() {
+    let f = Fixture::new();
+    let mut owner = f.owner();
+    owner
+        .start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+            limits: Limits {
+                duration_ms: 5000,
+                ..Limits::default()
+            },
+            log_scope: LogScope::WholeDevice,
+            network_policy: NetworkPolicy {
+                duration_ms: 100,
+                ..NetworkPolicy::default()
+            },
+            context: CaptureContext::default(),
+        })
+        .unwrap();
+    let directory = owner.directory().unwrap().to_owned();
+    wait_until(
+        || matches!(owner.status().unwrap(),Snapshot::Recording(ref view) if matches!(&view.network,NetworkView::Recording(coverage) if coverage.admission_closed)),
+    );
+    let before = fs::metadata(directory.join("logs/device.log"))
+        .unwrap()
+        .len();
+    thread::sleep(Duration::from_millis(300));
+    assert!(
+        fs::metadata(directory.join("logs/device.log"))
+            .unwrap()
+            .len()
+            > before
+    );
+    assert!(!directory.join("receipt.json").exists());
+    assert!(listener(&directory));
+    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    assert_eq!(f.state()["settings"], json!({}));
+    assert_eq!(f.state()["reverse"], json!({}));
 }

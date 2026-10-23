@@ -41,9 +41,93 @@ impl CaptureOwner {
     pub fn discover(&self) -> Result<Vec<Device>> {
         crate::process::discover(&self.tools.adb)
     }
+    pub fn release_completed_control(&mut self) -> Result<()> {
+        if self.network.is_some() {
+            if !matches!(self.status()?, Snapshot::Stopped(_) | Snapshot::Failed(_)) {
+                return Err(
+                    "Stop and restore the active network capture before releasing control".into(),
+                );
+            }
+            if !self
+                .network
+                .as_ref()
+                .ok_or("Network capture missing")?
+                .has_authenticated_completion()
+            {
+                let directory = self
+                    .network
+                    .as_ref()
+                    .ok_or("Network capture missing")?
+                    .directory
+                    .clone();
+                let (lock, _) = network::namespace(&self.paths, self.fixture)?;
+                network::admit_saved(&directory, &lock)?;
+                if !matches!(self.recover()?, StopOutcome::Ready(_)) {
+                    return Err("Stopped capture source proof could not be reacquired".into());
+                }
+            }
+            let client = self.network.as_mut().ok_or("Network capture missing")?;
+            if !client.has_authenticated_completion() {
+                return Err("Stopped capture has no authenticated completion".into());
+            }
+            let directory = client.directory.clone();
+            let (lock, _) = network::namespace(&self.paths, self.fixture)?;
+            client.release(&lock)?;
+            self.network = Some(Client::detached(directory));
+        } else if !matches!(
+            self.logs.status()?,
+            Snapshot::Idle { .. } | Snapshot::Stopped(_) | Snapshot::Failed(_)
+        ) {
+            return Err("Stop and verify the active log capture before releasing control".into());
+        }
+        Ok(())
+    }
+    pub fn applications(&self, serial: &str) -> Result<Vec<crate::android::AndroidApplication>> {
+        crate::android::applications(&self.tools.adb, serial)
+    }
+    pub fn open_saved(&mut self, directory: std::path::PathBuf) -> Result<Snapshot> {
+        let directory = fs::canonicalize(directory).map_err(|e| e.to_string())?;
+        if self.directory() == Some(directory.as_path()) {
+            return self.status();
+        }
+        self.release_completed_control()?;
+        if directory.join("runtime/bootstrap.json").exists() {
+            let (lock, _) = network::namespace(&self.paths, self.fixture)?;
+            network::admit_saved(&directory, &lock)?;
+            let snapshot = network::offline_snapshot(&directory)?;
+            if !matches!(snapshot, Snapshot::Stopped(_) | Snapshot::Failed(_)) {
+                return Err("Saved network source completion is not available".into());
+            }
+            self.network = Some(Client::detached(directory));
+            Ok(snapshot)
+        } else {
+            let snapshot = self.logs.open_saved(directory)?;
+            self.network = None;
+            Ok(snapshot)
+        }
+    }
+    pub fn status(&mut self) -> Result<Snapshot> {
+        if let Some(client) = &mut self.network {
+            if missing_network_state(client)? {
+                return Err(missing_state_error(client));
+            }
+            match client.request(Action::Status) {
+                Ok(Reply::Snapshot(s)) => Ok(s),
+                Ok(Reply::Error(e)) => Err(e),
+                _ => network::offline_snapshot(&client.directory),
+            }
+        } else {
+            self.logs.status()
+        }
+    }
     pub fn start(&mut self, request: StartRequest) -> Result<Snapshot> {
         request.limits.validate()?;
-        if !request.whole_device_consent {
+        request.network_policy.validate()?;
+        request.context.validate()?;
+        if request.selection.includes_logs()
+            && matches!(request.log_scope, LogScope::WholeDevice)
+            && !request.whole_device_consent
+        {
             return Err("Explicit consent to whole-device Android logs is required".into());
         }
         if let Some(client) = &self.network {
@@ -62,17 +146,24 @@ impl CaptureOwner {
                 client.release(&lock)?;
             }
         }
+        let resolved = if request.selection.includes_logs() {
+            Some(crate::android::resolve(
+                &self.tools.adb,
+                &request.serial,
+                &request.log_scope,
+            )?)
+        } else {
+            None
+        };
         match &request.selection {
             CaptureSelection::Logs => {
-                let snapshot = self.logs.start(
-                    request.serial,
-                    request.whole_device_consent,
-                    request.limits,
-                )?;
+                let snapshot = self
+                    .logs
+                    .start(request, resolved.ok_or("Missing log scope resolution")?)?;
                 self.network = None;
                 Ok(snapshot)
             }
-            CaptureSelection::LogsAndNetwork(consent) => {
+            CaptureSelection::LogsAndNetwork(consent) | CaptureSelection::Network(consent) => {
                 if !consent.whole_device {
                     return Err(
                         "Explicit consent to whole-device HTTP(S) capture is required".into(),
@@ -111,6 +202,8 @@ impl CaptureOwner {
                     ca,
                     recovery: false,
                     fixture_drop_initial_reply: false,
+                    resolved_logs: resolved,
+                    descriptor_version: 1,
                 };
                 let directory = config.directory.clone();
                 match Client::launch(config) {

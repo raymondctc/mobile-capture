@@ -22,6 +22,10 @@ pub(crate) struct Bootstrap {
     pub fixture_drop_initial_reply: bool,
     pub ca: PathBuf,
     pub lock: PathBuf,
+    #[serde(default)]
+    pub resolved_logs: Option<crate::android::ResolvedLogs>,
+    #[serde(default)]
+    pub descriptor_version: u32,
 }
 #[derive(Serialize, Deserialize)]
 pub(super) struct Descriptor {
@@ -37,6 +41,7 @@ pub(super) struct Frame {
 pub(crate) enum Action {
     Attach,
     Snapshot,
+    Status,
     Marker(String),
     Stop,
     Recover,

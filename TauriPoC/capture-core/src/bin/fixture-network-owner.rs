@@ -24,6 +24,9 @@ fn main() {
             whole_device_consent: true,
             selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
             limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .unwrap();
     println!("{}", serde_json::to_string(&snapshot).unwrap());

@@ -15,16 +15,16 @@ pub fn read(root: &Path, relative: &str) -> Result<Option<Vec<u8>>> {
     if !metadata.is_file() {
         return Err(format!("Evidence is not a regular file: {relative}"));
     }
-    if metadata.len() > 34 * 1024 * 1024 {
-        return Err("Evidence exceeds the PoC file bound".into());
+    if metadata.len() > 200_000_000 {
+        return Err("Evidence exceeds the 200 MB evidence file bound".into());
     }
     let mut bytes = Vec::new();
     file.by_ref()
-        .take(34 * 1024 * 1024 + 1)
+        .take(200_000_000 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
-    if bytes.len() > 34 * 1024 * 1024 {
-        return Err("Evidence grew beyond the PoC file bound".into());
+    if bytes.len() > 200_000_000 {
+        return Err("Evidence grew beyond the 200 MB evidence file bound".into());
     }
     Ok(Some(bytes))
 }

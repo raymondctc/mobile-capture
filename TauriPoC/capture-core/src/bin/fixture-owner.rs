@@ -32,6 +32,9 @@ fn main() {
             whole_device_consent: true,
             selection: CaptureSelection::Logs,
             limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
         })
         .unwrap();
     println!("{}", owner.directory().unwrap().display());

@@ -47,6 +47,29 @@ pub fn run() -> Result<()> {
     if closed.load(Ordering::Acquire) {
         return Ok(());
     }
+    let resolved = match &config.log_scope {
+        crate::model::LogScope::WholeDevice => None,
+        crate::model::LogScope::App { application_id } => {
+            let resolved = config
+                .resolved_logs
+                .clone()
+                .ok_or("Missing resolved app identity")?;
+            if resolved.attribution.application_id.as_ref() != Some(application_id)
+                || resolved.attribution.strategy == crate::android::LogStrategy::WholeDevice
+            {
+                return Err("Resolved app identity does not match selected scope".into());
+            }
+            Some(resolved)
+        }
+    };
+    let mut filter = resolved.as_ref().map(crate::android::LogFilter::new);
+    if let (Some(filter), Some(resolved)) = (&mut filter, &resolved) {
+        filter.verify(resolved.snapshot_with_cancel(
+            &config.adb,
+            &config.serial,
+            Some(&closed),
+        )?)?;
+    }
     let _source_lease = if config.source_lease {
         let guard =
             crate::lease::FileLease::acquire(&config.directory.join("runtime/logs.writer"))?;
@@ -66,20 +89,35 @@ pub fn run() -> Result<()> {
         .map_err(|e| e.to_string())?;
     let mut command = Command::new(&config.adb);
     quiet(&mut command);
+    command.args([
+        "-H",
+        "127.0.0.1",
+        "-P",
+        "5037",
+        "-s",
+        &config.serial,
+        "logcat",
+        "-b",
+        "main",
+        "-b",
+        "system",
+        "-b",
+        "crash",
+        "-v",
+        "epoch",
+        "-T",
+        "1",
+    ]);
+    if let Some(resolved) = &resolved {
+        if resolved.attribution.strategy == crate::android::LogStrategy::AndroidUid {
+            command.arg(format!(
+                "--uid={}",
+                resolved.attribution.uid.ok_or("Missing app UID")?
+            ));
+        }
+    }
     command
-        .args([
-            "-H",
-            "127.0.0.1",
-            "-P",
-            "5037",
-            "-s",
-            &config.serial,
-            "logcat",
-            "-v",
-            "epoch",
-            "-T",
-            "1",
-        ])
+        .arg("*:V")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -156,7 +194,33 @@ pub fn run() -> Result<()> {
         }
         Ok(None)
     };
+    let mut next_probe = Instant::now();
     let mut reason = loop {
+        if let (Some(filter), Some(resolved)) = (&mut filter, &resolved) {
+            if Instant::now() >= next_probe {
+                match resolved
+                    .snapshot_with_cancel(&config.adb, &config.serial, Some(&closed))
+                    .and_then(|snapshot| filter.verify(snapshot))
+                {
+                    Ok(data) => match admit(&data) {
+                        Ok(Some(reason)) => break reason,
+                        Ok(None) => {}
+                        Err(error) => {
+                            io_error = Some(error);
+                            break StopReason::ReadError;
+                        }
+                    },
+                    Err(error) => {
+                        if closed.load(Ordering::Acquire) {
+                            break StopReason::LeaseClosed;
+                        }
+                        io_error = Some(error);
+                        break StopReason::IdentityGap;
+                    }
+                }
+                next_probe = Instant::now() + Duration::from_millis(200);
+            }
+        }
         if closed.load(Ordering::Acquire) {
             break StopReason::LeaseClosed;
         }
@@ -164,12 +228,20 @@ pub fn run() -> Result<()> {
             break StopReason::DurationLimit;
         }
         match receive.recv_timeout(Duration::from_millis(25)) {
-            Ok(Ok(data)) => match admit(&data) {
+            Ok(Ok(data)) => match if let Some(filter) = &mut filter {
+                filter.append(&data).map(|_| None)
+            } else {
+                admit(&data)
+            } {
                 Ok(Some(reason)) => break reason,
                 Ok(None) => {}
                 Err(error) => {
                     io_error = Some(error);
-                    break StopReason::ReadError;
+                    break if filter.is_some() {
+                        StopReason::IdentityGap
+                    } else {
+                        StopReason::ReadError
+                    };
                 }
             },
             Ok(Err(error)) => {
@@ -183,6 +255,11 @@ pub fn run() -> Result<()> {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     };
+    if let Some(filter) = &filter {
+        if filter.has_pending() && reason != StopReason::IdentityGap {
+            io_error = Some("Unverified app log tail discarded at source stop. Coverage ends at the last verified device-time fence".into());
+        }
+    }
     let exited_before_stop = collector_exited(&mut child)?;
     #[cfg(unix)]
     let stopped_by_worker = unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) } == 0;
@@ -191,7 +268,10 @@ pub fn run() -> Result<()> {
     let mut forced = cfg!(windows) && stopped_by_worker;
     let mut capped = matches!(
         reason,
-        StopReason::ByteLimit | StopReason::RecordLimit | StopReason::ReadError
+        StopReason::ByteLimit
+            | StopReason::RecordLimit
+            | StopReason::ReadError
+            | StopReason::IdentityGap
     );
     let mut drain = |child: &mut Child| -> Result<bool> {
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -209,7 +289,7 @@ pub fn run() -> Result<()> {
                 continue;
             }
             match receive.recv_timeout(interval) {
-                Ok(Ok(data)) if !capped => match admit(&data) {
+                Ok(Ok(data)) if !capped && filter.is_none() => match admit(&data) {
                     Ok(Some(limit)) => {
                         reason = limit;
                         capped = true;

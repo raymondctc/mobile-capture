@@ -55,6 +55,14 @@ fn export_impl(
     fixture: bool,
     network: Option<&NetworkCompletion>,
 ) -> Result<PathBuf> {
+    let descriptor_bytes = files::read(directory, "capture.json")?;
+    let descriptor: Option<SessionDescriptor> = descriptor_bytes
+        .as_ref()
+        .map(|bytes| serde_json::from_slice(bytes).map_err(|e| e.to_string()))
+        .transpose()?;
+    let logs_selected = descriptor
+        .as_ref()
+        .is_none_or(|d| d.selection.includes_logs());
     let logs = match files::read(directory, "logs/device.log")? {
         Some(bytes) => bytes,
         None if network.is_some() => vec![],
@@ -96,7 +104,13 @@ fn export_impl(
     let mut checksums = BTreeMap::new();
     let mut missing = vec![];
     let mut network_bytes = 0;
-    let mut paths = vec!["logs/device.log", "timeline/markers.jsonl"];
+    let mut paths = vec!["timeline/markers.jsonl"];
+    if logs_selected {
+        paths.push("logs/device.log");
+    }
+    if descriptor.is_some() {
+        paths.push("capture.json");
+    }
     if network.is_some() {
         paths.extend([
             "network/events.jsonl",
@@ -118,10 +132,10 @@ fn export_impl(
         if !metadata.is_file() {
             return Err(format!("Evidence is not regular {path}"));
         }
-        if metadata.len() > 96 * 1024 * 1024 {
-            return Err("Evidence exceeds enforced 96 MiB streaming bound".into());
+        if metadata.len() > 1024 * 1024 * 1024 {
+            return Err("Evidence exceeds enforced 1 GiB streaming bound".into());
         }
-        let (bytes, hash) = digest(&mut file, 96 * 1024 * 1024)?;
+        let (bytes, hash) = digest(&mut file, 1024 * 1024 * 1024)?;
         if path == "logs/device.log" && hash != timeline::hash(&logs)
             || path == "timeline/markers.jsonl" && hash != timeline::hash(&markers)
         {
@@ -129,8 +143,8 @@ fn export_impl(
         }
         if path.starts_with("network/") {
             network_bytes += bytes;
-            if network_bytes > 96 * 1024 * 1024 {
-                return Err("Network artifacts exceed enforced 96 MiB export bound".into());
+            if network_bytes > 1024 * 1024 * 1024 {
+                return Err("Network artifacts exceed enforced 1 GiB export bound".into());
             }
         }
         artifacts.push(json!({"path":path,"bytes":bytes,"sha256":hash}));
@@ -144,16 +158,17 @@ fn export_impl(
         json!({})
     };
     let partial = network.is_some_and(|n| n.partial)
-        || receipt.reason != StopReason::LeaseClosed
-        || receipt.incomplete_tail
-        || !receipt.stderr.is_empty()
-        || receipt.forced
-        || logs.is_empty()
+        || logs_selected
+            && (receipt.reason != StopReason::LeaseClosed
+                || receipt.incomplete_tail
+                || !receipt.stderr.is_empty()
+                || receipt.forced
+                || logs.is_empty())
         || !unparsed.is_empty()
         || !network_error_refs.is_empty()
         || !missing.is_empty();
     let public_network = network.map(|n| json!({"coverage":{"decoded_http_events":n.coverage.decoded_http_events,"tls_errors":n.coverage.tls_errors,"omitted_flows":n.coverage.omitted_flows,"unavailable_bodies":n.coverage.unavailable_bodies,"admission_closed":n.coverage.admission_closed},"routing_restored":n.routing_restored,"partial":n.partial,"forced":n.forced,"interrupted":n.interrupted,"reasons":n.reasons}));
-    let context = json!({"log_scope":{"mode":"whole_device","explicit_consent":true,"app_scope_available":false},"device_logs":{"policy":limits,"persisted_bytes":receipt.bytes,"raw_records":receipt.records,"completion_reason":receipt.reason,"incomplete_tail":receipt.incomplete_tail},"network":public_network,"network_engine":if network.is_some(){json!({"name":"mitmproxy","version":"12.2.3","byte_basis":"raw_content","policy":incomplete["policy"]})}else{json!(null)},"coordinator":"tauri-poc","fixture":fixture});
+    let context = json!({"log_scope": descriptor.as_ref().map(|d|serde_json::to_value(&d.log_scope).unwrap()).unwrap_or(json!({"mode":"whole_device","legacy_metadata":true})),"log_attribution":descriptor.as_ref().and_then(|d|d.log_attribution.clone()),"capture_context":descriptor.as_ref().map(|d|d.context.clone()).unwrap_or_default(),"device_logs":{"requested":logs_selected,"policy":limits,"persisted_bytes":receipt.bytes,"raw_records":receipt.records,"completion_reason":if logs_selected{json!(receipt.reason)}else{json!("not_selected")},"incomplete_tail":receipt.incomplete_tail},"network":public_network,"network_engine":if network.is_some(){json!({"name":"mitmproxy","version":"12.2.3","byte_basis":"raw_content","policy":descriptor.as_ref().map(|d|serde_json::to_value(&d.network_policy).unwrap()).unwrap_or(incomplete["policy"].clone())})}else{json!(null)},"coordinator":"mobile-capture-android","fixture":fixture});
     let network_status = if network.is_none() {
         "not_selected"
     } else if decoded > 0 {
@@ -167,7 +182,7 @@ fn export_impl(
         vec!["Whole-device proxy evidence. Manual CA trust, certificate pinning, and omissions limit coverage.","Guardian hard death may interrupt the listener and original evidence.",if fixture{"FIXTURE MODE: compiled fake ADB evidence"}else{"Device clock uncertainty unknown"}]
     } else {
         vec![
-            "Whole-device logs; app scope and network capture unavailable",
+            "Android logs scoped as recorded in capture.json and context.json",
             "Device clock uncertainty unknown",
             if fixture {
                 "FIXTURE MODE: compiled fake ADB evidence"
@@ -176,7 +191,7 @@ fn export_impl(
             },
         ]
     };
-    let manifest = json!({"format":"device-capture-evidence","schema_version":1,"id":id,"platform":"android","device_id":device.serial,"device_name":device.name,"started_at":started_at,"stopped_at":receipt.ended_at,"phase":"stopped","capture_logs":true,"capture_network":network.is_some(),"sources":{"logs":if logs_count>0{"observed"}else{"started"},"network":network_status},"routing_restored":network.is_none_or(|n|n.routing_restored),"package_state":if partial{"partial"}else{"complete"},"counts":{"logs":logs_count,"network":network_count,"markers":marker_count},"warnings":warnings,"errors":if receipt.stderr.is_empty(){vec![]}else{vec![receipt.stderr.clone()]},"collector_status":receipt,"network_completion":public_network,"context":context,"clock_calibration":{"logs":{"offset_ms":null,"uncertainty_ms":null,"method":"not_available"},"network":{"offset_ms":0,"uncertainty_ms":if network.is_some(){json!(1)}else{json!(null)},"method":if network.is_some(){"local_host_clock"}else{"not_selected"}},"marker":{"offset_ms":0,"uncertainty_ms":1,"method":"local_host_clock"}},"completeness":{"partial":partial,"device_logs":{"coverage_ended_before_session_end":receipt.reason!=StopReason::LeaseClosed,"incomplete_tail":receipt.incomplete_tail},"sources":{"logs":{"requested":true,"events":logs_count,"observed":logs_count>0,"runtime_status":receipt.reason,"missing_artifacts":[],"empty_artifacts":if receipt.bytes==0{vec!["logs/device.log"]}else{vec![]}},"network":{"requested":network.is_some(),"events":network_count,"observed":decoded>0,"runtime_status":network_status,"missing_artifacts":missing,"empty_artifacts":[],"decoded_http_events":decoded}},"missing_artifacts":missing,"pending_flow_ids":incomplete["flow_ids"].as_array().cloned().unwrap_or_default(),"missing_bodies":incomplete["missing_bodies"].as_array().cloned().unwrap_or_default(),"omitted_flows":incomplete["omitted_flows"].as_u64().unwrap_or(0),"network_error_refs":network_error_refs,"unparsed_event_refs":unparsed,"unknown_clock_events":unknown},"artifacts":artifacts,"correlation":{"time_proximity":"inferred","causal_matching_requires_shared_identifiers":true}});
+    let manifest = json!({"format":"device-capture-evidence","schema_version":1,"id":id,"platform":"android","device_id":device.serial,"device_name":device.name,"started_at":started_at,"stopped_at":receipt.ended_at,"phase":"stopped","capture_logs":logs_selected,"capture_network":network.is_some(),"sources":{"logs":if !logs_selected{"not_selected"}else if logs_count>0{"observed"}else{"started"},"network":network_status},"routing_restored":network.is_none_or(|n|n.routing_restored),"package_state":if partial{"partial"}else{"complete"},"counts":{"logs":logs_count,"network":network_count,"markers":marker_count},"warnings":warnings,"errors":if receipt.stderr.is_empty(){vec![]}else{vec![receipt.stderr.clone()]},"collector_status":if logs_selected{json!(receipt)}else{json!(null)},"network_completion":public_network,"context":context,"clock_calibration":{"logs":{"offset_ms":null,"uncertainty_ms":null,"method":"not_available"},"network":{"offset_ms":0,"uncertainty_ms":if network.is_some(){json!(1)}else{json!(null)},"method":if network.is_some(){"local_host_clock"}else{"not_selected"}},"marker":{"offset_ms":0,"uncertainty_ms":1,"method":"local_host_clock"}},"completeness":{"partial":partial,"device_logs":{"coverage_ended_before_session_end":logs_selected && receipt.reason!=StopReason::LeaseClosed,"incomplete_tail":receipt.incomplete_tail},"sources":{"logs":{"requested":logs_selected,"events":logs_count,"observed":logs_count>0,"runtime_status":if logs_selected{json!(receipt.reason)}else{json!("not_selected")},"missing_artifacts":[],"empty_artifacts":if logs_selected && receipt.bytes==0{vec!["logs/device.log"]}else{vec![]}},"network":{"requested":network.is_some(),"events":network_count,"observed":decoded>0,"runtime_status":network_status,"missing_artifacts":missing,"empty_artifacts":[],"decoded_http_events":decoded}},"missing_artifacts":missing,"pending_flow_ids":incomplete["flow_ids"].as_array().cloned().unwrap_or_default(),"missing_bodies":incomplete["missing_bodies"].as_array().cloned().unwrap_or_default(),"omitted_flows":incomplete["omitted_flows"].as_u64().unwrap_or(0),"network_error_refs":network_error_refs,"unparsed_event_refs":unparsed,"unknown_clock_events":unknown},"artifacts":artifacts,"correlation":{"time_proximity":"inferred","causal_matching_requires_shared_identifiers":true}});
     let stage = tempfile::Builder::new()
         .prefix(".export-")
         .tempdir_in(directory)
@@ -198,7 +213,7 @@ fn export_impl(
         timeline_file.write_all(b"\n").map_err(|e| e.to_string())?;
     }
     timeline_file.flush().map_err(|e| e.to_string())?;
-    let (_, hash) = digest(timeline_file.as_file_mut(), 512 * 1024 * 1024)?;
+    let (_, hash) = digest(timeline_file.as_file_mut(), 2 * 1024 * 1024 * 1024)?;
     checksums.insert("timeline/events.jsonl".into(), hash);
     raw.insert(
         "timeline/events.jsonl".into(),
@@ -210,7 +225,7 @@ fn export_impl(
         serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
     );
     generated.insert("context.json".to_string(),serde_json::to_vec_pretty(&json!({"id":id,"platform":"android","device_id":device.serial,"device_name":device.name,"started_at":started_at,"stopped_at":receipt.ended_at,"context":context})).map_err(|e|e.to_string())?);
-    generated.insert("README.txt".to_string(),format!("Mobile Capture Tauri PoC, schema 1\nWhole-device Android logs, explicitly consented. {}\nRead manifest.json for gaps, limits, fixture provenance, and shutdown outcomes. ZIP creation does not establish completeness.\nRaw evidence is unchanged. Original HTTP content-encoding bytes use raw_content basis. Device clock uncertainty is unknown. Timestamp proximity is inferred.\nSHA256SUMS covers every included file except itself. Private runtime, tokens, journal, spools, and CA keys are excluded.\n",if network.is_some(){"HTTP(S) proxy evidence requires manual CA trust. Hard guardian death may interrupt its listener. Routing restoration and original writer quiescence were verified."}else{"App scope and network capture are unavailable. No routing or trust settings were changed."}).into_bytes());
+    generated.insert("README.txt".to_string(),format!("Mobile Capture Android, schema 1\nSource selection and app attribution are recorded in capture.json and context.json. {}\nRead manifest.json for gaps, limits, fixture provenance, and shutdown outcomes. ZIP creation does not establish completeness.\nRaw evidence is unchanged. Original HTTP content-encoding bytes use raw_content basis. Device clock uncertainty is unknown. Timestamp proximity is inferred.\nSHA256SUMS covers every included file except itself. Private runtime, tokens, journal, spools, and CA keys are excluded.\n",if network.is_some(){"HTTP(S) proxy evidence requires manual CA trust. Hard guardian death may interrupt its listener. Routing restoration and original writer quiescence were verified."}else{"Log-only recording. No routing or trust settings were changed."}).into_bytes());
     for (path, bytes) in &generated {
         checksums.insert(path.clone(), timeline::hash(bytes));
     }
@@ -242,9 +257,9 @@ fn export_impl(
         let mut hasher = Sha256::new();
         let mut streamed = 0u64;
         let max = if path == "timeline/events.jsonl" {
-            512 * 1024 * 1024
+            2 * 1024 * 1024 * 1024
         } else {
-            96 * 1024 * 1024
+            1024 * 1024 * 1024
         };
         let mut buffer = [0; 65536];
         loop {
