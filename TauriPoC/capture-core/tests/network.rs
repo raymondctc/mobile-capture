@@ -104,6 +104,57 @@ fn wait_until(mut check: impl FnMut() -> bool) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MissingState {
+    Header,
+    #[cfg(unix)]
+    Directory,
+}
+const MISSING_STATE_CASES: &[MissingState] = &[
+    MissingState::Header,
+    #[cfg(unix)]
+    MissingState::Directory,
+];
+
+struct MissingSessionState {
+    original: PathBuf,
+    displaced: PathBuf,
+    evidence: PathBuf,
+}
+impl MissingSessionState {
+    fn hide(kind: MissingState, directory: &Path, displaced: PathBuf) -> Self {
+        let (original, displaced, evidence) = match kind {
+            // Windows retains open evidence files. Remove unheld state without releasing writers.
+            MissingState::Header => (
+                directory.join("session.json"),
+                displaced.with_extension("json"),
+                directory.to_owned(),
+            ),
+            #[cfg(unix)]
+            MissingState::Directory => (directory.to_owned(), displaced.clone(), displaced),
+        };
+        fs::rename(&original, &displaced).unwrap();
+        Self {
+            original,
+            displaced,
+            evidence,
+        }
+    }
+    fn is_missing(&self) -> bool {
+        !self.original.exists()
+    }
+    fn restore(&self) {
+        fs::rename(&self.displaced, &self.original).unwrap();
+    }
+}
+impl Drop for MissingSessionState {
+    fn drop(&mut self) {
+        if self.is_missing() {
+            let _ = fs::rename(&self.displaced, &self.original);
+        }
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_launch_probe_runs_inside_rust_test_job() {
@@ -808,69 +859,22 @@ fn completed_network_handoff_refuses_other_client_and_preserves_export() {
 
 #[test]
 fn completed_network_handoff_after_directory_moves_preserves_evidence() {
-    let f = Fixture::new();
-    let (mut guardian, gui, directory) = crash_session(&f, None, false);
-    let mut owner = f.owner();
-    drop(gui);
-    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
-    let archive = owner.export().unwrap();
-    let original_archive = fs::read(&archive).unwrap();
-    let moved = f.root.path().join("moved-completed-session");
-    fs::rename(&directory, &moved).unwrap();
-
-    let snapshot_error = owner.snapshot().unwrap_err();
-    let export_error = owner.export().unwrap_err();
-    let started = owner.start(StartRequest {
-        serial: "fixture-stream".into(),
-        whole_device_consent: true,
-        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
-        limits: Limits::default(),
-        log_scope: LogScope::default(),
-        network_policy: NetworkPolicy::default(),
-        context: CaptureContext::default(),
-    });
-    if started.is_err() {
-        fs::rename(&moved, &directory).unwrap();
-    }
-    assert!(matches!(started, Ok(Snapshot::Recording(_))), "{started:?}");
-    assert!(guardian.wait().unwrap().success());
-    assert!(!directory.exists());
-    assert_ne!(owner.directory(), Some(directory.as_path()));
-    for error in [snapshot_error, export_error] {
-        assert!(error.contains(&directory.display().to_string()), "{error}");
-        assert!(error.contains("missing"), "{error}");
-    }
-    assert_eq!(
-        fs::read(moved.join(archive.strip_prefix(&directory).unwrap())).unwrap(),
-        original_archive
-    );
-    owner.marker("capture after moved evidence".into()).unwrap();
-    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
-    assert!(owner.export().is_ok());
-    assert!(!directory.exists());
-    assert_eq!(f.state()["settings"], json!({}));
-    assert_eq!(f.state()["reverse"], json!({}));
-}
-
-#[test]
-fn missing_network_state_cannot_release_active_or_recovery_required_session() {
-    for recovery_required in [false, true] {
+    for &missing in MISSING_STATE_CASES {
         let f = Fixture::new();
+        let (mut guardian, gui, directory) = crash_session(&f, None, false);
         let mut owner = f.owner();
-        f.start(&mut owner);
-        if recovery_required {
-            f.edit(|s| s["connected"] = json!(false));
-            assert!(matches!(
-                owner.stop().unwrap(),
-                StopOutcome::RecoveryRequired(_)
-            ));
-        }
-        let directory = owner.directory().unwrap().to_owned();
-        let commands = f.state()["commands"].clone();
-        let lock = f.paths.runtime_root.as_ref().unwrap().join("owner.lock");
-        let locator = fs::read(&lock).unwrap();
-        let moved = f.root.path().join("moved-unfinished-session");
-        fs::rename(&directory, &moved).unwrap();
+        drop(gui);
+        assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+        let archive = owner.export().unwrap();
+        let original_archive = fs::read(&archive).unwrap();
+        let state = MissingSessionState::hide(
+            missing,
+            &directory,
+            f.root.path().join("moved-completed-session"),
+        );
+
+        let snapshot_error = owner.snapshot().unwrap_err();
+        let export_error = owner.export().unwrap_err();
         let started = owner.start(StartRequest {
             serial: "fixture-stream".into(),
             whole_device_consent: true,
@@ -880,21 +884,80 @@ fn missing_network_state_cannot_release_active_or_recovery_required_session() {
             network_policy: NetworkPolicy::default(),
             context: CaptureContext::default(),
         });
-        let unchanged_commands = f.state()["commands"] == commands;
-        let unchanged_locator = fs::read(&lock).unwrap() == locator;
-        let original_absent = !directory.exists();
-        let retained_directory = owner.directory() == Some(directory.as_path());
-        fs::rename(&moved, &directory).unwrap();
-        f.edit(|s| s["connected"] = json!(true));
-        assert!(matches!(owner.recover().unwrap(), StopOutcome::Ready(_)));
+        assert!(matches!(started, Ok(Snapshot::Recording(_))), "{started:?}");
+        assert!(guardian.wait().unwrap().success());
+        assert!(state.is_missing());
+        assert_ne!(owner.directory(), Some(directory.as_path()));
+        for error in [snapshot_error, export_error] {
+            assert!(error.contains(&directory.display().to_string()), "{error}");
+            assert!(error.contains("missing"), "{error}");
+        }
+        assert_eq!(
+            fs::read(
+                state
+                    .evidence
+                    .join(archive.strip_prefix(&directory).unwrap())
+            )
+            .unwrap(),
+            original_archive
+        );
+        owner.marker("capture after missing state".into()).unwrap();
+        assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+        assert!(owner.export().is_ok());
+        assert!(state.is_missing());
+        assert_eq!(f.state()["settings"], json!({}));
+        assert_eq!(f.state()["reverse"], json!({}));
+    }
+}
 
-        let error = started.unwrap_err();
-        assert!(error.contains(&directory.display().to_string()), "{error}");
-        assert!(error.contains("missing"), "{error}");
-        assert!(unchanged_commands);
-        assert!(unchanged_locator);
-        assert!(original_absent);
-        assert!(retained_directory);
+#[test]
+fn missing_network_state_cannot_release_active_or_recovery_required_session() {
+    for &missing in MISSING_STATE_CASES {
+        for recovery_required in [false, true] {
+            let f = Fixture::new();
+            let mut owner = f.owner();
+            f.start(&mut owner);
+            if recovery_required {
+                f.edit(|s| s["connected"] = json!(false));
+                assert!(matches!(
+                    owner.stop().unwrap(),
+                    StopOutcome::RecoveryRequired(_)
+                ));
+            }
+            let directory = owner.directory().unwrap().to_owned();
+            let commands = f.state()["commands"].clone();
+            let lock = f.paths.runtime_root.as_ref().unwrap().join("owner.lock");
+            let locator = fs::read(&lock).unwrap();
+            let state = MissingSessionState::hide(
+                missing,
+                &directory,
+                f.root.path().join("moved-unfinished-session"),
+            );
+            let started = owner.start(StartRequest {
+                serial: "fixture-stream".into(),
+                whole_device_consent: true,
+                selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+                limits: Limits::default(),
+                log_scope: LogScope::default(),
+                network_policy: NetworkPolicy::default(),
+                context: CaptureContext::default(),
+            });
+            let unchanged_commands = f.state()["commands"] == commands;
+            let unchanged_locator = fs::read(&lock).unwrap() == locator;
+            let original_absent = state.is_missing();
+            let retained_directory = owner.directory() == Some(directory.as_path());
+            state.restore();
+            f.edit(|s| s["connected"] = json!(true));
+            assert!(matches!(owner.recover().unwrap(), StopOutcome::Ready(_)));
+
+            let error = started.unwrap_err();
+            assert!(error.contains(&directory.display().to_string()), "{error}");
+            assert!(error.contains("missing"), "{error}");
+            assert!(unchanged_commands);
+            assert!(unchanged_locator);
+            assert!(original_absent);
+            assert!(retained_directory);
+        }
     }
 }
 
@@ -929,79 +992,110 @@ fn offline_completion_cannot_authorize_handoff_after_state_disappears() {
 
 #[test]
 fn missing_completed_state_still_requires_actual_owner_lease_handoff() {
-    let f = Fixture::new();
-    let (mut guardian, gui, directory) = crash_session(&f, None, false);
-    let mut owner = f.owner();
-    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
-    let archive = owner.export().unwrap();
-    let original_archive = fs::read(&archive).unwrap();
-    let commands = f.state()["commands"].clone();
-    let moved = f.root.path().join("moved-shared-session");
-    fs::rename(&directory, &moved).unwrap();
-    let started = owner.start(StartRequest {
-        serial: "fixture-stream".into(),
-        whole_device_consent: true,
-        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
-        limits: Limits::default(),
-        log_scope: LogScope::default(),
-        network_policy: NetworkPolicy::default(),
-        context: CaptureContext::default(),
-    });
-    if started.as_ref().err().map(String::as_str)
-        != Some("Another capture owns this connection or source")
-    {
-        fs::rename(&moved, &directory).unwrap();
+    for &missing in MISSING_STATE_CASES {
+        let f = Fixture::new();
+        let (mut guardian, gui, directory) = crash_session(&f, None, false);
+        let mut owner = f.owner();
+        assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+        let archive = owner.export().unwrap();
+        let original_archive = fs::read(&archive).unwrap();
+        let commands = f.state()["commands"].clone();
+        let state = MissingSessionState::hide(
+            missing,
+            &directory,
+            f.root.path().join("moved-shared-session"),
+        );
+        let started = owner.start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+            limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
+        });
+        assert_eq!(
+            started.unwrap_err(),
+            "Another capture owns this connection or source"
+        );
+        assert!(guardian.try_wait().unwrap().is_none());
+        assert_eq!(owner.directory(), Some(directory.as_path()));
+        assert_eq!(f.state()["commands"], commands);
+        assert!(state.is_missing());
+        drop(gui);
+        assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
+        assert!(guardian.wait().unwrap().success());
+        assert_eq!(
+            fs::read(
+                state
+                    .evidence
+                    .join(archive.strip_prefix(&directory).unwrap())
+            )
+            .unwrap(),
+            original_archive
+        );
+        assert!(state.is_missing());
+        assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
     }
-    assert_eq!(
-        started.unwrap_err(),
-        "Another capture owns this connection or source"
-    );
-    assert!(guardian.try_wait().unwrap().is_none());
-    assert_eq!(owner.directory(), Some(directory.as_path()));
-    assert_eq!(f.state()["commands"], commands);
-    assert!(!directory.exists());
-    drop(gui);
-    assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
-    assert!(guardian.wait().unwrap().success());
-    assert_eq!(
-        fs::read(moved.join(archive.strip_prefix(&directory).unwrap())).unwrap(),
-        original_archive
-    );
-    assert!(!directory.exists());
-    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
 }
 
 #[test]
 fn missing_completed_state_can_retry_a_launch_failure_before_pending_routing() {
-    let frozen = freeze_binaries();
-    let f = Fixture::from_binaries(Some(frozen.path()));
-    let (mut guardian, gui, directory) = crash_session(&f, None, false);
-    let mut owner = f.owner();
-    drop(gui);
-    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
-    let moved = f.root.path().join("moved-before-launch-failure");
-    fs::rename(&directory, &moved).unwrap();
-    let unavailable = frozen.path().join("unavailable-guardian");
-    fs::rename(&f.tools.guardian, &unavailable).unwrap();
-    let started = owner.start(StartRequest {
-        serial: "fixture-stream".into(),
-        whole_device_consent: true,
-        selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
-        limits: Limits::default(),
-        log_scope: LogScope::default(),
-        network_policy: NetworkPolicy::default(),
-        context: CaptureContext::default(),
-    });
-    fs::rename(&unavailable, &f.tools.guardian).unwrap();
-    assert!(started
-        .unwrap_err()
-        .contains("Cannot launch independent guardian"));
-    assert!(guardian.wait().unwrap().success());
-    assert_eq!(owner.directory(), Some(directory.as_path()));
-    assert!(!directory.exists());
-    assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
-    assert!(!directory.exists());
-    assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    for &missing in MISSING_STATE_CASES {
+        let frozen = freeze_binaries();
+        let mut f = Fixture::from_binaries(Some(frozen.path()));
+        let (mut guardian, gui, directory) = crash_session(&f, None, false);
+        let guardian_binary = f.tools.guardian.clone();
+        f.tools.guardian = f.root.path().join(format!(
+            "retry-capture-guardian{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        let mut owner = f.owner();
+        drop(gui);
+        assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+        let archive = owner.export().unwrap();
+        let original_archive = fs::read(&archive).unwrap();
+        let state = MissingSessionState::hide(
+            missing,
+            &directory,
+            f.root.path().join("moved-before-launch-failure"),
+        );
+        let routing = f.state();
+        let lock = f.paths.runtime_root.as_ref().unwrap().join("owner.lock");
+        let locator = fs::read(&lock).unwrap();
+        let started = owner.start(StartRequest {
+            serial: "fixture-stream".into(),
+            whole_device_consent: true,
+            selection: CaptureSelection::LogsAndNetwork(NetworkConsent { whole_device: true }),
+            limits: Limits::default(),
+            log_scope: LogScope::default(),
+            network_policy: NetworkPolicy::default(),
+            context: CaptureContext::default(),
+        });
+        assert!(started
+            .unwrap_err()
+            .contains("Cannot launch independent guardian"));
+        assert!(guardian.wait().unwrap().success());
+        assert_eq!(owner.directory(), Some(directory.as_path()));
+        assert_eq!(f.state()["commands"], routing["commands"]);
+        assert_eq!(f.state()["settings"], routing["settings"]);
+        assert_eq!(f.state()["reverse"], routing["reverse"]);
+        assert_eq!(fs::read(&lock).unwrap(), locator);
+        assert!(state.is_missing());
+        assert_eq!(
+            fs::read(
+                state
+                    .evidence
+                    .join(archive.strip_prefix(&directory).unwrap())
+            )
+            .unwrap(),
+            original_archive
+        );
+        fs::copy(&guardian_binary, &f.tools.guardian).unwrap();
+        assert!(matches!(f.start(&mut owner), Snapshot::Recording(_)));
+        assert!(state.is_missing());
+        assert!(matches!(owner.stop().unwrap(), StopOutcome::Ready(_)));
+    }
 }
 
 #[test]
