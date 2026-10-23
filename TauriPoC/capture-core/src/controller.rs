@@ -13,6 +13,13 @@ pub struct CaptureOwner {
     network: Option<Client>,
 }
 impl CaptureOwner {
+    pub fn prior_shutdown_verified(paths: &CapturePaths, fixture: bool) -> Result<bool> {
+        let (lock, _) = network::namespace(paths, fixture)?;
+        let Some(directory) = network::prior(&lock)? else {
+            return Ok(true);
+        };
+        Ok(network::admit_saved(&directory, &lock).is_ok())
+    }
     pub fn open(paths: CapturePaths, tools: ToolSelection, fixture: bool) -> Result<Self> {
         let logs = LogSession::new(
             tools.adb.clone(),
@@ -394,5 +401,26 @@ fn outcome(snapshot: Snapshot) -> Result<StopOutcome> {
         Snapshot::RecoveryRequired(view) => Ok(StopOutcome::RecoveryRequired(view)),
         Snapshot::UnverifiedShutdown(view) => Ok(StopOutcome::Unverified(view)),
         _ => Err("No stopped capture".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn absent_namespace_is_idle_but_unreadable_prior_state_is_not_verified() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = CapturePaths {
+            output_root: root.path().join("sessions"),
+            runtime_root: Some(root.path().join("runtime")),
+        };
+        assert!(CaptureOwner::prior_shutdown_verified(&paths, true).unwrap());
+        std::fs::create_dir_all(paths.runtime_root.as_ref().unwrap()).unwrap();
+        std::fs::write(
+            paths.runtime_root.as_ref().unwrap().join("owner.lock"),
+            root.path().join("missing-session").to_str().unwrap(),
+        )
+        .unwrap();
+        assert!(!CaptureOwner::prior_shutdown_verified(&paths, true).unwrap());
     }
 }

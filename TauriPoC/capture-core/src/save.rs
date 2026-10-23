@@ -346,8 +346,13 @@ pub fn copy_archive(source: &Path, destination: &Path) -> Result<PathBuf> {
         .and_then(|s| s.to_str())
         .ok_or("Invalid archive filename")?;
     let mut input = files::open(source_parent, source_name).map_err(|e| e.to_string())?;
-    if !input.metadata().map_err(|e| e.to_string())?.is_file() {
+    let metadata = input.metadata().map_err(|e| e.to_string())?;
+    if !metadata.is_file() {
         return Err("Archive is not a regular file".into());
+    }
+    const COPY_BOUND: u64 = 5 * 1024 * 1024 * 1024;
+    if metadata.len() > COPY_BOUND {
+        return Err("Archive exceeds the 5 GiB copy limit".into());
     }
     let parent = fs::canonicalize(destination.parent().ok_or("Destination has no directory")?)
         .map_err(|e| e.to_string())?;
@@ -363,10 +368,15 @@ pub fn copy_archive(source: &Path, destination: &Path) -> Result<PathBuf> {
     let mut temporary = tempfile::NamedTempFile::new_in(&parent).map_err(|e| e.to_string())?;
     let mut expected = Sha256::new();
     let mut buffer = [0; CHUNK];
+    let mut copied = 0u64;
     loop {
         let n = input.read(&mut buffer).map_err(|e| e.to_string())?;
         if n == 0 {
             break;
+        }
+        copied += n as u64;
+        if copied > COPY_BOUND {
+            return Err("Archive grew beyond the 5 GiB copy limit".into());
         }
         expected.update(&buffer[..n]);
         temporary
@@ -395,6 +405,132 @@ pub fn copy_archive(source: &Path, destination: &Path) -> Result<PathBuf> {
     files::refuse_link(&target)?;
     publish(temporary.path(), &target)?;
     Ok(target)
+}
+
+pub fn copy_evidence_archive(source: &Path, destination: &Path) -> Result<PathBuf> {
+    let parent = fs::canonicalize(destination.parent().ok_or("Destination has no directory")?)
+        .map_err(|e| e.to_string())?;
+    let temporary = tempfile::NamedTempFile::new_in(&parent).map_err(|e| e.to_string())?;
+    copy_archive(source, temporary.path())?;
+    verify_evidence_archive(temporary.path())?;
+    let target = parent.join(
+        destination
+            .file_name()
+            .ok_or("Destination has no filename")?,
+    );
+    publish(temporary.path(), &target)?;
+    Ok(target)
+}
+
+fn verify_evidence_archive(path: &Path) -> Result<()> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut archive = zip::ZipArchive::new(fs::File::open(path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    if archive.len() > 32 {
+        return Err("Evidence ZIP contains too many entries".into());
+    }
+    let mut sums = String::new();
+    archive
+        .by_name("SHA256SUMS")
+        .map_err(|e| e.to_string())?
+        .take(65537)
+        .read_to_string(&mut sums)
+        .map_err(|e| e.to_string())?;
+    if sums.len() > 65536 {
+        return Err("Evidence checksum list is too large".into());
+    }
+    let mut expected = BTreeMap::new();
+    for line in sums.lines() {
+        let (hash, name) = line
+            .split_once("  ")
+            .ok_or("Invalid evidence checksum entry")?;
+        if hash.len() != 64
+            || !hash.bytes().all(|b| b.is_ascii_hexdigit())
+            || expected.insert(name.to_owned(), hash.to_owned()).is_some()
+        {
+            return Err("Invalid or duplicate evidence checksum".into());
+        }
+    }
+    let allowed = [
+        "SHA256SUMS",
+        "manifest.json",
+        "context.json",
+        "README.txt",
+        "capture.json",
+        "timeline/events.jsonl",
+        "timeline/markers.jsonl",
+        "logs/device.log",
+        "network/events.jsonl",
+        "network/capture.mitm",
+        "network/capture.har",
+        "network/incomplete.json",
+    ];
+    let mut seen = BTreeSet::new();
+    let mut total = 0u64;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = entry.name().to_owned();
+        if !allowed.contains(&name.as_str()) || !seen.insert(name.clone()) || entry.is_dir() {
+            return Err("Unexpected or duplicate evidence ZIP entry".into());
+        }
+        total = total
+            .checked_add(entry.size())
+            .ok_or("Evidence ZIP size overflow")?;
+        if total > 5 * 1024 * 1024 * 1024 {
+            return Err("Evidence ZIP exceeds its bounded copy limit".into());
+        }
+        if name == "SHA256SUMS" {
+            continue;
+        }
+        let hash = expected
+            .remove(&name)
+            .ok_or("Evidence ZIP entry has no checksum")?;
+        let mut digest = Sha256::new();
+        let mut bytes = 0u64;
+        let mut buffer = [0; CHUNK];
+        loop {
+            let n = entry.read(&mut buffer).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            bytes += n as u64;
+            if bytes > entry.size() {
+                return Err("Evidence ZIP expanded beyond its declared size".into());
+            }
+            digest.update(&buffer[..n]);
+        }
+        if format!("{:x}", digest.finalize()) != hash {
+            return Err(format!("Evidence checksum failed for {name}"));
+        }
+    }
+    if !expected.is_empty()
+        || ![
+            "SHA256SUMS",
+            "manifest.json",
+            "context.json",
+            "README.txt",
+            "timeline/events.jsonl",
+        ]
+        .iter()
+        .all(|name| seen.contains(*name))
+    {
+        return Err("Evidence ZIP is missing required files".into());
+    }
+    let mut manifest = String::new();
+    archive
+        .by_name("manifest.json")
+        .map_err(|e| e.to_string())?
+        .take(1048577)
+        .read_to_string(&mut manifest)
+        .map_err(|e| e.to_string())?;
+    if manifest.len() > 1048576 {
+        return Err("Evidence manifest exceeds 1 MiB".into());
+    }
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).map_err(|e| e.to_string())?;
+    if manifest["format"] != "device-capture-evidence" || manifest["schema_version"] != 1 {
+        return Err("Unsupported evidence ZIP format".into());
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]
@@ -577,6 +713,25 @@ mod tests {
         assert!(copy_archive(&source, &directory).is_err());
         assert!(copy_archive(&root.path().join("missing.zip"), &destination).is_err());
         assert_eq!(fs::read(&destination).unwrap(), bytes);
+    }
+
+    #[test]
+    fn invalid_or_oversized_evidence_never_replaces_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("invalid.zip");
+        let destination = root.path().join("previous.zip");
+        fs::write(&source, b"not a ZIP").unwrap();
+        fs::write(&destination, b"previous").unwrap();
+        assert!(copy_evidence_archive(&source, &destination).is_err());
+        fs::File::create(&source)
+            .unwrap()
+            .set_len(5 * 1024 * 1024 * 1024 + 1)
+            .unwrap();
+        assert!(copy_evidence_archive(&source, &destination)
+            .unwrap_err()
+            .contains("5 GiB"));
+        assert_eq!(fs::read(&destination).unwrap(), b"previous");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
     }
 
     #[cfg(unix)]

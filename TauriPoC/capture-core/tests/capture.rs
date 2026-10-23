@@ -862,7 +862,7 @@ fn closing_app_source_cancels_an_inflight_identity_probe_before_worker_escalatio
 
 #[test]
 fn controlled_save_admits_verified_logs_cancels_preserves_and_retries_real_zip() {
-    use capture_poc_core::save::{copy_archive, CancelOutcome};
+    use capture_poc_core::save::{copy_evidence_archive, CancelOutcome};
     use sha2::{Digest, Sha256};
     let root = tempfile::tempdir().unwrap();
     let mut owner = owner(root.path());
@@ -912,7 +912,7 @@ fn controlled_save_admits_verified_logs_cancels_preserves_and_retries_real_zip()
         assert_eq!(format!("{:x}", Sha256::digest(&entries[name])), hash);
     }
     let copied = root.path().join("copied.zip");
-    copy_archive(&archive, &copied).unwrap();
+    copy_evidence_archive(&archive, &copied).unwrap();
     assert_eq!(fs::read(copied).unwrap(), prior);
     start(&mut owner, "fixture-stream", Limits::default());
     assert!(owner.export_with_control(&first).is_err());
