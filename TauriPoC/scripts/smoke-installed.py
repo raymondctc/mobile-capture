@@ -19,6 +19,7 @@ def main():
     resources = app / "Contents/Resources" if macos else app
     with tempfile.TemporaryDirectory(prefix="android-doctor-installed-") as storage:
         if not macos:
+            subprocess.run(["icacls", storage, "/setowner", os.environ["USERNAME"]], check=True, capture_output=True)
             subprocess.run(["icacls", storage, "/inheritance:r", "/grant:r", os.environ["USERNAME"] + ":(OI)(CI)F"], check=True, capture_output=True)
         env = os.environ.copy()
         env["PATH"] = ""
