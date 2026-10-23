@@ -1,3 +1,7 @@
+# Mobile Capture Android desktop
+
+For complete macOS ARM64 and Windows x64 packages and the JSON Doctor contract, read [Android distribution](ANDROID-DISTRIBUTION.md). The prototype architecture notes below remain useful for development.
+
 # Run the Tauri Android capture PoC
 
 This isolated desktop app captures whole-device Android logs after explicit consent. Network capture is optional and requires separate consent. The timeline previews up to 500 recent events shared across sources, retaining each source's newest events. Sources with fewer events leave capacity for busier sources. The evidence ZIP contains admitted raw sources, normalized events, markers, context, coverage gaps, and a schema 1 manifest with checksums.

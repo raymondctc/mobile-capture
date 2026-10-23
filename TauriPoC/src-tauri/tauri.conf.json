@@ -1,18 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Mobile Capture PoC",
+  "productName": "Mobile Capture Android",
   "version": "0.1.0",
   "identifier": "dev.mobilecapture.tauri-poc",
   "build": {
     "beforeDevCommand": "npm run prepare:worker && npm run web:dev",
-    "beforeBuildCommand": "npm run prepare:worker && npm run web:build",
+    "beforeBuildCommand": "node scripts/require-package.mjs && npm run web:build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Mobile Capture PoC",
+        "title": "Mobile Capture Android",
         "width": 1200,
         "height": 790,
         "minWidth": 900,
@@ -30,7 +30,8 @@
     ],
     "externalBin": [
       "binaries/collector-worker",
-      "binaries/capture-guardian"
+      "binaries/capture-guardian",
+      "binaries/android-doctor"
     ],
     "resources": {
       "../resources/network_addon.py": "network_addon.py"
@@ -39,6 +40,14 @@
       "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "shortDescription": "Android logs and HTTP(S) capture",
+    "longDescription": "Capture and inspect selected Android app logs and device network traffic with explicit setup and safe routing restoration.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
   }
 }

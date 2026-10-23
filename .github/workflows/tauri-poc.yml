@@ -65,9 +65,9 @@ jobs:
       - run: npm run verify
       - name: Verify real mitmdump evidence
         run: python scripts/probe-network-engine.py
-      - run: npm run build -- --bundles ${{ matrix.bundle }}
+      - run: python scripts/package-android.py --channel development --cache "${{ runner.temp }}/android-dependency-cache" --output "${{ runner.temp }}/android-package"
       - uses: actions/upload-artifact@v4
         with:
           name: tauri-poc-${{ matrix.os }}
-          path: TauriPoC/target/release/bundle/
+          path: ${{ runner.temp }}/android-package/
           if-no-files-found: error

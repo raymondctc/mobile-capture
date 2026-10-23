@@ -18,6 +18,8 @@ const result = spawnSync(
     "collector-worker",
     "--bin",
     "capture-guardian",
+    "--bin",
+    "android-doctor",
     "--release",
     "--locked",
   ],
@@ -25,10 +27,11 @@ const result = spawnSync(
 );
 if (result.status !== 0) process.exit(result.status ?? 1);
 const suffix = process.platform === "win32" ? ".exe" : "";
+const targetDirectory = path.resolve(root, process.env.CARGO_TARGET_DIR ?? "target");
 mkdirSync(path.join(root, "src-tauri/binaries"), { recursive: true });
-for (const name of ["collector-worker", "capture-guardian"]) {
+for (const name of ["collector-worker", "capture-guardian", "android-doctor"]) {
   copyFileSync(
-    path.join(root, `target/release/${name}${suffix}`),
+    path.join(targetDirectory, `release/${name}${suffix}`),
     path.join(root, `src-tauri/binaries/${name}-${target}${suffix}`),
   );
 }

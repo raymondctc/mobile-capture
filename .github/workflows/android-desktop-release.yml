@@ -1,0 +1,94 @@
+name: Prepare signed Android desktop release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-package:
+    environment: android-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            architecture: macOS-arm64
+          - os: windows-2022
+            architecture: Windows-x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: TauriPoC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: TauriPoC/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Prepare signed and notarized macOS package
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.ANDROID_APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.ANDROID_APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.ANDROID_APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.ANDROID_APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.ANDROID_APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER: ${{ secrets.ANDROID_APPLE_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          for required in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_NOTARY_KEY_BASE64 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER; do
+            test -n "${!required}" || { echo "Missing release credential $required" >&2; exit 64; }
+          done
+          credential_dir=$(mktemp -d "$RUNNER_TEMP/android-signing.XXXXXX")
+          keychain="$credential_dir/android-release.keychain-db"
+          keychain_password=$(uuidgen)
+          trap 'security delete-keychain "$keychain" >/dev/null 2>&1 || true; rm -rf "$credential_dir"' EXIT
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$credential_dir/certificate.p12"
+          printf '%s' "$APPLE_NOTARY_KEY_BASE64" | base64 --decode > "$credential_dir/notary.p8"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$credential_dir/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          xcrun notarytool store-credentials android-release --key "$credential_dir/notary.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER"
+          export APPLE_NOTARY_KEYCHAIN_PROFILE=android-release
+          python scripts/package-android.py --channel release --cache "$RUNNER_TEMP/android-dependency-cache" --output "$RUNNER_TEMP/android-package"
+      - name: Prepare Authenticode-signed Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.ANDROID_WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.ANDROID_WINDOWS_PFX_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_PFX_BASE64 -or -not $env:WINDOWS_PFX_PASSWORD) { throw 'Windows release certificate credentials are missing' }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'android-release.pfx'
+          $certificate = $null
+          try {
+            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64))
+            $password = ConvertTo-SecureString $env:WINDOWS_PFX_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            $env:WINDOWS_CERTIFICATE_THUMBPRINT = $certificate.Thumbprint
+            $signTool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signTool) { throw 'Windows SDK signtool is unavailable' }
+            $env:PATH = $signTool.DirectoryName + ';' + $env:PATH
+            python scripts/package-android.py --channel release --cache "$env:RUNNER_TEMP/android-dependency-cache" --output "$env:RUNNER_TEMP/android-package"
+            if ($LASTEXITCODE -ne 0) { throw 'Windows release package preparation failed' }
+          } finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+            if ($certificate) { Remove-Item -LiteralPath ('Cert:\CurrentUser\My\' + $certificate.Thumbprint) -Force }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MobileCaptureAndroid-${{ matrix.architecture }}-release
+          path: ${{ runner.temp }}/android-package/
+          if-no-files-found: error

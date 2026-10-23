@@ -10,7 +10,9 @@
     "build": "tauri build",
     "prepare:worker": "node scripts/prepare-worker.mjs",
     "fixture": "node scripts/fixture.mjs",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "package:android": "python3 scripts/package-android.py",
+    "test:delivery": "python3 -m unittest discover -s tests -p test_delivery.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
