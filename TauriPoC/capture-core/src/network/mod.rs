@@ -90,19 +90,8 @@ impl Guardian {
         }
         let mut lock = FileLease::acquire_owner(&config.lock)?;
         if let Some(prior) = lock.prior()? {
-            if prior != config.directory && prior.join("session.json").exists() {
-                let state: serde_json::Value = lease::read(&prior.join("session.json"))?;
-                if state["routing_restored"] == false
-                    || !matches!(
-                        state["phase"].as_str(),
-                        Some("stopped" | "saved" | "partial" | "failed")
-                    )
-                {
-                    return Err(format!(
-                        "A previous capture needs recovery at {}",
-                        prior.display()
-                    ));
-                }
+            if prior != config.directory || !config.recovery {
+                verify_prior_completion(&prior)?;
             }
         }
         lease::private_directory(&config.directory.join("runtime"))?;
@@ -897,6 +886,32 @@ pub(crate) fn published_pending(directory: &Path) -> bool {
 pub(crate) fn sealed_on_disk(directory: &Path) -> bool {
     lease::read::<Header>(&directory.join("session.json"))
         .is_ok_and(|header| header.routing_restored && header.completion.is_some())
+}
+
+pub(crate) fn verify_prior_completion(directory: &Path) -> Result<()> {
+    #[derive(Deserialize)]
+    struct PriorCompletion {
+        phase: String,
+        routing_restored: bool,
+    }
+    let verified = (|| {
+        let state: PriorCompletion = lease::read(&directory.join("session.json"))?;
+        if !state.routing_restored
+            || !matches!(
+                state.phase.as_str(),
+                "stopped" | "saved" | "partial" | "failed"
+            )
+        {
+            return Err("Prior session is not completed with restored routing".into());
+        }
+        Ok(())
+    })();
+    verified.map_err(|error: String| {
+        format!(
+            "Previous capture completion cannot be verified at {}. Restore the session files and retry recovery in the owning app before starting another capture. {error}",
+            directory.display()
+        )
+    })
 }
 
 pub(crate) fn admit_saved(directory: &Path, lock: &Path) -> Result<()> {

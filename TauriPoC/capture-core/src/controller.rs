@@ -41,6 +41,8 @@ impl CaptureOwner {
                     Client::attach(directory.clone())
                         .unwrap_or_else(|_| Client::detached(directory)),
                 );
+            } else {
+                network::verify_prior_completion(&directory)?;
             }
         }
         Ok(owner)
@@ -115,7 +117,7 @@ impl CaptureOwner {
     }
     pub fn status(&mut self) -> Result<Snapshot> {
         if let Some(client) = &mut self.network {
-            if missing_network_state(client)? {
+            if client.missing_state()? {
                 return Err(missing_state_error(client));
             }
             match client.request(Action::Status) {
@@ -138,7 +140,7 @@ impl CaptureOwner {
             return Err("Explicit consent to whole-device Android logs is required".into());
         }
         if let Some(client) = &self.network {
-            if missing_network_state(client)? {
+            if client.missing_state()? {
                 if !client.has_authenticated_completion() {
                     return Err(missing_state_error(client));
                 }
@@ -228,7 +230,7 @@ impl CaptureOwner {
     }
     pub fn snapshot(&mut self) -> Result<Snapshot> {
         if let Some(client) = &mut self.network {
-            if missing_network_state(client)? {
+            if client.missing_state()? {
                 return Err(missing_state_error(client));
             }
             match client.request(Action::Snapshot) {
@@ -332,7 +334,7 @@ impl CaptureOwner {
         if let Some(control) = control {
             control.matches(&client.directory)?;
         }
-        if missing_network_state(client)? {
+        if client.missing_state()? {
             return Err(missing_state_error(client));
         }
         let command = || match control {
@@ -363,24 +365,6 @@ impl CaptureOwner {
             .map(|c| c.directory.as_path())
             .or_else(|| self.logs.directory())
     }
-}
-fn missing_network_state(client: &Client) -> Result<bool> {
-    for path in [
-        client.directory.join("session.json"),
-        client.directory.join("runtime/bootstrap.json"),
-    ] {
-        match fs::metadata(&path) {
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-            Err(error) => {
-                return Err(format!(
-                    "Cannot inspect capture state at {}. {error}",
-                    path.display()
-                ))
-            }
-        }
-    }
-    Ok(false)
 }
 fn missing_state_error(client: &Client) -> String {
     if client.has_authenticated_completion() {

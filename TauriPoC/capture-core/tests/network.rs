@@ -1062,7 +1062,6 @@ fn missing_completed_state_can_retry_a_launch_failure_before_pending_routing() {
         );
         let routing = f.state();
         let lock = f.paths.runtime_root.as_ref().unwrap().join("owner.lock");
-        let locator = fs::read(&lock).unwrap();
         let started = owner.start(StartRequest {
             serial: "fixture-stream".into(),
             whole_device_consent: true,
@@ -1080,7 +1079,7 @@ fn missing_completed_state_can_retry_a_launch_failure_before_pending_routing() {
         assert_eq!(f.state()["commands"], routing["commands"]);
         assert_eq!(f.state()["settings"], routing["settings"]);
         assert_eq!(f.state()["reverse"], routing["reverse"]);
-        assert_eq!(fs::read(&lock).unwrap(), locator);
+        assert!(fs::read(&lock).unwrap().is_empty());
         assert!(state.is_missing());
         assert_eq!(
             fs::read(

@@ -240,6 +240,12 @@ impl FileLease {
             .and_then(|_| self.file.sync_all())
             .map_err(|e| e.to_string())
     }
+    pub(crate) fn clear(&mut self) -> Result<()> {
+        self.file
+            .set_len(0)
+            .and_then(|_| self.file.sync_all())
+            .map_err(|e| e.to_string())
+    }
 }
 
 pub(crate) fn random_token() -> Result<String> {
