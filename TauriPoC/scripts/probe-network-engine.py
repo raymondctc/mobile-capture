@@ -392,11 +392,26 @@ def owned_session(mode):
         assert owner.returncode == 0, (base / "owner.stderr.private").read_text()
         result = json.loads(output)
         assert result["outcome"]["outcome"] == "ready", result
-        completion = result["outcome"]["session"]["network"]["detail"]
-        assert completion["routing_restored"] and completion["partial"] == (mode != "success"), completion
+        stopped = result["outcome"]["session"]
+        logs = stopped["receipt"]
+        assert logs["reason"] == "lease_closed" and logs["child_reaped"], logs
+        assert logs["forced"] == (os.name == "nt") and not logs["stderr"], logs
+        assert logs["bytes"] > 0 and logs["records"] > 0, logs
+        completion = stopped["network"]["detail"]
+        session_partial = mode != "success" or logs["forced"]
+        assert completion["routing_restored"] and completion["partial"] == session_partial, completion
         assert not completion["forced"] and not completion["interrupted"]
+        expected_reasons = []
+        if mode == "flush-error":
+            expected_reasons.append("Network engine has no verified graceful completion")
+        if logs["forced"]:
+            expected_reasons.append("Log source ended LeaseClosed. ")
+        if mode in ("tls-error", "http-error"):
+            expected_reasons.append("Network evidence contains HTTP, TLS, or parse errors")
+        assert completion["reasons"] == expected_reasons, completion
         state = json.loads(state_path.read_text())
         assert state["settings"] == {} and state["reverse"] == {}
+        receipt = None
         if mode == "flush-error":
             assert not (directory / "runtime/engine-receipt.json").exists()
             assert (directory / "runtime/closed-before-lease-release").read_text() == "verified"
@@ -404,13 +419,25 @@ def owned_session(mode):
         else:
             receipt = json.loads((directory / "runtime/engine-receipt.json").read_text())
             assert receipt["done"] and receipt["partial"] == (mode != "success")
+            assert receipt["nonce"] == json.loads((directory / "runtime/engine-config.json").read_text())["nonce"]
         with zipfile.ZipFile(result["archive"]) as archive:
             manifest = json.loads(archive.read("manifest.json"))
+            assert manifest["capture_logs"] and manifest["capture_network"]
+            assert manifest["collector_status"] == logs
+            assert manifest["routing_restored"] and manifest["network_completion"]["partial"] == session_partial
+            assert manifest["network_completion"]["reasons"] == expected_reasons
+            assert manifest["package_state"] == ("partial" if session_partial else "complete")
+            assert manifest["completeness"]["partial"] == session_partial
             metadata = json.dumps({"context": manifest["context"], "network": manifest["network_completion"]})
             assert "public_certificate" not in metadata and "synthetic_check_url" not in metadata
             assert str(namespace) not in metadata
             events = [json.loads(line) for line in archive.read("network/events.jsonl").splitlines()]
             if mode == "success":
+                facts = json.loads(archive.read("network/incomplete.json"))
+                assert facts["errors"] == [] and facts["flow_ids"] == [] and facts["count"] == 0
+                assert facts["omitted_flows"] == 0 and facts["missing_bodies"] == [] and facts["unavailable_bodies"] == 0
+                assert not manifest["completeness"]["network_error_refs"] and not manifest["completeness"]["missing_artifacts"]
+                assert not any(event["kind"] in ("error", "tls_error", "parse_error") for event in events), events
                 entries = json.loads(archive.read("network/capture.har"))["log"]["entries"]
                 assert len(entries) == 2
                 assert base64.b64decode(entries[0]["request"]["postData"]["text"]) == request_body
@@ -437,11 +464,12 @@ def owned_session(mode):
                     if mode == "tls-error":
                         assert manifest["sources"]["network"] == "tls_failed"
             if os.name != "nt":
-                logs = manifest["collector_status"]
-                assert logs["reason"] == "lease_closed" and not logs["forced"] and not logs["stderr"]
+                assert not logs["incomplete_tail"], logs
                 assert not manifest["completeness"]["unparsed_event_refs"]
-                assert manifest["package_state"] == ("complete" if mode == "success" else "partial")
-        return {"mode": mode, "archive": result["archive"], "routing_restored": True, "network_partial": completion["partial"]}
+        return {"mode": mode, "archive": result["archive"], "routing_restored": True,
+                "engine_receipt_verified": receipt is not None, "engine_partial": None if receipt is None else receipt["partial"],
+                "log_forced": logs["forced"], "log_incomplete_tail": logs["incomplete_tail"],
+                "session_partial": completion["partial"], "session_reasons": completion["reasons"]}
     finally:
         if owner.poll() is None:
             owner.kill()
