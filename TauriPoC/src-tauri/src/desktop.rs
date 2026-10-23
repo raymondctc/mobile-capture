@@ -1,4 +1,5 @@
 use capture_poc_core::{
+    android::AndroidApplication,
     library::EvidenceLibrary,
     model::*,
     preferences::{self, Preferences},
@@ -164,6 +165,14 @@ impl Desktop {
     ) -> Result<T> {
         let mut owner = self.owner.lock().map_err(|_| "Capture owner lock failed")?;
         operation(owner.as_mut().map_err(|error| error.clone())?)
+    }
+
+    pub fn discover(&self) -> Result<Vec<Device>> {
+        self.with_owner(|owner| owner.discover())
+    }
+
+    pub fn applications(&self, serial: &str) -> Result<Vec<AndroidApplication>> {
+        self.with_owner(|owner| owner.applications(serial))
     }
 
     pub fn reconnect(&self) -> Result<Snapshot> {
@@ -481,6 +490,174 @@ pub fn open_release_page() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn failed_owner_desktop(root: &Path) -> State {
+        let fixture = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("fake-adb{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            fixture.is_file(),
+            "Build the compiled ADB fixture before desktop tests with cargo build -p capture-poc-core --bin fake-adb --locked. Missing {}",
+            fixture.display()
+        );
+        let tools_directory = root.join("tools");
+        std::fs::create_dir(&tools_directory).unwrap();
+        let adb = tools_directory.join(fixture.file_name().unwrap());
+        std::fs::copy(fixture, &adb).unwrap();
+        std::fs::write(
+            tools_directory.join("fake-android-state.json"),
+            br#"{"user":10,"uid":1010001,"shared":true}"#,
+        )
+        .unwrap();
+        let runtime = root.join("runtime");
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::write(
+            runtime.join("owner.lock"),
+            root.join("prior-session").to_str().unwrap(),
+        )
+        .unwrap();
+        let mut preferences = Preferences::defaults(root.join("sessions"));
+        preferences.adb_override = Some(adb);
+        let tools = Ok(Toolchain {
+            adb: root.join("unselected-adb"),
+            worker: root.join("unused-worker"),
+            guardian: root.join("unused-guardian"),
+            mitmdump: root.join("unused-mitmdump"),
+            addon: root.join("unused-addon"),
+            source: ToolSource::Fixture,
+            target: toolchain::host_target().into(),
+        });
+        let owner = CaptureOwner::open(
+            CapturePaths {
+                output_root: preferences.output_root.clone(),
+                runtime_root: Some(runtime.clone()),
+            },
+            selected_tools(&tools, &preferences).unwrap().selection(),
+            true,
+        );
+        Arc::new(Desktop {
+            admission: Mutex::new(()),
+            owner: Mutex::new(owner),
+            reader: Mutex::new(None),
+            preferences: Mutex::new(preferences),
+            operations: Operations::new(),
+            base_tools: tools,
+            data: root.join("desktop"),
+            cache: root.join("cache"),
+            preferences_path: root.join("preferences.json"),
+            fixture: true,
+            runtime_root: Some(runtime),
+            pending_handoff: Mutex::new(None),
+            quitting: AtomicBool::new(false),
+            exit_ready: AtomicBool::new(false),
+        })
+    }
+
+    #[test]
+    fn android_queries_preserve_failed_capture_admission() {
+        let root = tempfile::tempdir().unwrap();
+        let desktop = failed_owner_desktop(root.path());
+        let locator_path = root.path().join("runtime/owner.lock");
+        let locator = std::fs::read(&locator_path).unwrap();
+        let error = desktop
+            .owner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .err()
+            .unwrap()
+            .clone();
+        assert!(
+            error.contains("Previous capture completion cannot be verified"),
+            "{error}"
+        );
+        assert!(error.contains("Private state is missing"), "{error}");
+
+        for _ in 0..2 {
+            let devices = desktop.discover().unwrap();
+            for (serial, name, state) in [
+                ("fixture-stream", "Fixture Android", DeviceState::Ready),
+                ("fixture-offline", "fixture-offline", DeviceState::Offline),
+                (
+                    "fixture-denied",
+                    "fixture-denied",
+                    DeviceState::Unauthorized,
+                ),
+            ] {
+                let device = devices
+                    .iter()
+                    .find(|device| device.serial == serial)
+                    .unwrap();
+                assert_eq!(device.name, name);
+                assert_eq!(device.state, state);
+            }
+            let apps = desktop.applications("fixture-app-uid").unwrap();
+            assert_eq!(apps.len(), 2);
+            assert_eq!(apps[0].application_id, "com.fixture.app");
+            assert_eq!(apps[1].application_id, "com.fixture.other");
+            for app in apps {
+                assert_eq!(app.user_id, 10);
+                assert_eq!(app.uid, 1010001);
+                assert!(app.shared_uid);
+            }
+            assert_eq!(desktop.ensure_idle().unwrap_err(), error);
+            assert_eq!(desktop.reconnect().unwrap_err(), error);
+            assert_eq!(
+                desktop.with_owner::<()>(|_| panic!("Capture admission accepted a failed owner")),
+                Err(error.clone())
+            );
+            for kind in [
+                crate::operations::Kind::Certificate,
+                crate::operations::Kind::ConnectionCheck,
+            ] {
+                let result =
+                    crate::operations::begin_setup(desktop.clone(), "fixture-stream".into(), kind);
+                assert_eq!(result.err().unwrap(), error);
+            }
+            assert_eq!(desktop.owner.lock().unwrap().as_ref().err(), Some(&error));
+            assert_eq!(std::fs::read(&locator_path).unwrap(), locator);
+            assert!(!root.path().join("prior-session").exists());
+            assert!(!root.path().join("sessions").exists());
+            assert!(!desktop.data.exists());
+            assert!(!desktop.operations.busy().unwrap());
+        }
+        desktop.quitting.store(true, Ordering::Release);
+        assert!(desktop.reconnect().unwrap_err().contains("Quit"));
+    }
+
+    #[test]
+    fn android_queries_require_valid_selected_tools() {
+        let root = tempfile::tempdir().unwrap();
+        let mut desktop = failed_owner_desktop(root.path());
+        for override_adb in [true, false] {
+            let mut preferences = desktop.preferences.lock().unwrap();
+            let path = Some(root.path().join("missing-executable"));
+            if override_adb {
+                preferences.adb_override = path;
+            } else {
+                preferences.adb_override = None;
+                preferences.mitmdump_override = path;
+            }
+            drop(preferences);
+            let error = desktop.tools().unwrap_err();
+            assert_eq!(desktop.discover().unwrap_err(), error);
+            assert_eq!(desktop.applications("fixture-app-uid").unwrap_err(), error);
+        }
+        Arc::get_mut(&mut desktop).unwrap().base_tools =
+            Err("Bundled payload verification failed".into());
+        assert_eq!(
+            desktop.discover().unwrap_err(),
+            "Bundled payload verification failed"
+        );
+        assert_eq!(
+            desktop.applications("fixture-app-uid").unwrap_err(),
+            "Bundled payload verification failed"
+        );
+    }
+
     #[test]
     fn reconnect_rechecks_restored_metadata_after_initialization_failed() {
         let root = tempfile::tempdir().unwrap();

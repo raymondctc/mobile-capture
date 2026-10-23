@@ -42,17 +42,14 @@ fn accepting(state: &DesktopState) -> Result<()> {
 }
 #[tauri::command]
 async fn discover(state: tauri::State<'_, DesktopState>) -> Result<Vec<Device>> {
-    execute(state.inner().clone(), |s| s.with_owner(|o| o.discover())).await
+    execute(state.inner().clone(), |s| s.discover()).await
 }
 #[tauri::command]
 async fn applications(
     state: tauri::State<'_, DesktopState>,
     serial: String,
 ) -> Result<Vec<AndroidApplication>> {
-    execute(state.inner().clone(), move |s| {
-        s.with_owner(|o| o.applications(&serial))
-    })
-    .await
+    execute(state.inner().clone(), move |s| s.applications(&serial)).await
 }
 #[tauri::command]
 async fn start(state: tauri::State<'_, DesktopState>, request: StartRequest) -> Result<Snapshot> {
