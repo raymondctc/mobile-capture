@@ -1,4 +1,4 @@
-"""Bounded original-byte evidence for the isolated Tauri capture prototype."""
+"""Original-byte network evidence under an explicit session admission policy."""
 import asyncio
 import base64
 import datetime as dt
@@ -7,6 +7,7 @@ import json
 import os
 import threading
 import time
+import tempfile
 from pathlib import Path
 from mitmproxy import ctx, http, io as mitmio
 
@@ -36,8 +37,10 @@ def hold_writer(path):
 
 
 class Body:
-    def __init__(self):
-        self.data = bytearray()
+    def __init__(self, capture):
+        self.capture = capture
+        self.data = tempfile.SpooledTemporaryFile(max_size=65536, dir=capture.runtime)
+        self.bytes = 0
         self.complete = False
         self.unavailable = False
 
@@ -45,23 +48,48 @@ class Body:
         if not chunk:
             self.complete = True
         elif not self.unavailable:
-            if len(self.data) + len(chunk) > 256 * 1024:
-                self.data.clear()
+            if self.bytes + len(chunk) > self.capture.policy["max_body_bytes"] or not self.capture.reserve(len(chunk)):
+                self.close()
                 self.unavailable = True
             else:
-                self.data.extend(chunk)
+                try:
+                    self.data.write(chunk)
+                    self.bytes += len(chunk)
+                except OSError as error:
+                    self.capture.reserved -= len(chunk) * 8
+                    self.close()
+                    self.unavailable = True
+                    if len(self.capture.errors) < 32:
+                        self.capture.errors.append("Body storage failed: " + str(error)[:2048])
         return chunk
 
     def finish(self, message):
-        if not self.complete and not self.data and message.raw_content is not None:
+        if not self.complete and not self.bytes and not self.unavailable and message.raw_content is not None:
             self.stream(message.raw_content)
             self.complete = True
-        return bytes(self.data) if self.complete and not self.unavailable else None
+        if self.complete and not self.unavailable:
+            self.data.seek(0)
+            return self.data.read()
+        return None
+
+    def close(self):
+        self.capture.reserved -= self.bytes * 8
+        self.bytes = 0
+        self.data.close()
 
 
 class Capture:
     def __init__(self):
         self.config = json.loads(Path(os.environ["CAPTURE_ENGINE_CONFIG"]).read_text())
+        self.policy = self.config.get("policy", {"max_flows": 10000, "max_body_bytes": 33554432,
+                                                "max_header_bytes": 131072, "max_total_bytes": 1073741824,
+                                                "duration_ms": 3600000})
+        maxima = {"max_flows": 1000000, "max_body_bytes": 33554432, "max_header_bytes": 131072,
+                  "max_total_bytes": 1073741824, "duration_ms": 86400000}
+        if set(self.policy) != set(maxima) or any(type(self.policy[key]) is not int or not 0 < self.policy[key] <= maximum for key, maximum in maxima.items()):
+            raise ValueError("Invalid network admission policy")
+        if self.policy["max_total_bytes"] < 1048576:
+            raise ValueError("Network artifact policy must reserve at least 1 MiB")
         self.session = Path(self.config["directory"])
         self.root = self.session / "network"
         self.runtime = self.session / "runtime"
@@ -71,6 +99,9 @@ class Capture:
         self.omitted = 0
         self.tls_errors = 0
         self.missing = []
+        self.missing_count = 0
+        self.reserved = 0
+        self.budget = self.policy["max_total_bytes"] * 7 // 8
         self.errors = []
         self.decoded = 0
         self.total = 0
@@ -123,7 +154,7 @@ class Capture:
                     return
             except (OSError, ValueError):
                 pass
-            if time.monotonic() - self.started >= 120:
+            if (time.monotonic() - self.started) * 1000 >= self.policy["duration_ms"]:
                 self.closed = True
             self.coverage()
 
@@ -131,7 +162,7 @@ class Capture:
         if self.mode:
             return
         value = {"decoded_http_events": self.decoded, "tls_errors": self.tls_errors,
-                 "omitted_flows": self.omitted, "unavailable_bodies": len(self.missing),
+                 "omitted_flows": self.omitted, "unavailable_bodies": self.missing_count,
                  "admission_closed": self.closed}
         temporary = self.runtime / "coverage.pending"
         temporary.write_bytes(encoded(value))
@@ -143,7 +174,7 @@ class Capture:
 
     def retainable_metadata(self, value):
         try:
-            return len(encoded(value)) <= 16 * 1024
+            return len(encoded(value)) <= self.policy["max_header_bytes"]
         except UnicodeError:
             if len(self.errors) < 32:
                 self.errors.append("Metadata cannot be represented as UTF-8; flow omitted while original traffic forwards")
@@ -151,13 +182,13 @@ class Capture:
 
     def requestheaders(self, flow):
         flow.request.stream = lambda chunk: chunk
-        if time.monotonic() - self.started >= 120 or self.admitted >= 32:
+        if (time.monotonic() - self.started) * 1000 >= self.policy["duration_ms"] or self.admitted >= self.policy["max_flows"]:
             self.closed = True
-        if self.closed or not self.retainable_metadata({"headers": self.headers(flow.request), "method": flow.request.method, "url": flow.request.pretty_url, "version": flow.request.http_version}):
+        if self.closed or len(self.pending) >= 128 or not self.retainable_metadata({"headers": self.headers(flow.request), "method": flow.request.method, "url": flow.request.pretty_url, "version": flow.request.http_version}):
             self.omitted = min(self.omitted + 1, 2**63 - 1)
             return
         self.admitted += 1
-        slot = {"flow": flow, "request": Body(), "response": Body()}
+        slot = {"flow": flow, "request": Body(self), "response": Body(self)}
         self.pending[flow.id] = slot
         flow.request.stream = slot["request"].stream
 
@@ -166,6 +197,8 @@ class Capture:
         slot = self.pending.get(flow.id)
         if slot and not self.retainable_metadata(self.headers(flow.response)):
             self.pending.pop(flow.id)
+            slot["request"].close()
+            slot["response"].close()
             self.omitted = min(self.omitted + 1, 2**63 - 1)
             return
         if slot:
@@ -186,6 +219,12 @@ class Capture:
         if not self.mode and len(self.errors) < 32:
             self.errors.append("HTTP flow failed: " + str(flow.error)[:2048])
         self.persist(flow)
+
+    def reserve(self, size):
+        if self.total + self.reserved + size * 8 > self.budget:
+            return False
+        self.reserved += size * 8
+        return True
 
     @staticmethod
     def body_detail(body):
@@ -209,7 +248,9 @@ class Capture:
             bodies = [("request", request)] + ([("response", response)] if flow.response else [])
             for name, body in bodies:
                 if body is None:
-                    self.missing.append({"flow_id": flow.id, "source": name})
+                    self.missing_count += 1
+                    if len(self.missing) < 1024:
+                        self.missing.append({"flow_id": flow.id, "source": name})
             detail = {"flow_id": flow.id, "method": flow.request.method, "url": flow.request.pretty_url,
                       "request_headers": self.headers(flow.request), "request_body": self.body_detail(request)}
             if flow.metadata.get("mobile_capture_setup_nonce"):
@@ -230,7 +271,7 @@ class Capture:
             mitmio.FlowWriter(native).add(copy)
             raw, lines, har = native.getvalue(), b"".join(encoded(e) + b"\n" for e in events), encoded(entry) + b"\n"
             size = len(raw) + len(lines) + 2 * len(har)
-            if self.total + size > 95 * 1024 * 1024:
+            if self.total + size > self.budget:
                 self.closed = True
                 self.omitted = min(self.omitted + 1, 2**63 - 1)
                 return
@@ -245,6 +286,9 @@ class Capture:
             self.closed = True
             if len(self.errors) < 32:
                 self.errors.append(str(error)[:2048])
+        finally:
+            slot["request"].close()
+            slot["response"].close()
 
     def event(self, flow, kind, summary, detail, timestamp):
         return {"id": f"network:{flow.id}:{kind}", "timestamp": iso(timestamp),
@@ -290,7 +334,7 @@ class Capture:
             if not self.mode:
                 self.spool.seek(0)
                 with open(self.root / "capture.har", "xb") as har:
-                    har.write(b'{"log":{"version":"1.2","creator":{"name":"Tauri capture prototype","version":"1"},"comment":"Bodies retain original raw_content bytes, including content encoding","entries":[')
+                    har.write(b'{"log":{"version":"1.2","creator":{"name":"Mobile Capture Android","version":"1"},"comment":"Bodies retain original raw_content bytes, including content encoding","entries":[')
                     first = True
                     for line in self.spool:
                         if not first:
@@ -301,7 +345,13 @@ class Capture:
                     har.flush()
                     os.fsync(har.fileno())
                 with open(self.root / "incomplete.json", "xb") as incomplete:
-                    incomplete.write(encoded({"flow_ids": pending_ids, "count": len(pending_ids), "missing_bodies": self.missing, "omitted_flows": self.omitted, "errors": self.errors, "byte_basis": "raw_content", "policy": {"flows": 32, "body_bytes": 262144, "header_bytes": 16384, "artifact_bytes": 100663296, "duration_seconds": 120}}))
+                    incomplete.write(encoded({"flow_ids": pending_ids, "count": len(pending_ids), "missing_bodies": self.missing,
+                                              "unavailable_bodies": self.missing_count, "body_diagnostics_truncated": self.missing_count > len(self.missing),
+                                              "omitted_flows": self.omitted, "errors": self.errors, "byte_basis": "raw_content",
+                                              "policy": {"flows": self.policy["max_flows"], "body_bytes": self.policy["max_body_bytes"],
+                                                         "header_bytes": self.policy["max_header_bytes"], "artifact_bytes": self.policy["max_total_bytes"],
+                                                         "duration_seconds": self.policy["duration_ms"] / 1000,
+                                                         "pending_flows": 128, "artifact_reserve_fraction": 0.125}}))
                     incomplete.flush()
                     os.fsync(incomplete.fileno())
             for file in self.files:
@@ -309,7 +359,7 @@ class Capture:
                 os.fsync(file.fileno())
                 file.close()
             self.coverage()
-            receipt = {"nonce": self.config["nonce"], "done": True, "partial": bool(pending_ids or self.missing or self.omitted or self.errors or self.tls_errors), "ended_at": iso()}
+            receipt = {"nonce": self.config["nonce"], "done": True, "partial": bool(pending_ids or self.missing_count or self.omitted or self.errors or self.tls_errors), "ended_at": iso()}
             target = self.runtime / "engine-receipt.json"
             with open(target, "xb") as file:
                 file.write(encoded(receipt))
