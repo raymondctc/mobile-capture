@@ -1673,6 +1673,7 @@ fn completed_control_release_allows_isolated_setup_and_original_export() {
         .unwrap();
     assert_ne!(setup.directory().unwrap(), original_directory);
     setup.stop().unwrap();
+    setup.release_completed_control().unwrap();
     drop(setup);
     assert!(original.export().unwrap().is_file());
     assert_eq!(original.directory().unwrap(), original_directory);

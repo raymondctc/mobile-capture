@@ -181,6 +181,67 @@ fn line(value: &Value) -> String {
 }
 
 #[test]
+fn completed_setup_releases_control_before_export_and_stays_finished_during_next_capture() {
+    for recover in [false, true] {
+        let f = Fixture::new();
+        let mut original = f.owner();
+        original.start(main_request()).unwrap();
+        assert!(matches!(original.stop().unwrap(), StopOutcome::Ready(_)));
+        let original_directory = original.directory().unwrap().to_owned();
+        original.release_completed_control().unwrap();
+
+        let mut setup = f.setup();
+        let details = setup.start().unwrap();
+        if recover {
+            f.edit(|state| state["connected"] = json!(false));
+            assert!(!setup.stop().unwrap());
+            assert!(!setup.recover().unwrap());
+            assert!(original.export().is_err());
+            f.edit(|state| state["connected"] = json!(true));
+            assert!(setup.recover().unwrap());
+        } else {
+            assert!(setup.stop().unwrap());
+        }
+
+        assert!(original.export().unwrap().is_file());
+        assert_eq!(original.directory(), Some(original_directory.as_path()));
+        original.release_completed_control().unwrap();
+
+        let mut next = f.owner();
+        let Snapshot::Recording(recording) = next.start(main_request()).unwrap() else {
+            panic!("main capture must start after setup completion")
+        };
+        assert_ne!(recording.directory, details.directory);
+        assert!(setup.stop().unwrap());
+        assert!(setup.recover().unwrap());
+        assert_eq!(setup.directory(), Some(details.directory));
+        assert!(matches!(next.status().unwrap(), Snapshot::Recording(_)));
+        assert!(matches!(next.stop().unwrap(), StopOutcome::Ready(_)));
+        next.release_completed_control().unwrap();
+        assert_eq!(f.state()["settings"], json!({}));
+        assert_eq!(f.state()["reverse"], json!({}));
+    }
+}
+
+#[test]
+fn restored_setup_remains_retryable_until_completed_control_is_released() {
+    let f = Fixture::new();
+    let mut setup = f.setup();
+    let details = setup.start().unwrap();
+    let mut attached = f.owner();
+    assert!(matches!(attached.status().unwrap(), Snapshot::Recording(_)));
+
+    assert!(setup.stop().is_err());
+    assert!(matches!(attached.status().unwrap(), Snapshot::Stopped(_)));
+    assert!(setup.recover().is_err());
+    assert_eq!(setup.directory(), Some(details.directory.clone()));
+    drop(attached);
+
+    assert!(setup.recover().unwrap());
+    f.assert_main_capture_after(&details.directory);
+}
+
+#[test]
 fn certificate_handoff_is_public_staged_network_only_and_restores_exact_routing() {
     let f = Fixture::new();
     let original = json!({"http_proxy":"null","global_http_proxy_host":"","global_http_proxy_exclusion_list":"a=b 'quoted'","global_proxy_pac_url":""});

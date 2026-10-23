@@ -291,20 +291,25 @@ impl SetupCapture {
     }
 
     pub fn stop(&mut self) -> Result<bool> {
-        if self.owner.directory().is_none() {
+        if matches!(self.state, CheckState::Finished) || self.owner.directory().is_none() {
             self.state = CheckState::Finished;
             return Ok(true);
         }
         let restored = restored(self.owner.stop()?);
         if restored {
+            self.owner.release_completed_control()?;
             self.state = CheckState::Finished;
         }
         Ok(restored)
     }
 
     pub fn recover(&mut self) -> Result<bool> {
+        if matches!(self.state, CheckState::Finished) {
+            return Ok(true);
+        }
         let restored = restored(self.owner.recover()?);
         if restored {
+            self.owner.release_completed_control()?;
             self.state = CheckState::Finished;
         }
         Ok(restored)
