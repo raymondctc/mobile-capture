@@ -2,10 +2,10 @@ name: Android desktop packages
 
 on:
   pull_request:
-    paths: ['TauriPoC/**', 'Dependencies/Capture/**', '.github/workflows/android-desktop.yml']
+    paths: ['TauriPoC/**', 'Dependencies/Capture/**', 'CaptureRuntime/evidence.py', '.github/workflows/android-desktop.yml']
   push:
-    branches: ['main', 'codex/android-full-port']
-    paths: ['TauriPoC/**', 'Dependencies/Capture/**', '.github/workflows/android-desktop.yml']
+    branches: ['main', 'codex/android-full-port', 'codex/tauri-poc', 'codex/tauri-network-capture']
+    paths: ['TauriPoC/**', 'Dependencies/Capture/**', 'CaptureRuntime/evidence.py', '.github/workflows/android-desktop.yml']
   workflow_dispatch:
 
 permissions:
@@ -19,8 +19,10 @@ jobs:
         include:
           - os: macos-14
             architecture: macOS-arm64
+            payload: android-package/Mobile Capture Android.app/Contents/Resources/android-tools
           - os: windows-2022
             architecture: Windows-x64
+            payload: android-installed/android-tools
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -39,9 +41,17 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: npm ci
+      - run: npm run web:build
       - run: cargo fmt --all -- --check
-      - run: cargo clippy -p capture-poc-core --all-targets --locked -- -D warnings
-      - run: cargo test -p capture-poc-core --lib --locked
+      - name: Probe Windows process lifetimes
+        if: runner.os == 'Windows'
+        run: python scripts/probe-windows-launch.py
+      - name: Verify serial core fixtures, desktop adapter, and normalized evidence
+        run: npm run verify
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Probe Windows process lifetimes inside the Rust test Job
+        if: runner.os == 'Windows'
+        run: cargo test -p capture-poc-core --test network windows_launch_probe_runs_inside_rust_test_job --locked -- --exact --nocapture
       - run: npm run test:delivery
       - name: Build complete development bundle
         run: python scripts/package-android.py --channel development --cache "${{ runner.temp }}/android-dependency-cache" --output "${{ runner.temp }}/android-package"
@@ -55,6 +65,8 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "NSIS installation failed with $($process.ExitCode)" }
           python scripts/smoke-installed.py --app "$destination"
           if ($LASTEXITCODE -ne 0) { throw 'Installed Windows Doctor failed' }
+      - name: Verify bundled mitmdump evidence and capture beyond two minutes
+        run: python scripts/probe-bundled-engine.py --package "${{ runner.temp }}/android-package" --payload "${{ runner.temp }}/${{ matrix.payload }}"
       - uses: actions/upload-artifact@v4
         with:
           name: MobileCaptureAndroid-${{ matrix.architecture }}-development

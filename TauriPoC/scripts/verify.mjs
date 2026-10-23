@@ -23,26 +23,25 @@ run("cargo", [
   "--test-threads=1",
 ]);
 run("cargo", ["build", "-p", "capture-poc-core", "--bins", "--locked"]);
+run(process.execPath, ["scripts/prepare-worker.mjs"]);
+run("cargo", [
+  "test",
+  "-p",
+  "mobile-capture-tauri-poc",
+  "--lib",
+  "--locked",
+  "--",
+  "--test-threads=1",
+]);
+const targetDirectory = path.resolve(root, process.env.CARGO_TARGET_DIR ?? "target");
 const directory = mkdtempSync(
   path.join(tmpdir(), "mobile-capture-poc-verify-"),
 );
 try {
-  const toolsTests = path.join(
-    directory,
-    `desktop-tools-tests${process.platform === "win32" ? ".exe" : ""}`,
-  );
-  run("rustc", [
-    "--edition=2021",
-    "--test",
-    "src-tauri/src/tools.rs",
-    "-o",
-    toolsTests,
-  ]);
-  run(toolsTests, []);
   const result = run(
     path.join(
-      root,
-      `target/debug/fixture-export${process.platform === "win32" ? ".exe" : ""}`,
+      targetDirectory,
+      `debug/fixture-export${process.platform === "win32" ? ".exe" : ""}`,
     ),
     [directory],
     { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
