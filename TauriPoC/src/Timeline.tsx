@@ -8,7 +8,7 @@ import {
   type TimelinePage,
   type TimelineQuery,
 } from "./product";
-import { timelineFence, useReading, type RunAction } from "./state";
+import { timelineFence, useReading } from "./state";
 import { Details } from "./Details";
 
 type QueryState = {
@@ -20,6 +20,18 @@ type QueryState = {
   through: number | null;
   revision: number;
 };
+type InspectorEvent = {
+  directory: SessionDescriptor["directory"];
+  eventId: EventDetail["event"]["id"];
+};
+type Inspector =
+  | { kind: "closed" }
+  | (InspectorEvent &
+      (
+        | { kind: "loading" }
+        | { kind: "ready"; detail: EventDetail }
+        | { kind: "error"; message: string }
+      ));
 const initialQuery: QueryState = {
   source: "",
   search: "",
@@ -31,32 +43,45 @@ const initialQuery: QueryState = {
 };
 export function Timeline({
   inspected,
-  run,
 }: {
   inspected: SessionDescriptor | undefined;
-  run: RunAction;
 }) {
   const [reading, setReading] = useReading();
   const [query, setQuery] = useState<QueryState>(initialQuery);
   const [page, setPage] = useState<TimelinePage>();
-  const [selected, setSelected] = useState<EventDetail>();
-  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [inspector, setInspector] = useState<Inspector>({ kind: "closed" });
   const [error, setError] = useState("");
   const [invalidation, setInvalidation] = useState("");
   const [loading, setLoading] = useState(false);
   const generation = useRef(0);
   const detailGeneration = useRef(0);
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const directory = useRef(inspected?.directory);
   const list = useRef<HTMLDivElement>(null);
   const follow = useRef(reading.follow);
   const paused = query.through !== null;
   follow.current = reading.follow;
+  directory.current = inspected?.directory;
+  const visibleInspector =
+    inspector.kind !== "closed" && inspector.directory === inspected?.directory
+      ? inspector
+      : undefined;
   useEffect(() => {
     setQuery(initialQuery);
     setPage(undefined);
-    setSelected(undefined);
+    setInspector({ kind: "closed" });
+    returnFocus.current = null;
     setInvalidation("");
     detailGeneration.current += 1;
+    return () => {
+      detailGeneration.current += 1;
+    };
   }, [inspected?.directory]);
+  useEffect(() => {
+    if (visibleInspector) closeButton.current?.focus();
+  }, [visibleInspector?.directory, visibleInspector?.eventId]);
   useEffect(() => {
     const request = ++generation.current;
     let disposed = false;
@@ -112,21 +137,44 @@ export function Timeline({
       clearTimeout(timer);
     };
   }, [inspected?.directory, query, reading.order]);
-  async function select(id: string) {
+  async function select(eventId: string, origin: HTMLButtonElement) {
+    if (!inspected) return;
+    const selected = { directory: inspected.directory, eventId };
     const request = ++detailGeneration.current;
-    setLoadingDetail(true);
+    returnFocus.current = origin;
+    setInspector({ kind: "loading", ...selected });
     try {
-      const result = await product.detail(id);
-      if (request === detailGeneration.current) {
-        if (result) setSelected(result);
-        else
-          setError(
-            "The selected event is no longer available. Refresh the session.",
-          );
-      }
-    } finally {
-      if (request === detailGeneration.current) setLoadingDetail(false);
+      const detail = await product.detail(eventId);
+      if (
+        request !== detailGeneration.current ||
+        directory.current !== selected.directory
+      )
+        return;
+      setInspector(
+        detail
+          ? { kind: "ready", ...selected, detail }
+          : {
+              kind: "error",
+              ...selected,
+              message:
+                "The selected event is no longer available. Refresh the session.",
+            },
+      );
+    } catch (cause) {
+      if (
+        request === detailGeneration.current &&
+        directory.current === selected.directory
+      )
+        setInspector({ kind: "error", ...selected, message: errorMessage(cause) });
     }
+  }
+  function closeInspector() {
+    detailGeneration.current += 1;
+    setInspector({ kind: "closed" });
+    const target = returnFocus.current;
+    if (target?.isConnected) target.focus();
+    else heading.current?.focus();
+    returnFocus.current = null;
   }
   function reset(changes: Partial<QueryState>) {
     setQuery((previous) => ({
@@ -154,12 +202,15 @@ export function Timeline({
         reading.order === "newest_first" ? 0 : list.current.scrollHeight;
   }
   const selectionOffPage =
-    selected && !page?.rows.some((row) => row.event.id === selected.event.id);
+    visibleInspector &&
+    !page?.rows.some((row) => row.event.id === visibleInspector.eventId);
   return (
     <section className="timeline-workspace" aria-label="Captured evidence">
       <div className="timeline-heading">
         <div>
-          <h2>Timeline</h2>
+          <h2 ref={heading} tabIndex={-1}>
+            Timeline
+          </h2>
           <p className="muted">
             {inspected
               ? `${page?.matching.toLocaleString() ?? "…"} matching · ${page?.total.toLocaleString() ?? "…"} indexed events`
@@ -340,11 +391,10 @@ export function Timeline({
             {page.rows.map(({ sequence, event }) => (
               <div role="listitem" key={event.id}>
                 <button
-                  aria-pressed={selected?.event.id === event.id}
-                  className={`event ${selected?.event.id === event.id ? "selected" : ""}`}
-                  onClick={() =>
-                    void run("Reading event", () => select(event.id))
-                  }
+                  aria-pressed={visibleInspector?.eventId === event.id}
+                  aria-haspopup="dialog"
+                  className={`event ${visibleInspector?.eventId === event.id ? "selected" : ""}`}
+                  onClick={(click) => void select(event.id, click.currentTarget)}
                 >
                   <span className="event-time" title={event.timestamp}>
                     {new Date(event.timestamp).toLocaleTimeString()}
@@ -399,13 +449,47 @@ export function Timeline({
           {reading.order === "newest_first" ? "Older page" : "Later page"}
         </button>
       </div>
-      <Details
-        detail={selected}
-        offPage={!!selectionOffPage}
-        loading={loadingDetail}
-        wrap={reading.wrap}
-        run={run}
-      />
+      {visibleInspector && (
+        <aside
+          className="event-inspector"
+          role="dialog"
+          aria-modal={false}
+          aria-labelledby="event-inspector-title"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              closeInspector();
+            }
+          }}
+        >
+          <div className="inspector-heading">
+            <h2 id="event-inspector-title">Event details</h2>
+            <button ref={closeButton} onClick={closeInspector}>
+              Close event details
+            </button>
+          </div>
+          <div className="inspector-content">
+            {visibleInspector.kind === "loading" && (
+              <p role="status">Reading event…</p>
+            )}
+            {visibleInspector.kind === "error" && (
+              <p className="notice" role="alert">{visibleInspector.message}</p>
+            )}
+            {visibleInspector.kind === "ready" && (
+              <Details
+                key={JSON.stringify([
+                  visibleInspector.directory,
+                  visibleInspector.eventId,
+                ])}
+                detail={visibleInspector.detail}
+                offPage={!!selectionOffPage}
+                wrap={reading.wrap}
+              />
+            )}
+          </div>
+        </aside>
+      )}
     </section>
   );
 }

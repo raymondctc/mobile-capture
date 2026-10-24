@@ -15,6 +15,7 @@
 }
 body {
   margin: 0;
+  overflow: hidden;
 }
 button,
 input,
@@ -137,16 +138,53 @@ button.text {
 .app {
   max-width: 1900px;
   margin: auto;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .app-header {
-  display: flex;
-  gap: 24px;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "brand recording" "phase tools";
+  gap: 12px 24px;
   align-items: center;
   padding: 20px 26px;
   border-bottom: 1px solid #d9dfdf;
   background: #fff;
   min-height: 92px;
+  flex-shrink: 0;
+}
+.workspace-brand {
+  grid-area: brand;
+}
+.recording-action-host {
+  grid-area: recording;
+  min-width: 0;
+  max-width: 500px;
+}
+.recording-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.recording-buttons {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.recording-notice {
+  max-width: 440px;
+  text-align: right;
+  color: #687b7e;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.app-header nav {
+  grid-area: tools;
+  justify-content: flex-end;
 }
 .eyebrow {
   font-size: 10px;
@@ -163,6 +201,7 @@ button.text {
   flex-wrap: wrap;
 }
 .phase {
+  grid-area: phase;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -222,17 +261,21 @@ button.text {
   gap: 15px;
 }
 .layout {
+  --sidebar-width: 292px;
   display: grid;
-  grid-template-columns: 292px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
 }
 .capture-sidebar {
   padding: 22px 20px;
   background: #fbfcfc;
   border-right: 1px solid #d9dfdf;
-  max-height: calc(100vh - 92px);
   overflow: auto;
-  position: sticky;
-  top: 0;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 .capture-sidebar section + section {
   border-top: 1px solid #e0e5e4;
@@ -310,10 +353,6 @@ label.consent {
 .capture-sidebar .hint {
   margin: 7px 0;
 }
-.capture-actions > button {
-  width: 100%;
-  margin-bottom: 8px;
-}
 .metrics {
   display: flex;
   gap: 15px;
@@ -354,6 +393,9 @@ main {
   padding: 22px 26px;
   min-width: 0;
   background: #f5f7f6;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .library {
   border: 1px solid #d8e1dd;
@@ -439,6 +481,10 @@ main {
 .timeline-heading h2 {
   font-size: 19px;
   letter-spacing: -0.5px;
+}
+.timeline-heading h2:focus-visible {
+  outline: 3px solid #76bfb1;
+  outline-offset: 3px;
 }
 .timeline-heading p {
   font-size: 11px;
@@ -625,14 +671,48 @@ main {
   min-height: 30px;
   padding: 5px 10px;
 }
-.details {
-  padding: 17px 0 0;
-  margin-top: 5px;
-  border-top: 1px solid #dbe3df;
-  min-height: 115px;
+.event-inspector {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 2;
+  width: clamp(365px, 40vw, 460px);
+  max-width: calc(100% - var(--sidebar-width));
+  display: flex;
+  flex-direction: column;
+  background: #fbfcfc;
+  border-left: 1px solid #b7c9bf;
+  box-shadow: -9px 0 24px #173c3415;
 }
-.details > .muted {
-  font-size: 12px;
+.inspector-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 18px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #dbe3df;
+  background: #fff;
+}
+.inspector-heading h2 {
+  font-size: 16px;
+}
+.inspector-heading button {
+  font-size: 11px;
+}
+.inspector-content {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px;
+  overscroll-behavior: contain;
+}
+.details {
+  min-width: 0;
+}
+.details .section-heading {
+  flex-wrap: wrap;
+}
+.details .section-heading > button {
+  margin-left: auto;
 }
 .event-facts {
   display: grid;
@@ -683,6 +763,7 @@ dd {
 .body-choice {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
 }
 .chunk {
   height: 230px;
@@ -714,9 +795,6 @@ dd {
   border: 1px solid #d6e1da;
   border-radius: 4px;
   color: #61786a;
-}
-.details h2 .badge {
-  margin-left: 8px;
 }
 .badge.ready {
   background: #e4f2e8;
@@ -775,6 +853,7 @@ footer {
   border-top: 1px solid #d9dfdf;
   color: #869194;
   font-size: 10px;
+  flex-shrink: 0;
 }
 dialog {
   color: inherit;
@@ -943,13 +1022,12 @@ dialog::backdrop {
   .app-header {
     padding: 16px 20px;
     gap: 12px;
-    flex-wrap: wrap;
   }
   .app-header nav {
     margin-left: auto;
   }
   .layout {
-    grid-template-columns: 265px minmax(0, 1fr);
+    --sidebar-width: 265px;
   }
   .capture-sidebar {
     padding: 20px 16px;
@@ -1000,7 +1078,7 @@ dialog::backdrop {
 }
 @media (max-width: 760px) {
   .layout {
-    grid-template-columns: 235px minmax(0, 1fr);
+    --sidebar-width: 235px;
   }
   main {
     padding: 15px;

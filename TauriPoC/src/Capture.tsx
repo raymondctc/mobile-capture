@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   api,
   captureSafe,
@@ -32,6 +33,7 @@ export function Capture({
   onSnapshot,
   onOperation,
   setup,
+  actionHost,
 }: {
   snapshot: Snapshot | undefined;
   operation: Operation;
@@ -46,13 +48,13 @@ export function Capture({
   onSnapshot: (snapshot: Snapshot) => void;
   onOperation: (operation: Operation) => void;
   setup: () => void;
+  actionHost: HTMLDivElement | null;
 }) {
   const [apps, setApps] = useState<Application[]>([]);
   const [appSearch, setAppSearch] = useState("");
   const [appState, setAppState] = useState("");
   const appGeneration = useRef(0);
   const [logConsent, setLogConsent] = useState(false);
-  const [networkConsent, setNetworkConsent] = useState(false);
   const [marker, setMarker] = useState("");
   const [editedPolicy, setEditedPolicy] = useState<Preferences>();
   const active = snapshot?.phase === "recording";
@@ -75,19 +77,16 @@ export function Capture({
     !blocked &&
     device?.state === "ready" &&
     !!preferences &&
-    (!hasLogs || (draft.log_mode === "app" ? appValid : logConsent)) &&
-    (!hasNetwork || networkConsent);
+    (!hasLogs || (draft.log_mode === "app" ? appValid : logConsent));
   useEffect(() => {
     appGeneration.current += 1;
     setApps([]);
     setAppState("");
     setLogConsent(false);
-    setNetworkConsent(false);
   }, [draft.serial]);
   useEffect(() => {
     if (!active) {
       setLogConsent(false);
-      setNetworkConsent(false);
     }
   }, [active]);
   async function refreshApps() {
@@ -103,7 +102,7 @@ export function Capture({
     const selection: StartRequest["selection"] =
       draft.selection === "logs"
         ? { mode: "logs" }
-        : { mode: draft.selection, consent: { whole_device: networkConsent } };
+        : { mode: draft.selection, consent: { whole_device: true } };
     const request: StartRequest = {
       serial: draft.serial,
       whole_device_consent: logConsent,
@@ -118,7 +117,6 @@ export function Capture({
     };
     onSnapshot(await api.start(request));
     setLogConsent(false);
-    setNetworkConsent(false);
   }
   return (
     <aside className="capture-sidebar">
@@ -183,7 +181,6 @@ export function Capture({
                 ) {
                   change({ ...draft, selection: value });
                   setLogConsent(false);
-                  setNetworkConsent(false);
                 }
               }}
             >
@@ -299,71 +296,59 @@ export function Capture({
               )}
             </>
           )}
-          {hasNetwork && (
-            <label className="consent">
-              <input
-                type="checkbox"
-                checked={active ? session?.selection.mode !== "logs" : networkConsent}
-                onChange={(event) => setNetworkConsent(event.target.checked)}
-              />
-              <span>
-                I consent to whole-device network capture and temporary proxy
-                routing for this recording. HTTPS requires manual trust of the
-                capture certificate.
-              </span>
-            </label>
-          )}
         </fieldset>
       </section>
       <section>
-        <h2>Task context</h2>
-        <fieldset disabled={blocked}>
-          <label>
-            Title
-            <input
-              maxLength={512}
-              value={draft.context.title}
-              onChange={(event) =>
-                change({
-                  ...draft,
-                  context: { ...draft.context, title: event.target.value },
-                })
-              }
-              placeholder="What are you investigating?"
-            />
-          </label>
-          <label>
-            Notes
-            <textarea
-              maxLength={32768}
-              value={draft.context.notes}
-              onChange={(event) =>
-                change({
-                  ...draft,
-                  context: { ...draft.context, notes: event.target.value },
-                })
-              }
-              rows={3}
-            />
-          </label>
-          <label>
-            Reproduction steps, one per line
-            <textarea
-              maxLength={409600}
-              value={draft.context.steps.join("\n")}
-              onChange={(event) =>
-                change({
-                  ...draft,
-                  context: {
-                    ...draft.context,
-                    steps: event.target.value.split("\n"),
-                  },
-                })
-              }
-              rows={3}
-            />
-          </label>
-        </fieldset>
+        <details>
+          <summary>Task context (optional)</summary>
+          <fieldset disabled={blocked}>
+            <label>
+              Title
+              <input
+                maxLength={512}
+                value={draft.context.title}
+                onChange={(event) =>
+                  change({
+                    ...draft,
+                    context: { ...draft.context, title: event.target.value },
+                  })
+                }
+                placeholder="What are you investigating?"
+              />
+            </label>
+            <label>
+              Notes
+              <textarea
+                maxLength={32768}
+                value={draft.context.notes}
+                onChange={(event) =>
+                  change({
+                    ...draft,
+                    context: { ...draft.context, notes: event.target.value },
+                  })
+                }
+                rows={3}
+              />
+            </label>
+            <label>
+              Reproduction steps, one per line
+              <textarea
+                maxLength={409600}
+                value={draft.context.steps.join("\n")}
+                onChange={(event) =>
+                  change({
+                    ...draft,
+                    context: {
+                      ...draft.context,
+                      steps: event.target.value.split("\n"),
+                    },
+                  })
+                }
+                rows={3}
+              />
+            </label>
+          </fieldset>
+        </details>
         {!contextValidation.success && (
           <p className="notice" role="alert">
             Task context is too long. Title allows 512 UTF-8 bytes, notes 32,768
@@ -399,53 +384,6 @@ export function Capture({
         </details>
       </section>
       <section className="capture-actions">
-        {active ? (
-          <>
-            <button
-              className="primary"
-              disabled={!!pending || operationBusy(operation)}
-              onClick={() =>
-                void run("Stopping and saving", async () =>
-                  onOperation(await api.save(null)),
-                )
-              }
-            >
-              Stop &amp; Save
-            </button>
-            <button
-              disabled={!!pending || operationBusy(operation)}
-              onClick={() =>
-                void run("Stopping capture", async () =>
-                  onSnapshot(await api.stop()),
-                )
-              }
-            >
-              Stop without archive
-            </button>
-          </>
-        ) : (
-          <button
-            className="primary"
-            disabled={!canStart}
-            onClick={() => void run("Starting capture", start)}
-          >
-            Start recording
-          </button>
-        )}
-        {(snapshot?.phase === "recovery_required" ||
-          snapshot?.phase === "unverified_shutdown") && (
-          <button
-            className="danger"
-            disabled={!!pending || operationBusy(operation)}
-            onClick={() =>
-              void run("Recovering device routing", async () =>
-                onSnapshot(await api.recover()),
-              )
-            }
-          >
-            Retry safe recovery
-          </button>
-        )}
         {session && (
           <>
             <div className="metrics">
@@ -533,6 +471,66 @@ export function Capture({
           </form>
         )}
       </section>
+      {actionHost && createPortal(
+        <section className="recording-controls" aria-label="Recording controls">
+          <div className="recording-buttons">
+            {active ? (
+              <>
+                <button
+                  className="primary"
+                  disabled={!!pending || operationBusy(operation)}
+                  onClick={() =>
+                    void run("Stopping and saving", async () =>
+                      onOperation(await api.save(null)),
+                    )
+                  }
+                >
+                  Stop &amp; Save
+                </button>
+                <button
+                  disabled={!!pending || operationBusy(operation)}
+                  onClick={() =>
+                    void run("Stopping capture", async () =>
+                      onSnapshot(await api.stop()),
+                    )
+                  }
+                >
+                  Stop without archive
+                </button>
+              </>
+            ) : (
+              <button
+                className="primary"
+                disabled={!canStart}
+                aria-describedby={hasNetwork ? "network-recording-notice" : undefined}
+                onClick={() => void run("Starting capture", start)}
+              >
+                Start recording
+              </button>
+            )}
+            {(snapshot?.phase === "recovery_required" ||
+              snapshot?.phase === "unverified_shutdown") && (
+              <button
+                className="danger"
+                disabled={!!pending || operationBusy(operation)}
+                onClick={() =>
+                  void run("Recovering device routing", async () =>
+                    onSnapshot(await api.recover()),
+                  )
+                }
+              >
+                Retry safe recovery
+              </button>
+            )}
+          </div>
+          {hasNetwork && (
+            <p className="recording-notice" id="network-recording-notice">
+              Start records whole-device HTTP(S) traffic and temporarily changes proxy routing. HTTPS requires manual CA trust.
+            </p>
+          )}
+        </section>,
+        actionHost,
+      )}
     </aside>
   );
 }

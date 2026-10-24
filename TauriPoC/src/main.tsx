@@ -50,6 +50,7 @@ function App() {
     history.deferred ? null : "setup",
   );
   const [inspected, setInspected] = useState<SessionDescriptor>();
+  const [actionHost, setActionHost] = useState<HTMLDivElement | null>(null);
   const [revision, setRevision] = useState(0);
   const [pending, setPending] = useState("");
   const [error, setError] = useState("");
@@ -409,7 +410,7 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div>
+        <div className="workspace-brand">
           <div className="eyebrow">ANDROID EVIDENCE WORKSPACE</div>
           <h1>
             Mobile Capture <span>Android</span>
@@ -425,6 +426,7 @@ function App() {
               ? phaseNames[snapshot.phase]
               : "Connecting to capture service…")}
         </div>
+        <div className="recording-action-host" ref={setActionHost} />
         <nav aria-label="Workspace tools">
           <button
             disabled={setupLocked && panel !== "setup"}
@@ -504,6 +506,7 @@ function App() {
           onSnapshot={setSnapshot}
           onOperation={setOperation}
           setup={() => setPanel("setup")}
+          actionHost={actionHost}
         />
         <main>
           <Library
@@ -517,7 +520,7 @@ function App() {
             pending={pending}
             revision={revision}
           />
-          <Timeline inspected={inspected} run={run} />
+          <Timeline inspected={inspected} />
         </main>
       </div>
       <footer>
