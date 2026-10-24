@@ -8,10 +8,7 @@ use capture_poc_core::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex, MutexGuard},
 };
 use tauri::Manager;
 
@@ -19,7 +16,8 @@ use crate::{operations::Operations, tools};
 
 pub type State = Arc<Desktop>;
 pub struct Desktop {
-    pub admission: Mutex<()>,
+    pub admission: Mutex<Admission>,
+    pub updates: Mutex<crate::updates::Updates>,
     pub owner: Mutex<Result<CaptureOwner>>,
     pub reader: Mutex<Option<EvidenceLibrary>>,
     pub preferences: Mutex<Preferences>,
@@ -31,8 +29,6 @@ pub struct Desktop {
     pub fixture: bool,
     pub runtime_root: Option<PathBuf>,
     pub pending_handoff: Mutex<Option<Handoff>>,
-    pub quitting: AtomicBool,
-    pub exit_ready: AtomicBool,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -43,7 +39,99 @@ pub struct Handoff {
     pub message: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Admission {
+    Running,
+    Quitting,
+    Installing,
+    RepairRequired,
+    ExitAuthorized,
+}
+impl Admission {
+    pub fn exit_authorized(self) -> bool {
+        matches!(self, Self::ExitAuthorized | Self::RepairRequired)
+    }
+    pub fn accepting(self) -> Result<()> {
+        match self {
+            Self::Running => Ok(()),
+            Self::RepairRequired => Err(
+                "The application update needs repair. Quit and reinstall before capturing.".into(),
+            ),
+            Self::Quitting => Err("Quit is waiting for safe shutdown and saving".into()),
+            Self::Installing | Self::ExitAuthorized => {
+                Err("An update is being installed. Wait for the app to restart.".into())
+            }
+        }
+    }
+}
+
+pub enum InstallationOutcome {
+    Installed,
+    RetryableFailure,
+    RepairRequired,
+}
+
+pub struct Installation<'a>(&'a Desktop);
+impl Installation<'_> {
+    pub fn finish(self, outcome: InstallationOutcome) -> Result<()> {
+        let mut admission = self
+            .0
+            .admission
+            .lock()
+            .map_err(|_| "Operation admission failed")?;
+        if *admission != Admission::Installing {
+            return Err("Update installation reservation was lost".into());
+        }
+        *admission = match outcome {
+            InstallationOutcome::Installed => Admission::ExitAuthorized,
+            InstallationOutcome::RetryableFailure => Admission::Running,
+            InstallationOutcome::RepairRequired => Admission::RepairRequired,
+        };
+        Ok(())
+    }
+}
+impl Drop for Installation<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut admission) = self.0.admission.lock() {
+            if *admission == Admission::Installing {
+                *admission = Admission::Running;
+            }
+        }
+    }
+}
+
 impl Desktop {
+    pub fn accept(&self) -> Result<MutexGuard<'_, Admission>> {
+        let guard = self
+            .admission
+            .lock()
+            .map_err(|_| "Operation admission failed")?;
+        guard.accepting()?;
+        Ok(guard)
+    }
+
+    pub fn begin_quit(&self) -> Result<bool> {
+        let mut admission = self
+            .admission
+            .lock()
+            .map_err(|_| "Operation admission failed")?;
+        if *admission != Admission::Running {
+            return Ok(false);
+        }
+        *admission = Admission::Quitting;
+        Ok(true)
+    }
+
+    pub fn reserve_install(&self) -> Result<Installation<'_>> {
+        let mut admission = self.accept()?;
+        install_ready(
+            &self.with_owner(|owner| owner.status())?,
+            &self.operations.view()?,
+        )?;
+        *admission = Admission::Installing;
+        Ok(Installation(self))
+    }
+
     pub fn open(app: &tauri::AppHandle) -> Result<State> {
         let fixture = std::env::var("MOBILE_CAPTURE_POC_FIXTURE").ok().as_deref() == Some("1");
         let environment = tools::DiscoveryEnv::from_process();
@@ -142,7 +230,8 @@ impl Desktop {
             .and_then(|selected| CaptureOwner::open(paths, selected.selection(), fixture));
         let cache = data.join("timeline-cache");
         Ok(Arc::new(Self {
-            admission: Mutex::new(()),
+            admission: Mutex::new(Admission::Running),
+            updates: Mutex::new(crate::updates::Updates::new()),
             owner: Mutex::new(owner),
             reader: Mutex::new(None),
             preferences: Mutex::new(preferences),
@@ -154,8 +243,6 @@ impl Desktop {
             fixture,
             runtime_root,
             pending_handoff: Mutex::new(None),
-            quitting: AtomicBool::new(false),
-            exit_ready: AtomicBool::new(false),
         }))
     }
 
@@ -168,23 +255,19 @@ impl Desktop {
     }
 
     pub fn discover(&self) -> Result<Vec<Device>> {
+        let _admission = self.accept()?;
         let tools = self.tools()?;
         android::devices(&tools.adb)
     }
 
     pub fn applications(&self, serial: &str) -> Result<Vec<AndroidApplication>> {
+        let _admission = self.accept()?;
         let tools = self.tools()?;
         android::applications(&tools.adb, serial)
     }
 
     pub fn reconnect(&self) -> Result<Snapshot> {
-        let _admission = self
-            .admission
-            .lock()
-            .map_err(|_| "Operation admission failed")?;
-        if self.quitting.load(Ordering::Acquire) {
-            return Err("Quit is waiting for safe shutdown".into());
-        }
+        let _admission = self.accept()?;
         if self.operations.busy()? {
             return Err("Finish or recover the current operation first".into());
         }
@@ -289,10 +372,7 @@ impl Desktop {
     }
 
     pub fn save_preferences(&self, preferences: Preferences) -> Result<Preferences> {
-        let _admission = self
-            .admission
-            .lock()
-            .map_err(|_| "Operation admission failed")?;
+        let _admission = self.accept()?;
         if self.operations.busy()? {
             return Err("Finish or recover the current operation first".into());
         }
@@ -355,6 +435,34 @@ fn selected_tools(base: &Result<Toolchain>, preferences: &Preferences) -> Result
         }
     }
     Ok(tools)
+}
+
+pub fn install_ready(snapshot: &Snapshot, operation: &crate::operations::View) -> Result<()> {
+    use crate::operations::{Kind, View};
+    if operation.busy()
+        || matches!(
+            operation,
+            View::Failed {
+                kind: Kind::Save,
+                ..
+            } | View::Cancelled {
+                kind: Kind::Save,
+                ..
+            }
+        )
+    {
+        return Err("Finish capture, saving, device setup and recovery before installing. Retry any cancelled or failed save.".into());
+    }
+    match snapshot {
+        Snapshot::Idle { .. } => Ok(()),
+        Snapshot::Stopped(session) | Snapshot::Failed(session)
+            if safe_session(session)
+                && session.archive.as_ref().is_some_and(|path| path.is_file()) =>
+        {
+            Ok(())
+        }
+        _ => Err("Stop capture and finish saving its archive before installing the update.".into()),
+    }
 }
 
 pub fn safe(snapshot: &Snapshot) -> bool {
@@ -475,18 +583,43 @@ pub fn reveal_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn open_release_page() -> Result<()> {
-    let url = "https://github.com/raymondctc/mobile-capture/releases";
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("/usr/bin/open").arg(url).spawn();
-    #[cfg(windows)]
-    let result = std::process::Command::new("rundll32.exe")
-        .args(["url.dll,FileProtocolHandler", url])
-        .spawn();
-    #[cfg(not(any(target_os = "macos", windows)))]
-    return Err("This desktop platform is not supported".into());
-    #[cfg(any(target_os = "macos", windows))]
-    result.map(|_| ()).map_err(|e| e.to_string())
+#[cfg(test)]
+pub fn test_desktop(root: &Path) -> State {
+    let tools = Toolchain {
+        adb: root.join("adb"),
+        worker: root.join("worker"),
+        guardian: root.join("guardian"),
+        mitmdump: root.join("mitmdump"),
+        addon: root.join("addon"),
+        source: ToolSource::Fixture,
+        target: toolchain::host_target().into(),
+    };
+    let preferences = Preferences::defaults(root.join("sessions"));
+    let runtime = root.join("runtime");
+    let owner = CaptureOwner::open(
+        CapturePaths {
+            output_root: preferences.output_root.clone(),
+            runtime_root: Some(runtime.clone()),
+        },
+        tools.selection(),
+        true,
+    )
+    .unwrap();
+    Arc::new(Desktop {
+        admission: Mutex::new(Admission::Running),
+        updates: Mutex::new(crate::updates::Updates::new()),
+        owner: Mutex::new(Ok(owner)),
+        reader: Mutex::new(None),
+        preferences: Mutex::new(preferences),
+        operations: Operations::new(),
+        base_tools: Ok(tools),
+        data: root.into(),
+        cache: root.join("cache"),
+        preferences_path: root.join("preferences.json"),
+        fixture: true,
+        runtime_root: Some(runtime),
+        pending_handoff: Mutex::new(None),
+    })
 }
 
 #[cfg(test)]
@@ -541,7 +674,8 @@ mod tests {
             true,
         );
         Arc::new(Desktop {
-            admission: Mutex::new(()),
+            admission: Mutex::new(Admission::Running),
+            updates: Mutex::new(crate::updates::Updates::new()),
             owner: Mutex::new(owner),
             reader: Mutex::new(None),
             preferences: Mutex::new(preferences),
@@ -553,9 +687,107 @@ mod tests {
             fixture: true,
             runtime_root: Some(runtime),
             pending_handoff: Mutex::new(None),
-            quitting: AtomicBool::new(false),
-            exit_ready: AtomicBool::new(false),
         })
+    }
+
+    fn session(archive: Option<PathBuf>) -> SessionView {
+        serde_json::from_value(serde_json::json!({"id":"fixture", "device":{"serial":"fixture", "name":"Fixture", "state":"ready"}, "directory":"fixture", "started_at":"2026-10-24T00:00:00Z", "limits":{"bytes":1000,"records":100,"duration_ms":1000}, "fixture":true,"bytes":0,"logs":0,"markers":0,"events":[],"receipt":null,"archive":archive,"warnings":[],"network":{"state":"not_selected"}})).unwrap()
+    }
+    #[test]
+    fn installation_requires_published_archive_and_completed_work() {
+        use crate::operations::{Kind, View};
+        let root = tempfile::tempdir().unwrap();
+        let archive = root.path().join("published.zip");
+        let idle = Snapshot::Idle {
+            fixture: true,
+            limits: Limits::default(),
+        };
+        assert!(install_ready(&idle, &View::Idle).is_ok());
+        for snapshot in [
+            Snapshot::Stopped(session(None)),
+            Snapshot::Failed(session(None)),
+            Snapshot::Stopped(session(Some(archive.clone()))),
+            Snapshot::Recording(session(None)),
+            Snapshot::RecoveryRequired(session(None)),
+            Snapshot::UnverifiedShutdown(session(None)),
+        ] {
+            assert!(install_ready(&snapshot, &View::Idle).is_err());
+        }
+        std::fs::write(&archive, b"published").unwrap();
+        for snapshot in [
+            Snapshot::Stopped(session(Some(archive.clone()))),
+            Snapshot::Failed(session(Some(archive.clone()))),
+        ] {
+            assert!(install_ready(&snapshot, &View::Idle).is_ok());
+            for operation in [
+                View::Cancelled {
+                    id: "save".into(),
+                    kind: Kind::Save,
+                    message: "cancelled".into(),
+                },
+                View::Failed {
+                    id: "save".into(),
+                    kind: Kind::Save,
+                    message: "failed".into(),
+                    recovery_required: false,
+                    directory: None,
+                },
+                View::Restoring {
+                    id: "setup".into(),
+                    kind: Kind::Certificate,
+                    message: "restoring".into(),
+                },
+                View::Saving {
+                    id: "save".into(),
+                    stage: "publishing".into(),
+                    completed: 0,
+                    total: None,
+                    cancel_allowed: false,
+                },
+            ] {
+                assert!(install_ready(&snapshot, &operation).is_err());
+            }
+        }
+    }
+    #[test]
+    fn queued_command_rechecks_lifecycle_and_external_dialog_excludes_install() {
+        let root = tempfile::tempdir().unwrap();
+        let desktop = test_desktop(root.path());
+        let mut dialog = desktop.accept().unwrap();
+        let (queued, received) = std::sync::mpsc::channel();
+        let (done, completed) = std::sync::mpsc::channel();
+        let other = desktop.clone();
+        let worker = std::thread::spawn(move || {
+            queued.send(()).unwrap();
+            done.send(other.reconnect().is_err()).unwrap();
+        });
+        received.recv().unwrap();
+        *dialog = Admission::Installing;
+        drop(dialog);
+        assert!(completed.recv().unwrap());
+        worker.join().unwrap();
+        *desktop.admission.lock().unwrap() = Admission::Running;
+        let dialog = desktop.accept().unwrap();
+        let (entered, waiting) = std::sync::mpsc::channel();
+        let (done, completed) = std::sync::mpsc::channel();
+        let other = desktop.clone();
+        let worker = std::thread::spawn(move || {
+            entered.send(()).unwrap();
+            let reservation = other.reserve_install().unwrap();
+            done.send(()).unwrap();
+            reservation
+                .finish(InstallationOutcome::RetryableFailure)
+                .unwrap();
+        });
+        waiting.recv().unwrap();
+        assert!(completed
+            .recv_timeout(std::time::Duration::from_millis(30))
+            .is_err());
+        drop(dialog);
+        completed.recv().unwrap();
+        worker.join().unwrap();
+        assert!(desktop.begin_quit().unwrap());
+        assert!(desktop.reserve_install().is_err());
     }
 
     #[test]
@@ -629,7 +861,7 @@ mod tests {
             assert!(!desktop.data.exists());
             assert!(!desktop.operations.busy().unwrap());
         }
-        desktop.quitting.store(true, Ordering::Release);
+        *desktop.admission.lock().unwrap() = Admission::Quitting;
         assert!(desktop.reconnect().unwrap_err().contains("Quit"));
     }
 
@@ -671,7 +903,8 @@ mod tests {
         std::fs::create_dir(&runtime).unwrap();
         std::fs::write(runtime.join("owner.lock"), prior.to_str().unwrap()).unwrap();
         let desktop = Desktop {
-            admission: Mutex::new(()),
+            admission: Mutex::new(Admission::Running),
+            updates: Mutex::new(crate::updates::Updates::new()),
             owner: Mutex::new(Err("Previous capture state is missing".into())),
             reader: Mutex::new(None),
             preferences: Mutex::new(Preferences::defaults(root.path().join("sessions"))),
@@ -691,8 +924,6 @@ mod tests {
             fixture: true,
             runtime_root: Some(runtime),
             pending_handoff: Mutex::new(None),
-            quitting: AtomicBool::new(false),
-            exit_ready: AtomicBool::new(false),
         };
         assert!(desktop.reconnect().is_err());
         assert!(desktop.owner.lock().unwrap().is_err());
@@ -707,7 +938,7 @@ mod tests {
             Snapshot::Idle { .. }
         ));
         assert!(desktop.owner.lock().unwrap().is_ok());
-        desktop.quitting.store(true, Ordering::Release);
+        *desktop.admission.lock().unwrap() = Admission::Quitting;
         assert!(desktop.reconnect().unwrap_err().contains("Quit"));
     }
 
@@ -727,7 +958,8 @@ mod tests {
         )
         .unwrap();
         let desktop = Desktop {
-            admission: Mutex::new(()),
+            admission: Mutex::new(Admission::Running),
+            updates: Mutex::new(crate::updates::Updates::new()),
             owner: Mutex::new(Err("Tools unavailable".into())),
             reader: Mutex::new(None),
             preferences: Mutex::new(Preferences::defaults(temporary.path().join("sessions"))),
@@ -739,8 +971,6 @@ mod tests {
             fixture: true,
             runtime_root: Some(temporary.path().join("runtime")),
             pending_handoff: Mutex::new(None),
-            quitting: AtomicBool::new(false),
-            exit_ready: AtomicBool::new(false),
         };
         assert_eq!(
             desktop.open_reader(evidence.clone()).unwrap().id,

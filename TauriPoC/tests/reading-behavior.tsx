@@ -15,6 +15,7 @@ import { Details } from "../src/Details";
 import { Timeline } from "../src/Timeline";
 import { OperationStatus } from "../src/Operation";
 import { Dialog } from "../src/ui";
+import { UpdateSettings, UpdateNotice } from "../src/Updates";
 import { Settings } from "../src/Settings";
 import { HandoffNotices } from "../src/Handoff";
 import { Library } from "../src/Library";
@@ -23,6 +24,8 @@ import { App } from "../src/main";
 import { api } from "../src/api";
 import { product } from "../src/product";
 import { initialDraft } from "../src/state";
+
+api.updateStatus = async () => ({ state: "unconfigured" });
 
 const limits = { bytes: 32000000, records: 100000, duration_ms: 120000 };
 const policy = {
@@ -958,10 +961,117 @@ async function checkModal() {
     "Modal DOM checks passed. Locked Close/Escape/outside dismissal, keyboard containment and focus restoration.",
   );
 }
+async function checkUpdates() {
+  const actions = [];
+  const controller = {
+    status: {
+      state: "available",
+      release: { version: "0.2.0", notes: "Capture fixes" },
+      error: null,
+    },
+    pending: false,
+    error: "",
+    act: async (action) => {
+      actions.push(action);
+    },
+  };
+  const mounted = render(<UpdateSettings controller={controller} />);
+  await user.click(screen.getByRole("button", { name: "Download update" }));
+  assert.deepEqual(actions, [{ kind: "download", version: "0.2.0" }]);
+  mounted.rerender(
+    <UpdateSettings
+      controller={{
+        ...controller,
+        status: {
+          ...controller.status,
+          state: "ready",
+          error: "Finish saving first",
+        },
+      }}
+    />,
+  );
+  assert.match(screen.getByRole("alert").textContent, /Finish saving/);
+  await user.click(screen.getByRole("button", { name: "Install and restart" }));
+  assert.deepEqual(actions[1], { kind: "install", version: "0.2.0" });
+  mounted.rerender(
+    <UpdateSettings
+      controller={{
+        ...controller,
+        status: {
+          ...controller.status,
+          state: "downloading",
+          received: 1024,
+          total: 2048,
+        },
+      }}
+    />,
+  );
+  assert.equal(screen.getByRole("progressbar").value, 1024);
+  assert.equal(screen.queryByRole("button"), null);
+  mounted.rerender(
+    <UpdateSettings
+      controller={{
+        ...controller,
+        status: {
+          ...controller.status,
+          state: "available",
+          error: "Invalid signature",
+        },
+      }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Retry download" }));
+  assert.equal(actions[2].kind, "download");
+  mounted.rerender(
+    <UpdateSettings
+      controller={{
+        ...controller,
+        status: { state: "error", message: "Offline" },
+      }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Retry update check" }));
+  assert.deepEqual(actions[3], { kind: "check" });
+  mounted.rerender(
+    <UpdateNotice controller={controller} openSettings={() => {}} />,
+  );
+  assert.ok(screen.getByLabelText("App update"));
+  await user.click(
+    screen.getByRole("button", { name: "Dismiss update notice" }),
+  );
+  assert.equal(screen.queryByLabelText("App update"), null);
+  const repair = {
+    ...controller,
+    status: {
+      state: "repair_required",
+      release: controller.status.release,
+      message: "Restore the original app from /fixture/backup.app",
+    },
+  };
+  mounted.rerender(
+    <UpdateNotice controller={repair} openSettings={() => {}} />,
+  );
+  assert.ok(screen.getByLabelText("App update"));
+  assert.equal(
+    screen.queryByRole("button", { name: "Dismiss update notice" }),
+    null,
+  );
+  mounted.rerender(<UpdateSettings controller={repair} />);
+  assert.match(screen.getByRole("alert").textContent, /backup.app/);
+  assert.equal(screen.queryByRole("button"), null);
+  cleanup();
+}
+
 async function checkSettingsHandoffs() {
   const saves: unknown[] = [];
   const props = {
     preferences,
+    updates: {
+      status: { state: "idle" },
+      pending: false,
+      error: "",
+      act: async () => {},
+    },
     save: async (value) => {
       saves.push(value);
     },
@@ -979,7 +1089,7 @@ async function checkSettingsHandoffs() {
   );
   assert.equal(
     screen.getByRole("button", { name: "Check for updates" }).disabled,
-    true,
+    false,
   );
   const override = screen.getByLabelText("ADB executable");
   await user.type(override, "relative-adb");
@@ -1068,7 +1178,7 @@ async function checkSettingsHandoffs() {
   assert.deepEqual(dismissed, [2]);
   cleanup();
   console.log(
-    "Settings and handoff DOM checks passed. Preference repair stays available, paths validate before explicit Save, updates stay idle-only, and retained launch links require an available Apply action.",
+    "Settings and handoff DOM checks passed. Preference repair stays available, paths validate before explicit Save, update checks remain available during capture, and retained launch links require an available Apply action.",
   );
 }
 async function checkViewPreservation() {
@@ -1102,6 +1212,12 @@ async function checkViewPreservation() {
   product.detail = async () => detail("one");
   product.detailChunk = async () => emptyChunk;
   render(<App />);
+  assert.equal(document.querySelector(".titlebar-drag"), null);
+  const toolbar = document.querySelector(".capture-toolbar");
+  assert.ok(toolbar?.hasAttribute("data-tauri-drag-region"));
+  for (const control of toolbar.querySelectorAll("button, input, select"))
+    assert.equal(control.hasAttribute("data-tauri-drag-region"), false);
+
   await waitFor(() =>
     assert.equal(
       screen.getByRole("button", { name: "Start recording" }).disabled,
@@ -1353,6 +1469,7 @@ async function checks() {
       timeline: checkTimeline,
       details: checkDetails,
       modal: checkModal,
+      updates: checkUpdates,
       settings: checkSettingsHandoffs,
       app: checkWholeApp,
     };

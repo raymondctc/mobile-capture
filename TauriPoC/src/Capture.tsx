@@ -191,7 +191,10 @@ export function Capture({
       className="shrink-0 border-b border-border bg-background"
       aria-label="Capture scope"
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-3 py-2">
+      <div
+        data-tauri-drag-region
+        className="capture-toolbar grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-3 py-2"
+      >
         <div className="flex min-w-0 flex-wrap items-end gap-2">
           <Badge
             variant="secondary"

@@ -9,7 +9,7 @@ use capture_poc_core::{
     preferences::Preferences,
     setup::{self, SetupIdentity},
 };
-use std::{path::PathBuf, sync::atomic::Ordering};
+use std::path::PathBuf;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -22,7 +22,8 @@ mod desktop;
 mod operations;
 mod reports;
 mod tools;
-use desktop::{Desktop, Handoff, State as DesktopState};
+mod updates;
+use desktop::{Admission, Desktop, Handoff, State as DesktopState};
 use operations::{Kind, View};
 
 async fn execute<T: Send + 'static>(
@@ -32,13 +33,6 @@ async fn execute<T: Send + 'static>(
     tauri::async_runtime::spawn_blocking(move || action(state))
         .await
         .map_err(|e| e.to_string())?
-}
-fn accepting(state: &DesktopState) -> Result<()> {
-    if state.quitting.load(Ordering::Acquire) {
-        Err("Quit is waiting for source shutdown, restoration, and saving".into())
-    } else {
-        Ok(())
-    }
 }
 #[tauri::command]
 async fn discover(state: tauri::State<'_, DesktopState>) -> Result<Vec<Device>> {
@@ -54,11 +48,7 @@ async fn applications(
 #[tauri::command]
 async fn start(state: tauri::State<'_, DesktopState>, request: StartRequest) -> Result<Snapshot> {
     execute(state.inner().clone(), move |s| {
-        let _admission = s
-            .admission
-            .lock()
-            .map_err(|_| "Operation admission failed")?;
-        accepting(&s)?;
+        let _admission = s.accept()?;
         if s.operations.busy()? {
             return Err("Finish or recover the current operation first".into());
         }
@@ -81,7 +71,7 @@ async fn reconnect(state: tauri::State<'_, DesktopState>) -> Result<Snapshot> {
 #[tauri::command]
 async fn marker(state: tauri::State<'_, DesktopState>, text: String) -> Result<Snapshot> {
     execute(state.inner().clone(), move |s| {
-        accepting(&s)?;
+        let _admission = s.accept()?;
         if s.operations.busy()? {
             return Err("Finish the current operation first".into());
         }
@@ -92,10 +82,7 @@ async fn marker(state: tauri::State<'_, DesktopState>, text: String) -> Result<S
 #[tauri::command]
 async fn stop(state: tauri::State<'_, DesktopState>) -> Result<Snapshot> {
     execute(state.inner().clone(), |s| {
-        let _admission = s
-            .admission
-            .lock()
-            .map_err(|_| "Operation admission failed")?;
+        let _admission = s.accept()?;
         if s.operations.busy()? {
             return Err(
                 "The current operation owns shutdown. Use its Finish or recovery action.".into(),
@@ -111,10 +98,7 @@ async fn stop(state: tauri::State<'_, DesktopState>) -> Result<Snapshot> {
 #[tauri::command]
 async fn recover(state: tauri::State<'_, DesktopState>) -> Result<Snapshot> {
     execute(state.inner().clone(), |s| {
-        let _admission = s
-            .admission
-            .lock()
-            .map_err(|_| "Operation admission failed")?;
+        let _admission = s.accept()?;
         let allowed = matches!(
             s.operations.view()?,
             View::Idle
@@ -247,7 +231,6 @@ async fn save_preferences(
     preferences: Preferences,
 ) -> Result<Preferences> {
     execute(state.inner().clone(), move |s| {
-        accepting(&s)?;
         s.save_preferences(preferences)
     })
     .await
@@ -258,6 +241,7 @@ async fn doctor(
     sources: DoctorSources,
 ) -> Result<DoctorReport> {
     execute(state.inner().clone(), move |s| {
+        let _admission = s.accept()?;
         Ok(match s.tools() {
             Ok(tools) => host_doctor::run(&DoctorRequest {
                 tools,
@@ -290,7 +274,6 @@ async fn begin_save(
     directory: Option<PathBuf>,
 ) -> Result<View> {
     execute(state.inner().clone(), move |s| {
-        accepting(&s)?;
         operations::begin_save(s, directory)
     })
     .await
@@ -298,7 +281,6 @@ async fn begin_save(
 #[tauri::command]
 async fn begin_certificate(state: tauri::State<'_, DesktopState>, serial: String) -> Result<View> {
     execute(state.inner().clone(), move |s| {
-        accepting(&s)?;
         operations::begin_setup(s, serial, Kind::Certificate)
     })
     .await
@@ -309,7 +291,6 @@ async fn begin_connection_check(
     serial: String,
 ) -> Result<View> {
     execute(state.inner().clone(), move |s| {
-        accepting(&s)?;
         operations::begin_setup(s, serial, Kind::ConnectionCheck)
     })
     .await
@@ -332,7 +313,11 @@ async fn confirm_check_origin(
 }
 #[tauri::command]
 async fn open_check_on_phone(state: tauri::State<'_, DesktopState>, id: String) -> Result<()> {
-    execute(state.inner().clone(), move |s| s.operations.open_phone(&id)).await
+    execute(state.inner().clone(), move |s| {
+        let _admission = s.accept()?;
+        s.operations.open_phone(&id)
+    })
+    .await
 }
 #[tauri::command]
 async fn retry_setup_recovery(state: tauri::State<'_, DesktopState>, id: String) -> Result<View> {
@@ -395,6 +380,7 @@ async fn copy_archive(
 ) -> Result<Option<PathBuf>> {
     let state = state.inner().clone();
     execute(state, move |s| {
+        let _admission = s.accept()?;
         let source =
             s.with_reader(|reader| Ok(reader.descriptor().directory.join("capture-package.zip")))?;
         let Some(destination) = app
@@ -417,6 +403,7 @@ async fn export_readiness_report(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<Option<PathBuf>> {
     execute(state.inner().clone(), move |s| {
+        let admission = s.accept()?;
         let Some(destination) = app
             .dialog()
             .file()
@@ -426,20 +413,12 @@ async fn export_readiness_report(
         else {
             return Ok(None);
         };
-        reports::export(&s, &destination.into_path().map_err(|e| e.to_string())?).map(Some)
-    })
-    .await
-}
-#[tauri::command]
-async fn open_updates(state: tauri::State<'_, DesktopState>) -> Result<()> {
-    execute(state.inner().clone(), |s| {
-        let _admission = s
-            .admission
-            .lock()
-            .map_err(|_| "Operation admission failed")?;
-        accepting(&s)?;
-        s.ensure_idle()?;
-        desktop::open_release_page()
+        reports::export(
+            &s,
+            &admission,
+            &destination.into_path().map_err(|e| e.to_string())?,
+        )
+        .map(Some)
     })
     .await
 }
@@ -454,12 +433,19 @@ fn quit(app: &tauri::AppHandle) {
     let Some(state) = app.try_state::<DesktopState>() else {
         return;
     };
-    if state.quitting.swap(true, Ordering::AcqRel) {
-        return;
-    }
     let state = state.inner().clone();
     let app = app.clone();
     std::thread::spawn(move || {
+        if !matches!(state.begin_quit(), Ok(true)) {
+            if state
+                .admission
+                .lock()
+                .is_ok_and(|admission| admission.exit_authorized())
+            {
+                app.exit(0);
+            }
+            return;
+        }
         let result = (|| -> Result<()> {
             loop {
                 match state.operations.view()? {
@@ -506,7 +492,7 @@ fn quit(app: &tauri::AppHandle) {
                 }
                 _ => (),
             }
-            operations::begin_save(state.clone(), None)?;
+            operations::begin_quit_save(state.clone())?;
             loop {
                 match state.operations.view()? {
                     View::Finished { .. } => return Ok(()),
@@ -520,11 +506,15 @@ fn quit(app: &tauri::AppHandle) {
         })();
         match result {
             Ok(()) => {
-                state.exit_ready.store(true, Ordering::Release);
+                if let Ok(mut admission) = state.admission.lock() {
+                    *admission = Admission::ExitAuthorized;
+                }
                 app.exit(0);
             }
             Err(error) => {
-                state.quitting.store(false, Ordering::Release);
+                if let Ok(mut admission) = state.admission.lock() {
+                    *admission = Admission::Running;
+                }
                 if let Ok(mut pending) = state.pending_handoff.lock() {
                     *pending = Some(Handoff {
                         device: None,
@@ -553,6 +543,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state = Desktop::open(app.handle()).map_err(std::io::Error::other)?;
             if let Some(urls) = app.deep_link().get_current()? {
@@ -568,6 +559,7 @@ pub fn run() {
                 }
                 show(&handle);
             });
+            updates::startup(app.handle().clone(), state.clone());
             app.manage(state);
             let open = MenuItem::with_id(
                 app,
@@ -625,7 +617,10 @@ pub fn run() {
             reveal,
             copy_archive,
             export_readiness_report,
-            open_updates
+            updates::status,
+            updates::check,
+            updates::download,
+            updates::install
         ])
         .build(tauri::generate_context!())
         .expect("Cannot build Mobile Capture Android")
@@ -640,10 +635,14 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            tauri::RunEvent::ExitRequested {
+                code: Some(tauri::RESTART_EXIT_CODE),
+                ..
+            } => (),
             tauri::RunEvent::ExitRequested { api, .. }
                 if app
                     .try_state::<DesktopState>()
-                    .is_none_or(|s| !s.exit_ready.load(Ordering::Acquire)) =>
+                    .is_none_or(|s| !s.admission.try_lock().is_ok_and(|a| a.exit_authorized())) =>
             {
                 api.prevent_exit();
                 quit(app);

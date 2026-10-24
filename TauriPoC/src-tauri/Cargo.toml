@@ -5,10 +5,12 @@ edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "=2.14.0"
 tauri-plugin-single-instance = "2"
 tauri-plugin-deep-link = "2"
 capture-poc-core = { path = "../capture-core" }

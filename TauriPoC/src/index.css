@@ -140,3 +140,11 @@ details:not([open]) > :not(summary) {
     transition-duration: 0.01ms !important;
   }
 }
+
+.app-shell[data-platform="macos"] .workspace-rail {
+  padding-top: 52px;
+}
+
+.app-shell[data-platform="macos"] .capture-toolbar {
+  padding-left: 52px;
+}
