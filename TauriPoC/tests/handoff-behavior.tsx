@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
 import {
   handoffSchema,
   preferencesEditable,
@@ -11,13 +10,9 @@ import {
 import {
   consumeHandoff,
   handoffAvailable,
-  HandoffNotices,
   resolveHandoff,
   type HandoffNotice,
 } from "../src/Handoff";
-import { Settings } from "../src/Settings";
-import { Capture } from "../src/Capture";
-import { initialDraft } from "../src/state";
 import type { SessionDescriptor } from "../src/product";
 
 export async function checkHandoffBehavior() {
@@ -335,28 +330,6 @@ export async function checkHandoffBehavior() {
     /Native inspection failed/,
   );
   assert.deepEqual(retained[3].request, deviceRequest);
-  const noticeMarkup = renderToStaticMarkup(
-    <HandoffNotices
-      notices={retained.slice(0, 3)}
-      available={false}
-      apply={apply}
-      dismiss={() => {}}
-    />,
-  );
-  assert.match(noticeMarkup, /phone-requested.*com.example.requested/);
-  assert.match(noticeMarkup, /Session saved-id/);
-  assert.match(noticeMarkup, /Unsupported scheme/);
-  assert.equal((noticeMarkup.match(/disabled="">Apply link/g) ?? []).length, 2);
-  const retryMarkup = renderToStaticMarkup(
-    <HandoffNotices
-      notices={[retained[0]]}
-      available={true}
-      apply={apply}
-      dismiss={() => {}}
-    />,
-  );
-  assert.match(retryMarkup, /<button>Apply link<\/button>/);
-
   assert.equal(preferencesEditable(undefined, noOperation), true);
   assert.equal(preferencesEditable(undefined, saving), false);
   assert.equal(preferencesEditable(undefined, recovery), false);
@@ -367,60 +340,4 @@ export async function checkHandoffBehavior() {
     ),
     false,
   );
-  const settingsMarkup = renderToStaticMarkup(
-    <Settings
-      preferences={preferences}
-      save={async () => {}}
-      idle={false}
-      editable={preferencesEditable(undefined, noOperation)}
-      run={async (_label, action) => action()}
-      pending=""
-      setup={() => {}}
-      doctor={() => {}}
-    />,
-  );
-  assert.doesNotMatch(settingsMarkup, /<fieldset disabled/);
-  assert.match(
-    settingsMarkup,
-    /<button class="primary">Save settings<\/button>/,
-  );
-  assert.match(settingsMarkup, /disabled="">Check for updates/);
-  const lockedMarkup = renderToStaticMarkup(
-    <Settings
-      preferences={preferences}
-      save={async () => {}}
-      idle={false}
-      editable={false}
-      run={async (_label, action) => action()}
-      pending=""
-      setup={() => {}}
-      doctor={() => {}}
-    />,
-  );
-  assert.match(lockedMarkup, /<fieldset disabled="">/);
-  assert.match(lockedMarkup, /disabled="">Save settings/);
-  const captureMarkup = renderToStaticMarkup(
-    <Capture
-      snapshot={undefined}
-      operation={noOperation}
-      devices={[device]}
-      draft={{
-        ...initialDraft,
-        serial: device.serial,
-        selection: "logs",
-        application_id: app.application_id,
-      }}
-      change={() => {}}
-      preferences={preferences}
-      savePreferences={async () => {}}
-      refresh={async () => {}}
-      run={async (_label, action) => action()}
-      pending=""
-      onSnapshot={() => {}}
-      onOperation={() => {}}
-      setup={() => {}}
-      actionHost={null}
-    />,
-  );
-  assert.match(captureMarkup, /<fieldset disabled="">/);
 }

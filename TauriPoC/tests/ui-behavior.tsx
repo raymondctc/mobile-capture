@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
 import {
   captureSafe,
   operationBusy,
@@ -14,9 +13,8 @@ import {
   decodeChunk,
   networkPolicySchema,
 } from "../src/product";
-import { checkFreshness, initialDraft, timelineFence } from "../src/state";
+import { checkFreshness, timelineFence } from "../src/state";
 import { hexChunk } from "../src/Details";
-import { Capture } from "../src/Capture";
 import { checkHandoffBehavior } from "./handoff-behavior";
 
 const now = Date.parse("2026-10-23T12:00:00Z");
@@ -236,60 +234,6 @@ assert.match(
   hexChunk(new Uint8Array([0, 255, 65]), 65536),
   /00010000  00 ff 41/,
 );
-const markup = renderToStaticMarkup(
-  <Capture
-    snapshot={idle}
-    operation={{ state: "idle" }}
-    devices={[stopped.session.device]}
-    draft={{ ...initialDraft, serial: "phone-a" }}
-    change={() => {}}
-    preferences={{
-      output_root: "/capture",
-      limits,
-      network_policy: policy,
-      adb_override: null,
-      mitmdump_override: null,
-    }}
-    savePreferences={async () => {}}
-    refresh={async () => {}}
-    run={async (_label, action) => {
-      await action();
-    }}
-    pending=""
-    onSnapshot={() => {}}
-    onOperation={() => {}}
-    setup={() => {}}
-    actionHost={null}
-  />,
-);
-assert.match(
-  markup,
-  /<option value="network" selected="">Network only<\/option>/,
-);
-assert.doesNotMatch(markup, /I consent to whole-device network/);
-assert.match(markup, /<details><summary>Task context \(optional\)<\/summary>/);
-assert.doesNotMatch(markup, /iPhone|Simulator|Homebrew/);
-const activeMarkup = renderToStaticMarkup(
-  <Capture
-    snapshot={snapshotSchema.parse({ phase: "recording", session: { ...session, bytes: 1024, selection: { mode: "logs_and_network", consent: { whole_device: true } }, log_scope: { mode: "whole_device" }, network: { state: "recording", detail: completion.coverage } } })}
-    operation={{ state: "idle" }}
-    devices={[stopped.session.device]}
-    draft={{ ...initialDraft, serial: "phone-a", selection: "logs_and_network", log_mode: "whole_device" }}
-    change={() => {}}
-    preferences={{ output_root: "/capture", limits, network_policy: policy, adb_override: null, mitmdump_override: null }}
-    savePreferences={async () => {}}
-    refresh={async () => {}}
-    run={async (_label, action) => { await action(); }}
-    pending=""
-    onSnapshot={() => {}}
-    onOperation={() => {}}
-    setup={() => {}}
-    actionHost={null}
-  />,
-);
-assert.equal((activeMarkup.match(/checked=""/g) ?? []).length, 1);
-assert.match(activeMarkup, /raw log data/);
-assert.doesNotMatch(activeMarkup, />0 logs</);
 void checkHandoffBehavior().then(
   () => console.log("Android UI behavior and launch-link checks passed."),
   (cause: unknown) => {

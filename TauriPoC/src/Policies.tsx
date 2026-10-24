@@ -10,9 +10,12 @@ export function Policies({
   disabled?: boolean;
 }) {
   return (
-    <div className="policy-fields">
-      <fieldset disabled={disabled}>
-        <legend>Log limits</legend>
+    <div className="grid gap-4 sm:grid-cols-2">
+      <fieldset
+        className="space-y-3 rounded-lg border border-border p-3"
+        disabled={disabled}
+      >
+        <legend className="px-1 text-sm font-medium">Log limits</legend>
         <NumberField
           label="Maximum MB"
           value={value.limits.bytes}
@@ -43,8 +46,11 @@ export function Policies({
           }
         />
       </fieldset>
-      <fieldset disabled={disabled}>
-        <legend>Network limits</legend>
+      <fieldset
+        className="space-y-3 rounded-lg border border-border p-3"
+        disabled={disabled}
+      >
+        <legend className="px-1 text-sm font-medium">Network limits</legend>
         <NumberField
           label="Maximum flows"
           value={value.network_policy.max_flows}
@@ -110,7 +116,7 @@ export function Policies({
           }
         />
       </fieldset>
-      <p className="hint">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         Limits bound what is collected. Reaching a log limit does not stop
         network capture. When network admission closes, forwarding continues
         until you stop and restore routing.

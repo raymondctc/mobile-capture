@@ -1,3 +1,4 @@
+import { Button } from "./components/ui/button";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -28,7 +29,9 @@ import {
   type HandoffNotice,
 } from "./Handoff";
 import { Dialog } from "./ui";
-import "./style.css";
+import "./index.css";
+import appIcon from "./assets/app-icon.png";
+import { Badge } from "./components/ui/badge";
 
 type Panel = "setup" | "doctor" | "settings" | null;
 const phaseNames: Record<Snapshot["phase"], string> = {
@@ -39,7 +42,7 @@ const phaseNames: Record<Snapshot["phase"], string> = {
   unverified_shutdown: "Shutdown needs verification",
   recovery_required: "Device routing needs recovery",
 };
-function App() {
+export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [operation, setOperation] = useState<Operation>({ state: "idle" });
   const [preferences, setPreferences] = useState<Preferences>();
@@ -383,7 +386,10 @@ function App() {
   const launchNotices = (
     <>
       {handoffError && (
-        <p className="notice" role="alert">
+        <p
+          className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+          role="alert"
+        >
           Android launch links could not be checked. {handoffError}
         </p>
       )}
@@ -408,42 +414,104 @@ function App() {
     </>
   );
   return (
-    <div className="app">
-      <header className="app-header">
-        <div className="workspace-brand">
-          <div className="eyebrow">ANDROID EVIDENCE WORKSPACE</div>
-          <h1>
-            Mobile Capture <span>Android</span>
-          </h1>
+    <div className="flex h-dvh min-h-0 flex-col gap-2 overflow-y-auto bg-background text-foreground">
+      <header className="sticky top-0 z-40 grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 border-b border-border bg-background px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <img src={appIcon} alt="" className="size-8 shrink-0 rounded-lg" />
+            <h1 className="min-w-0 text-xl font-semibold tracking-tight sm:text-[22px]">
+              Mobile Capture{" "}
+              <span className="text-sm font-normal text-muted-foreground">
+                Android
+              </span>
+            </h1>
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <Badge
+              variant="secondary"
+              className="h-auto max-w-full gap-1.5 whitespace-normal py-1 text-xs"
+              role="status"
+            >
+              <span
+                className={`size-1.5 shrink-0 rounded-full ${snapshot?.phase === "recording" ? "bg-[#156b58]" : "bg-muted-foreground"}`}
+              />
+              {pending ||
+                (snapshot
+                  ? phaseNames[snapshot.phase]
+                  : "Connecting to capture service…")}
+            </Badge>
+            <nav
+              aria-label="Workspace tools"
+              className="hidden flex-wrap gap-1 min-[1050px]:flex"
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={setupLocked && panel !== "setup"}
+                onClick={() => setPanel("setup")}
+              >
+                Device setup
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={setupLocked}
+                onClick={() => setPanel("doctor")}
+              >
+                Doctor
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={setupLocked}
+                onClick={() => setPanel("settings")}
+              >
+                Settings
+              </Button>
+            </nav>
+            <details className="relative min-[1050px]:hidden">
+              <summary className="cursor-pointer rounded-md px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-ring">
+                Tools
+              </summary>
+              <nav
+                aria-label="Compact workspace tools"
+                className="absolute top-full left-0 z-30 mt-1 grid min-w-40 gap-1 rounded-lg border border-border bg-white p-2 shadow-sm"
+              >
+                <Button
+                  variant="ghost"
+                  disabled={setupLocked && panel !== "setup"}
+                  onClick={() => setPanel("setup")}
+                >
+                  Device setup
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={setupLocked}
+                  onClick={() => setPanel("doctor")}
+                >
+                  Doctor
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={setupLocked}
+                  onClick={() => setPanel("settings")}
+                >
+                  Settings
+                </Button>
+              </nav>
+            </details>
+          </div>
         </div>
         <div
-          className={`phase ${snapshot?.phase === "recording" ? "live" : ""}`}
-          role="status"
-        >
-          <i />
-          {pending ||
-            (snapshot
-              ? phaseNames[snapshot.phase]
-              : "Connecting to capture service…")}
-        </div>
-        <div className="recording-action-host" ref={setActionHost} />
-        <nav aria-label="Workspace tools">
-          <button
-            disabled={setupLocked && panel !== "setup"}
-            onClick={() => setPanel("setup")}
-          >
-            Device setup
-          </button>
-          <button disabled={setupLocked} onClick={() => setPanel("doctor")}>
-            Doctor
-          </button>
-          <button disabled={setupLocked} onClick={() => setPanel("settings")}>
-            Settings
-          </button>
-        </nav>
+          className="contents sm:block sm:min-w-0 sm:w-[min(42vw,440px)]"
+          ref={setActionHost}
+        />
       </header>
       {snapshot?.session.fixture && (
-        <div className="fixture" role="status">
+        <div
+          className="mx-4 flex flex-wrap gap-2 rounded-md border border-border bg-white px-3 py-2 text-xs text-muted-foreground"
+          role="status"
+        >
           <strong>Fixture mode</strong>
           <span>
             This launcher uses a simulated Android device. It does not prove
@@ -452,7 +520,10 @@ function App() {
         </div>
       )}
       {(error || connection) && (
-        <div className="error global-error" role="alert">
+        <div
+          className="mx-4 flex shrink-0 flex-wrap items-start justify-between gap-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          role="alert"
+        >
           <div>
             <strong>
               {connection
@@ -461,7 +532,7 @@ function App() {
             </strong>
             <p>{error || connection}</p>
           </div>
-          <button
+          <Button
             disabled={!!pending || operationBusy(operation)}
             onClick={() =>
               void run("Reconnecting", async () => {
@@ -480,7 +551,7 @@ function App() {
             }
           >
             Retry connection
-          </button>
+          </Button>
         </div>
       )}
       <OperationStatus
@@ -491,7 +562,7 @@ function App() {
         recover={recoverSave}
       />
       {!panel && launchNotices}
-      <div className="layout">
+      <div className="flex flex-1 flex-col px-3 pb-3 sm:px-4">
         <Capture
           snapshot={snapshot}
           operation={operation}
@@ -508,7 +579,7 @@ function App() {
           setup={() => setPanel("setup")}
           actionHost={actionHost}
         />
-        <main>
+        <main className="flex flex-1 flex-col rounded-b-lg border border-t-0 border-border bg-white">
           <Library
             inspected={inspected}
             open={open}
@@ -523,12 +594,6 @@ function App() {
           <Timeline inspected={inspected} />
         </main>
       </div>
-      <footer>
-        <span>
-          Evidence stays on this computer until you choose to share it.
-        </span>
-        <span>Android · macOS and Windows</span>
-      </footer>
       {panel && (
         <Dialog
           title={
@@ -543,7 +608,10 @@ function App() {
         >
           {launchNotices}
           {(error || connection) && (
-            <p className="error" role="alert">
+            <p
+              className="rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive select-text"
+              role="alert"
+            >
               {error || connection}
             </p>
           )}

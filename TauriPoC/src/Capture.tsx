@@ -1,3 +1,15 @@
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./components/ui/collapsible";
+import { Badge } from "./components/ui/badge";
+import { Checkbox } from "./components/ui/checkbox";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Textarea } from "./components/ui/textarea";
+import { Label } from "./components/ui/label";
+import { NativeSelect } from "./components/ui/native-select";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -118,279 +130,388 @@ export function Capture({
     onSnapshot(await api.start(request));
     setLogConsent(false);
   }
+  const needsScope =
+    !active &&
+    (!device ||
+      device.state !== "ready" ||
+      !preferences ||
+      !contextValidation.success ||
+      (hasLogs && (draft.log_mode === "app" ? !appValid : !logConsent)));
+  const [editingScope, setEditingScope] = useState(!draft.serial);
+  const scopeSession = active ? session : undefined;
+  const scopeMode = scopeSession?.selection.mode ?? draft.selection;
+  const scopeLog = scopeSession?.log_scope.mode ?? draft.log_mode;
+  const scopeApp =
+    scopeSession?.log_scope.mode === "app"
+      ? scopeSession.log_scope.application_id
+      : draft.application_id;
+  const noticeNetwork = active
+    ? session?.selection.mode !== "logs"
+    : hasNetwork;
   return (
-    <aside className="capture-sidebar">
-      <section>
-        <div className="section-heading">
-          <h2>Android device</h2>
-          <button
-            className="text"
-            disabled={!!pending || active || operationBusy(operation)}
-            onClick={() => void run("Refreshing devices", refresh)}
-          >
-            Refresh
-          </button>
-        </div>
-        <label htmlFor="capture-device">Capture on</label>
-        <select
-          id="capture-device"
-          value={draft.serial}
-          disabled={active || operationBusy(operation) || !!pending}
-          onChange={(event) =>
-            change({ ...draft, serial: event.target.value, application_id: "" })
-          }
-        >
-          <option value="">Select a device</option>
-          {draft.serial && !device && (
-            <option value={draft.serial}>{draft.serial} · unavailable</option>
+    <section
+      className="shrink-0 rounded-t-lg border border-border bg-white"
+      aria-label="Capture scope"
+    >
+      <Collapsible open={editingScope} onOpenChange={setEditingScope}>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2">
+          <div className="min-w-0 text-sm">
+            <span className="mr-2 text-xs text-muted-foreground">Device</span>
+            <span className="font-medium">
+              {scopeSession?.device.name ?? device?.name ?? "Choose device"}
+            </span>
+          </div>
+          <div className="text-sm">
+            <span className="mr-2 text-xs text-muted-foreground">Sources</span>
+            {scopeMode === "network"
+              ? "Network"
+              : scopeMode === "logs"
+                ? "Logs"
+                : "Logs + network"}
+          </div>
+          {scopeMode !== "network" && (
+            <div className="min-w-0 break-all text-sm">
+              <span className="mr-2 text-xs text-muted-foreground">Logs</span>
+              {scopeLog === "whole_device"
+                ? "Whole device"
+                : scopeApp || "Choose app"}
+            </div>
           )}
-          {devices.map((item) => (
-            <option key={item.serial} value={item.serial}>
-              {item.name} · {item.state}
-            </option>
-          ))}
-        </select>
-        <p className="mono muted">
-          {draft.serial || "Connect USB and enable USB debugging."}
-        </p>
-        {draft.serial && device?.state !== "ready" && (
-          <p className="notice">
-            The selected device is {device?.state ?? "unavailable"}. Unlock it,
-            approve USB debugging, reconnect, and refresh. Choose a different
-            device explicitly if needed.
-          </p>
-        )}
-        <button className="text" onClick={setup}>
-          Open device setup
-        </button>
-      </section>
-      <section>
-        <h2>Sources and scope</h2>
-        <fieldset disabled={blocked}>
-          <legend className="sr-only">Capture sources</legend>
-          <label>
-            Sources
-            <select
-              value={draft.selection}
-              onChange={(event) => {
-                const value = event.target.value;
-                if (
-                  value === "logs" ||
-                  value === "network" ||
-                  value === "logs_and_network"
-                ) {
-                  change({ ...draft, selection: value });
-                  setLogConsent(false);
-                }
-              }}
-            >
-              <option value="network">Network only</option>
-              <option value="logs">Logs only</option>
-              <option value="logs_and_network">Logs and network</option>
-            </select>
-          </label>
-          {hasLogs && (
-            <>
-              <label>
-                Log scope
-                <select
-                  value={draft.log_mode}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    if (value === "app" || value === "whole_device") {
-                      change({ ...draft, log_mode: value });
-                      setLogConsent(false);
-                    }
-                  }}
+          <Badge variant="secondary" className="text-xs">
+            {active
+              ? "Recording scope"
+              : canStart
+                ? "Ready"
+                : needsScope
+                  ? "Complete capture scope"
+                  : "Capture unavailable"}
+          </Badge>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="ml-auto">
+              {editingScope ? "Hide capture scope" : "Edit capture scope"}
+            </Button>
+          </CollapsibleTrigger>
+        </div>
+        <CollapsibleContent className="max-h-[42vh] overflow-y-auto overscroll-contain border-t border-border px-4 py-3">
+          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_minmax(0,1fr)]">
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2>Android device</h2>
+                <Button
+                  variant="ghost"
+                  disabled={!!pending || active || operationBusy(operation)}
+                  onClick={() => void run("Refreshing devices", refresh)}
                 >
-                  <option value="app">Selected app</option>
-                  <option value="whole_device">Whole device</option>
-                </select>
-              </label>
-              {draft.log_mode === "app" ? (
-                <>
-                  <div className="section-heading">
-                    <label htmlFor="app-search">Installed apps</label>
-                    <button
-                      className="text"
-                      disabled={device?.state !== "ready"}
-                      onClick={() =>
-                        void run("Refreshing installed apps", refreshApps)
+                  Refresh
+                </Button>
+              </div>
+              <Label htmlFor="capture-device">Capture on</Label>
+              <NativeSelect
+                id="capture-device"
+                value={draft.serial}
+                disabled={active || operationBusy(operation) || !!pending}
+                onChange={(event) =>
+                  change({
+                    ...draft,
+                    serial: event.target.value,
+                    application_id: "",
+                  })
+                }
+              >
+                <option value="">Select a device</option>
+                {draft.serial && !device && (
+                  <option value={draft.serial}>
+                    {draft.serial} · unavailable
+                  </option>
+                )}
+                {devices.map((item) => (
+                  <option key={item.serial} value={item.serial}>
+                    {item.name} · {item.state}
+                  </option>
+                ))}
+              </NativeSelect>
+              <p className="font-mono select-text break-all text-xs text-muted-foreground">
+                {draft.serial || "Connect USB and enable USB debugging."}
+              </p>
+              {draft.serial && device?.state !== "ready" && (
+                <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+                  The selected device is {device?.state ?? "unavailable"}.
+                  Unlock it, approve USB debugging, reconnect, and refresh.
+                  Choose a different device explicitly if needed.
+                </p>
+              )}
+              <Button variant="ghost" onClick={setup}>
+                Open device setup
+              </Button>
+            </section>
+            <section className="space-y-3">
+              <h2>Sources and scope</h2>
+              <fieldset
+                className="space-y-3 rounded-lg border border-border p-3"
+                disabled={blocked}
+              >
+                <legend className="sr-only">Capture sources</legend>
+                <Label>
+                  Sources
+                  <NativeSelect
+                    value={draft.selection}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (
+                        value === "logs" ||
+                        value === "network" ||
+                        value === "logs_and_network"
+                      ) {
+                        change({ ...draft, selection: value });
+                        setLogConsent(false);
                       }
-                    >
-                      Refresh apps
-                    </button>
-                  </div>
-                  <input
-                    id="app-search"
-                    type="search"
-                    placeholder="Find installed apps"
-                    value={appSearch}
-                    onChange={(event) => setAppSearch(event.target.value)}
-                  />
-                  <select
-                    aria-label="Installed app"
-                    value={selectedApp ? draft.application_id : ""}
-                    onChange={(event) =>
-                      change({ ...draft, application_id: event.target.value })
-                    }
+                    }}
                   >
-                    <option value="">Select an installed app</option>
-                    {apps
-                      .filter((app) =>
-                        `${app.label} ${app.application_id}`
-                          .toLocaleLowerCase()
-                          .includes(appSearch.toLocaleLowerCase()),
-                      )
-                      .map((app) => (
-                        <option
-                          key={`${app.application_id}:${app.user_id}`}
-                          value={app.application_id}
-                          disabled={app.shared_uid}
+                    <option value="network">Network only</option>
+                    <option value="logs">Logs only</option>
+                    <option value="logs_and_network">Logs and network</option>
+                  </NativeSelect>
+                </Label>
+                {hasLogs && (
+                  <>
+                    <Label>
+                      Log scope
+                      <NativeSelect
+                        value={draft.log_mode}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          if (value === "app" || value === "whole_device") {
+                            change({ ...draft, log_mode: value });
+                            setLogConsent(false);
+                          }
+                        }}
+                      >
+                        <option value="app">Selected app</option>
+                        <option value="whole_device">Whole device</option>
+                      </NativeSelect>
+                    </Label>
+                    {draft.log_mode === "app" ? (
+                      <>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <Label htmlFor="app-search">Installed apps</Label>
+                          <Button
+                            variant="ghost"
+                            disabled={device?.state !== "ready"}
+                            onClick={() =>
+                              void run("Refreshing installed apps", refreshApps)
+                            }
+                          >
+                            Refresh apps
+                          </Button>
+                        </div>
+                        <Input
+                          id="app-search"
+                          type="search"
+                          placeholder="Find installed apps"
+                          value={appSearch}
+                          onChange={(event) => setAppSearch(event.target.value)}
+                        />
+                        <NativeSelect
+                          aria-label="Installed app"
+                          value={selectedApp ? draft.application_id : ""}
+                          onChange={(event) =>
+                            change({
+                              ...draft,
+                              application_id: event.target.value,
+                            })
+                          }
                         >
-                          {app.label} · {app.application_id}
-                          {app.shared_uid ? " · shared UID, unavailable" : ""}
-                        </option>
-                      ))}
-                  </select>
-                  <p className="hint" role="status">
-                    {appState ||
-                      "Refresh to read installed apps. Shared UID apps cannot be isolated."}
-                  </p>
-                  <label>
-                    Or enter an application ID
-                    <input
-                      value={draft.application_id}
-                      placeholder="com.example.app"
+                          <option value="">Select an installed app</option>
+                          {apps
+                            .filter((app) =>
+                              `${app.label} ${app.application_id}`
+                                .toLocaleLowerCase()
+                                .includes(appSearch.toLocaleLowerCase()),
+                            )
+                            .map((app) => (
+                              <option
+                                key={`${app.application_id}:${app.user_id}`}
+                                value={app.application_id}
+                                disabled={app.shared_uid}
+                              >
+                                {app.label} · {app.application_id}
+                                {app.shared_uid
+                                  ? " · shared UID, unavailable"
+                                  : ""}
+                              </option>
+                            ))}
+                        </NativeSelect>
+                        <p
+                          className="text-xs leading-relaxed text-muted-foreground"
+                          role="status"
+                        >
+                          {appState ||
+                            "Refresh to read installed apps. Shared UID apps cannot be isolated."}
+                        </p>
+                        <Label>
+                          Or enter an application ID
+                          <Input
+                            value={draft.application_id}
+                            placeholder="com.example.app"
+                            onChange={(event) =>
+                              change({
+                                ...draft,
+                                application_id: event.target.value.trim(),
+                              })
+                            }
+                          />
+                        </Label>
+                        {selectedApp?.shared_uid && (
+                          <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+                            This app shares its UID. Select another app or
+                            explicitly choose whole-device logs.
+                          </p>
+                        )}
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          The app identity is checked before collecting logs. A
+                          missing or changed identity stops app log collection.
+                        </p>
+                      </>
+                    ) : (
+                      <Label className="flex items-start gap-2 rounded-md border border-border bg-muted/35 p-3 text-sm leading-relaxed">
+                        <Checkbox
+                          checked={
+                            active
+                              ? session?.log_scope.mode === "whole_device"
+                              : logConsent
+                          }
+                          onCheckedChange={(checked) =>
+                            setLogConsent(checked === true)
+                          }
+                        />
+                        <span>
+                          I consent to logs from every app and system process
+                          for this recording.
+                        </span>
+                      </Label>
+                    )}
+                  </>
+                )}
+              </fieldset>
+            </section>
+            <section className="space-y-3">
+              <details className="space-y-3 [&>summary]:cursor-pointer [&>summary]:text-sm [&>summary]:font-medium">
+                <summary>Task context (optional)</summary>
+                <fieldset
+                  className="space-y-3 rounded-lg border border-border p-3"
+                  disabled={blocked}
+                >
+                  <Label>
+                    Title
+                    <Input
+                      maxLength={512}
+                      value={draft.context.title}
                       onChange={(event) =>
                         change({
                           ...draft,
-                          application_id: event.target.value.trim(),
+                          context: {
+                            ...draft.context,
+                            title: event.target.value,
+                          },
                         })
                       }
+                      placeholder="What are you investigating?"
                     />
-                  </label>
-                  {selectedApp?.shared_uid && (
-                    <p className="notice">
-                      This app shares its UID. Select another app or explicitly
-                      choose whole-device logs.
-                    </p>
-                  )}
-                  <p className="hint">
-                    The app identity is checked before collecting logs. A
-                    missing or changed identity stops app log collection.
-                  </p>
-                </>
-              ) : (
-                <label className="consent">
-                  <input
-                    type="checkbox"
-                    checked={active ? session?.log_scope.mode === "whole_device" : logConsent}
-                    onChange={(event) => setLogConsent(event.target.checked)}
-                  />
-                  <span>
-                    I consent to logs from every app and system process for this
-                    recording.
-                  </span>
-                </label>
+                  </Label>
+                  <Label>
+                    Notes
+                    <Textarea
+                      maxLength={32768}
+                      value={draft.context.notes}
+                      onChange={(event) =>
+                        change({
+                          ...draft,
+                          context: {
+                            ...draft.context,
+                            notes: event.target.value,
+                          },
+                        })
+                      }
+                      rows={3}
+                    />
+                  </Label>
+                  <Label>
+                    Reproduction steps, one per line
+                    <Textarea
+                      maxLength={409600}
+                      value={draft.context.steps.join("\n")}
+                      onChange={(event) =>
+                        change({
+                          ...draft,
+                          context: {
+                            ...draft.context,
+                            steps: event.target.value.split("\n"),
+                          },
+                        })
+                      }
+                      rows={3}
+                    />
+                  </Label>
+                </fieldset>
+              </details>
+              {!contextValidation.success && (
+                <p
+                  className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+                  role="alert"
+                >
+                  Task context is too long. Title allows 512 UTF-8 bytes, notes
+                  32,768 bytes, and up to 100 steps of 4,096 bytes each.
+                </p>
               )}
-            </>
-          )}
-        </fieldset>
-      </section>
-      <section>
-        <details>
-          <summary>Task context (optional)</summary>
-          <fieldset disabled={blocked}>
-            <label>
-              Title
-              <input
-                maxLength={512}
-                value={draft.context.title}
-                onChange={(event) =>
-                  change({
-                    ...draft,
-                    context: { ...draft.context, title: event.target.value },
-                  })
-                }
-                placeholder="What are you investigating?"
-              />
-            </label>
-            <label>
-              Notes
-              <textarea
-                maxLength={32768}
-                value={draft.context.notes}
-                onChange={(event) =>
-                  change({
-                    ...draft,
-                    context: { ...draft.context, notes: event.target.value },
-                  })
-                }
-                rows={3}
-              />
-            </label>
-            <label>
-              Reproduction steps, one per line
-              <textarea
-                maxLength={409600}
-                value={draft.context.steps.join("\n")}
-                onChange={(event) =>
-                  change({
-                    ...draft,
-                    context: {
-                      ...draft.context,
-                      steps: event.target.value.split("\n"),
-                    },
-                  })
-                }
-                rows={3}
-              />
-            </label>
-          </fieldset>
-        </details>
-        {!contextValidation.success && (
-          <p className="notice" role="alert">
-            Task context is too long. Title allows 512 UTF-8 bytes, notes 32,768
-            bytes, and up to 100 steps of 4,096 bytes each.
-          </p>
-        )}
-        <details>
-          <summary>Capture limits</summary>
-          {preferences && (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void run("Saving capture limits", async () => {
-                  await savePreferences({
-                    ...preferences,
-                    limits: editedPolicy?.limits ?? preferences.limits,
-                    network_policy:
-                      editedPolicy?.network_policy ??
-                      preferences.network_policy,
-                  });
-                  setEditedPolicy(undefined);
-                });
-              }}
-            >
-              <Policies
-                value={editedPolicy ?? preferences}
-                change={setEditedPolicy}
-                disabled={blocked}
-              />
-              <button disabled={blocked || !editedPolicy}>Save limits</button>
-            </form>
-          )}
-        </details>
-      </section>
-      <section className="capture-actions">
+              <details className="space-y-3 [&>summary]:cursor-pointer [&>summary]:text-sm [&>summary]:font-medium">
+                <summary>Capture limits</summary>
+                {preferences && (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void run("Saving capture limits", async () => {
+                        await savePreferences({
+                          ...preferences,
+                          limits: editedPolicy?.limits ?? preferences.limits,
+                          network_policy:
+                            editedPolicy?.network_policy ??
+                            preferences.network_policy,
+                        });
+                        setEditedPolicy(undefined);
+                      });
+                    }}
+                  >
+                    <Policies
+                      value={editedPolicy ?? preferences}
+                      change={setEditedPolicy}
+                      disabled={blocked}
+                    />
+                    <Button type="submit" disabled={blocked || !editedPolicy}>
+                      Save limits
+                    </Button>
+                  </form>
+                )}
+              </details>
+            </section>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+      <section className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 text-xs [&:has(>*)]:border-t [&:has(>*)]:border-border [&:has(>*)]:py-2">
         {session && (
           <>
-            <div className="metrics">
-              <span>{session.selection.mode === "network" ? "Network only" : `${formatBytes(session.bytes)} raw log data`}</span>
-              {session.receipt && session.selection.mode !== "network" && <span>{session.receipt.records.toLocaleString()} raw records</span>}
+            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <span>
+                {session.selection.mode === "network"
+                  ? "Network only"
+                  : `${formatBytes(session.bytes)} raw log data`}
+              </span>
+              {session.receipt && session.selection.mode !== "network" && (
+                <span>
+                  {session.receipt.records.toLocaleString()} raw records
+                </span>
+              )}
             </div>
-            <p className="hint">
+            <p className="text-xs text-muted-foreground">
               {session.receipt
                 ? `Logs ended · ${session.receipt.reason.replaceAll("_", " ")}`
                 : active
@@ -398,7 +519,7 @@ export function Capture({
                   : "Capture stopped."}
             </p>
             {session.network.state === "recording" && (
-              <p className="hint">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 Network · {session.network.detail.decoded_http_events} decoded
                 events · {session.network.detail.tls_errors} TLS errors
                 {session.network.detail.admission_closed
@@ -407,13 +528,17 @@ export function Capture({
               </p>
             )}
             {session.network.state === "recovery_required" && (
-              <p className="notice">{session.network.detail.message}</p>
+              <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+                {session.network.detail.message}
+              </p>
             )}
             {(session.network.state === "stopped" ||
               session.network.state === "interrupted") && (
               <p
                 className={
-                  session.network.detail.routing_restored ? "hint" : "notice"
+                  session.network.detail.routing_restored
+                    ? "text-xs text-muted-foreground"
+                    : "rounded-md border border-[#e4dac0] bg-[#fbf8ef] p-2 text-xs text-[#665026]"
                 }
               >
                 Network routing{" "}
@@ -424,113 +549,135 @@ export function Capture({
               </p>
             )}
             {session.log_attribution && (
-              <details>
-                <summary>Log coverage</summary>
-                <p className="hint">
-                  {session.log_attribution.strategy.replaceAll("_", " ")} ·{" "}
-                  {session.log_attribution.application_id ?? "All apps"} ·
-                  buffers {session.log_attribution.buffers.join(", ")} · levels{" "}
-                  {session.log_attribution.levels}
-                </p>
-                {session.log_attribution.exclusions.map((item) => (
-                  <p className="hint" key={item}>
-                    {item}
+              <Collapsible className="min-w-0 max-w-full">
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm">
+                    Log coverage
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-2 pt-2 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere] select-text">
+                  <p>
+                    {session.log_attribution.strategy.replaceAll("_", " ")} ·{" "}
+                    {session.log_attribution.application_id ?? "All apps"} ·
+                    buffers {session.log_attribution.buffers.join(", ")} · levels{" "}
+                    {session.log_attribution.levels}
                   </p>
-                ))}
-              </details>
+                  {session.log_attribution.exclusions.map((item) => (
+                    <p key={item}>{item}</p>
+                  ))}
+                </CollapsibleContent>
+              </Collapsible>
             )}
             {session.warnings.map((warning) => (
-              <p className="notice" key={warning}>
+              <p
+                className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+                key={warning}
+              >
                 {warning}
               </p>
             ))}
           </>
         )}
         {active && (
-          <form
-            className="marker-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (marker.trim())
-                void run("Adding marker", async () => {
-                  onSnapshot(await api.marker(marker));
-                  setMarker("");
-                });
-            }}
-          >
-            <label>
-              Timeline marker
-              <input
-                value={marker}
-                maxLength={2000}
-                onChange={(event) => setMarker(event.target.value)}
-                placeholder="What happened now?"
-              />
-            </label>
-            <button disabled={!!pending || !marker.trim()}>Add marker</button>
-          </form>
+          <details className="relative ml-auto">
+            <summary className="cursor-pointer text-sm">Add marker</summary>
+            <form
+              className="absolute top-full right-0 z-20 mt-2 flex w-[min(360px,80vw)] flex-wrap items-end gap-2 rounded-lg border border-border bg-white p-3 shadow-sm [&_label]:min-w-48 [&_label]:flex-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (marker.trim())
+                  void run("Adding marker", async () => {
+                    onSnapshot(await api.marker(marker));
+                    setMarker("");
+                  });
+              }}
+            >
+              <Label>
+                Timeline marker
+                <Input
+                  value={marker}
+                  maxLength={2000}
+                  onChange={(event) => setMarker(event.target.value)}
+                  placeholder="What happened now?"
+                />
+              </Label>
+              <Button type="submit" disabled={!!pending || !marker.trim()}>
+                Add marker
+              </Button>
+            </form>
+          </details>
         )}
       </section>
-      {actionHost && createPortal(
-        <section className="recording-controls" aria-label="Recording controls">
-          <div className="recording-buttons">
-            {active ? (
-              <>
-                <button
-                  className="primary"
+      {actionHost &&
+        createPortal(
+          <section
+            className="contents sm:flex sm:min-w-0 sm:flex-col sm:items-end sm:gap-1.5"
+            aria-label="Recording controls"
+          >
+            <div className="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-2">
+              {active ? (
+                <>
+                  <Button
+                    className="bg-primary text-primary-foreground hover:bg-primary/85"
+                    disabled={!!pending || operationBusy(operation)}
+                    onClick={() =>
+                      void run("Stopping and saving", async () =>
+                        onOperation(await api.save(null)),
+                      )
+                    }
+                  >
+                    Stop &amp; Save
+                  </Button>
+                  <Button
+                    disabled={!!pending || operationBusy(operation)}
+                    onClick={() =>
+                      void run("Stopping capture", async () =>
+                        onSnapshot(await api.stop()),
+                      )
+                    }
+                  >
+                    Stop without archive
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  className="bg-primary text-primary-foreground hover:bg-primary/85"
+                  disabled={!canStart}
+                  aria-describedby={
+                    noticeNetwork ? "network-recording-notice" : undefined
+                  }
+                  onClick={() => void run("Starting capture", start)}
+                >
+                  Start recording
+                </Button>
+              )}
+              {(snapshot?.phase === "recovery_required" ||
+                snapshot?.phase === "unverified_shutdown") && (
+                <Button
+                  className="border-destructive/30 bg-destructive/5 text-destructive"
                   disabled={!!pending || operationBusy(operation)}
                   onClick={() =>
-                    void run("Stopping and saving", async () =>
-                      onOperation(await api.save(null)),
+                    void run("Recovering device routing", async () =>
+                      onSnapshot(await api.recover()),
                     )
                   }
                 >
-                  Stop &amp; Save
-                </button>
-                <button
-                  disabled={!!pending || operationBusy(operation)}
-                  onClick={() =>
-                    void run("Stopping capture", async () =>
-                      onSnapshot(await api.stop()),
-                    )
-                  }
-                >
-                  Stop without archive
-                </button>
-              </>
-            ) : (
-              <button
-                className="primary"
-                disabled={!canStart}
-                aria-describedby={hasNetwork ? "network-recording-notice" : undefined}
-                onClick={() => void run("Starting capture", start)}
+                  Retry safe recovery
+                </Button>
+              )}
+            </div>
+            {noticeNetwork && (
+              <p
+                className="col-span-2 max-w-[460px] text-xs leading-[1.45] text-muted-foreground sm:text-right"
+                id="network-recording-notice"
               >
-                Start recording
-              </button>
+                Start records whole-device HTTP(S) traffic and temporarily
+                changes proxy routing. HTTPS requires manual CA trust.
+              </p>
             )}
-            {(snapshot?.phase === "recovery_required" ||
-              snapshot?.phase === "unverified_shutdown") && (
-              <button
-                className="danger"
-                disabled={!!pending || operationBusy(operation)}
-                onClick={() =>
-                  void run("Recovering device routing", async () =>
-                    onSnapshot(await api.recover()),
-                  )
-                }
-              >
-                Retry safe recovery
-              </button>
-            )}
-          </div>
-          {hasNetwork && (
-            <p className="recording-notice" id="network-recording-notice">
-              Start records whole-device HTTP(S) traffic and temporarily changes proxy routing. HTTPS requires manual CA trust.
-            </p>
-          )}
-        </section>,
-        actionHost,
-      )}
-    </aside>
+          </section>,
+          actionHost,
+        )}
+    </section>
   );
 }

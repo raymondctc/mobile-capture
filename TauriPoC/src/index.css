@@ -1,0 +1,126 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@font-face {
+  font-family: "Geist";
+  src: url("./assets/fonts/geist-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./assets/fonts/geist-mono-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme inline {
+  --font-sans:
+    "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-heading: var(--font-sans);
+  --font-mono:
+    "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--muted);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: #a92d35;
+  --color-border: var(--border);
+  --color-input: #b7c3bc;
+  --color-ring: #156b58;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 6px;
+  --radius-xl: 10px;
+}
+
+:root {
+  --background: #f3f7f5;
+  --foreground: #233038;
+  --card: #ffffff;
+  --primary: #252d2a;
+  --muted: #edf2ef;
+  --muted-foreground: #59675f;
+  --border: #dce5df;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply m-0 min-w-0 bg-background text-sm text-foreground;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+  h3,
+  h4 {
+    @apply font-medium;
+  }
+  ol {
+    @apply list-decimal space-y-2 pl-5 text-sm leading-relaxed;
+  }
+  ul {
+    @apply list-disc space-y-2 pl-5 text-sm leading-relaxed;
+  }
+  dl {
+    @apply space-y-2;
+  }
+  dt {
+    @apply text-xs text-muted-foreground;
+  }
+  dd {
+    @apply m-0 break-words select-text;
+  }
+  summary {
+    @apply rounded-sm focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2;
+  }
+  ::selection {
+    background: #c9e4d8;
+    color: #18372c;
+  }
+}
+
+details:not([open]) > :not(summary) {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  [data-slot="button"],
+  [data-slot="native-select"] {
+    min-height: 36px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,3 +1,4 @@
+import { Button } from "./components/ui/button";
 import {
   captureSafe,
   operationBusy,
@@ -114,7 +115,7 @@ export function HandoffNotices({
 }) {
   return notices.map((notice) => (
     <section
-      className="notice global-error"
+      className="mx-4 flex flex-wrap items-start justify-between gap-3 rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs text-[#665026] select-text"
       role="status"
       key={notice.id}
       aria-label="Android launch link"
@@ -122,7 +123,7 @@ export function HandoffNotices({
       <div>
         <strong>Android launch link</strong>
         {notice.request.kind === "device" && (
-          <p className="mono">
+          <p className="font-mono select-text break-all">
             {notice.request.serial}
             {notice.request.applicationId
               ? ` · ${notice.request.applicationId}`
@@ -130,17 +131,19 @@ export function HandoffNotices({
           </p>
         )}
         {notice.request.kind === "session" && (
-          <p className="mono">Session {notice.request.id}</p>
+          <p className="font-mono select-text break-all">
+            Session {notice.request.id}
+          </p>
         )}
         <p>{notice.message}</p>
       </div>
-      <div className="button-row">
+      <div className="flex flex-wrap items-center gap-2">
         {notice.state === "received" && notice.request.kind !== "rejected" && (
-          <button disabled={!available} onClick={() => void apply(notice)}>
+          <Button disabled={!available} onClick={() => void apply(notice)}>
             Apply link
-          </button>
+          </Button>
         )}
-        <button onClick={() => dismiss(notice.id)}>Dismiss</button>
+        <Button onClick={() => dismiss(notice.id)}>Dismiss</Button>
       </div>
     </section>
   ));

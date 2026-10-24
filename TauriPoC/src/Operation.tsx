@@ -1,3 +1,5 @@
+import { Progress } from "./components/ui/progress";
+import { Button } from "./components/ui/button";
 import { api, type Operation } from "./api";
 import { useState } from "react";
 import { product } from "./product";
@@ -34,7 +36,10 @@ export function OperationStatus({
     operation.state === "preparing_certificate"
   )
     return (
-      <div className="operation notice" role="status">
+      <div
+        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs text-[#665026]"
+        role="status"
+      >
         {operation.state === "checking_connection"
           ? `Connection check · ${operation.remaining_seconds} seconds remaining`
           : operation.message}{" "}
@@ -43,14 +48,21 @@ export function OperationStatus({
     );
   if (operation.state === "saving")
     return (
-      <div className="operation" role="status">
+      <div
+        className="mx-4 flex flex-wrap items-center gap-3 border-b border-border bg-white px-3 py-2 text-xs [&_p]:text-muted-foreground"
+        role="status"
+      >
         <div>
           <strong>Saving capture</strong>
           <p>{operation.stage.replaceAll("_", " ")}</p>
         </div>
-        <progress
-          value={operation.total === null ? undefined : operation.completed}
-          max={operation.total ?? undefined}
+        <Progress
+          className="h-1.5 min-w-24 max-w-64 flex-1"
+          value={
+            operation.total === null
+              ? undefined
+              : (operation.completed / Math.max(operation.total, 1)) * 100
+          }
           aria-label="Archive progress"
         />
         <span>
@@ -59,25 +71,31 @@ export function OperationStatus({
             ? ` / ${operation.total.toLocaleString()}`
             : ""}
         </span>
-        <button
+        <Button
           disabled={!operation.cancel_allowed || cancelling}
           onClick={() => void cancelSave(operation.id)}
         >
           Cancel save
-        </button>
+        </Button>
         {cancelError && <span role="alert">{cancelError}</span>}
       </div>
     );
   if (operation.state === "restoring")
     return (
-      <div className="operation notice" role="status">
+      <div
+        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs text-[#665026]"
+        role="status"
+      >
         <strong>Restoring device routing</strong>
         <span>{operation.message}</span>
       </div>
     );
   if (operation.state === "failed")
     return (
-      <div className="operation error" role="alert">
+      <div
+        className="mx-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+        role="alert"
+      >
         <div>
           <strong>
             {operation.recovery_required
@@ -88,7 +106,7 @@ export function OperationStatus({
           <p>Raw evidence and any previous archive remain available.</p>
         </div>
         {operation.recovery_required ? (
-          <button
+          <Button
             disabled={!!pending}
             onClick={() =>
               void run(
@@ -100,10 +118,10 @@ export function OperationStatus({
             }
           >
             Retry recovery
-          </button>
+          </Button>
         ) : (
           operation.kind === "save" && (
-            <button
+            <Button
               disabled={!!pending}
               onClick={() =>
                 void run("Retrying save", async () =>
@@ -112,31 +130,41 @@ export function OperationStatus({
               }
             >
               Retry save
-            </button>
+            </Button>
           )
         )}
       </div>
     );
   if (operation.state === "cancelled")
     return (
-      <div className="operation notice" role="status">
+      <div
+        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs text-[#665026]"
+        role="status"
+      >
         {operation.message} Raw evidence and any previous archive are preserved.
       </div>
     );
   if (operation.result.kind === "save")
     return (
-      <div className="operation success" role="status">
+      <div
+        className="mx-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#c8e3d4] bg-[#edf7f1] px-3 py-2 text-xs text-[#23553e]"
+        role="status"
+      >
         <div>
           <strong>Archive saved</strong>
-          <p className="mono">{operation.result.archive}</p>
+          <p className="font-mono select-text break-all">
+            {operation.result.archive}
+          </p>
         </div>
-        <button
+        <Button
           onClick={() =>
-              void run("Revealing archive", () => product.reveal("archive", operation.id))
+            void run("Revealing archive", () =>
+              product.reveal("archive", operation.id),
+            )
           }
         >
           Reveal archive
-        </button>
+        </Button>
       </div>
     );
   return null;

@@ -1,3 +1,6 @@
+import { Badge } from "./components/ui/badge";
+import { Button } from "./components/ui/button";
+import { NativeSelect } from "./components/ui/native-select";
 import { useState } from "react";
 import { api, type DoctorReport } from "./api";
 import type { RunAction } from "./state";
@@ -15,14 +18,14 @@ export function Diagnostics({
     useState<DoctorReport["sources"]>("logsAndNetwork");
   const [report, setReport] = useState<DoctorReport>();
   return (
-    <div className="diagnostics">
+    <div className="space-y-4">
       <p>
         Doctor checks capture tools, their versions and integrity, and storage
         on this computer. It does not inspect or change your phone or its
         routing.
       </p>
-      <div className="button-row">
-        <select
+      <div className="flex flex-wrap items-center gap-2">
+        <NativeSelect
           aria-label="Doctor capture sources"
           value={sources}
           onChange={(event) => {
@@ -38,9 +41,9 @@ export function Diagnostics({
           <option value="logsAndNetwork">Logs and network</option>
           <option value="logs">Logs only</option>
           <option value="network">Network only</option>
-        </select>
-        <button
-          className="primary"
+        </NativeSelect>
+        <Button
+          className="bg-primary text-primary-foreground hover:bg-primary/85"
           disabled={!!pending}
           onClick={() =>
             void run("Checking host prerequisites", async () =>
@@ -49,12 +52,14 @@ export function Diagnostics({
           }
         >
           Run host checks
-        </button>
-        <button onClick={settings}>Storage and tool settings</button>
+        </Button>
+        <Button onClick={settings}>Storage and tool settings</Button>
       </div>
       {report && (
         <>
-          <div className={report.hostPrerequisitesReady ? "success" : "notice"}>
+          <div
+            className={`rounded-md border p-3 ${report.hostPrerequisitesReady ? "border-[#c8e3d4] bg-[#edf7f1] text-[#23553e]" : "border-[#e4dac0] bg-[#fbf8ef] text-[#665026]"}`}
+          >
             <strong>
               {report.hostPrerequisitesReady
                 ? "Host prerequisites ready"
@@ -62,22 +67,32 @@ export function Diagnostics({
             </strong>
             <p>Phone connection is not established by this result.</p>
           </div>
-          <p className="hint">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             {report.hostTarget} · {timeLabel(report.checkedAt)}
           </p>
           {report.error && (
-            <p className="error" role="alert">
+            <p
+              className="rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm text-destructive select-text"
+              role="alert"
+            >
               {report.error.message}
             </p>
           )}
-          <div className="doctor-checks">
+          <div className="divide-y divide-border [&>article]:space-y-2 [&>article]:py-4">
             {report.checks.map((check) => (
               <article key={check.id}>
-                <div className="section-heading">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3>{check.id.replaceAll(/([a-z])([A-Z])/g, "$1 $2")}</h3>
-                  <span className={`badge ${check.status}`}>
+                  <Badge
+                    variant="secondary"
+                    className={
+                      check.status === "ready"
+                        ? "bg-[#edf5f1] text-[#156b58]"
+                        : "bg-[#fbf8ef] text-[#665026]"
+                    }
+                  >
                     {check.status.replace("needsAction", "Action needed")}
-                  </span>
+                  </Badge>
                 </div>
                 <p>{check.message}</p>
                 <dl>
@@ -94,12 +109,14 @@ export function Diagnostics({
                   {check.path && (
                     <div>
                       <dt>Path</dt>
-                      <dd className="mono">{check.path}</dd>
+                      <dd className="font-mono select-text break-all">
+                        {check.path}
+                      </dd>
                     </div>
                   )}
                 </dl>
                 {check.status !== "ready" && (
-                  <p className="hint">
+                  <p className="text-xs leading-relaxed text-muted-foreground">
                     {check.id.toLocaleLowerCase().includes("storage")
                       ? "Choose a writable capture folder in Settings."
                       : check.source === "bundled"
@@ -116,7 +133,7 @@ export function Diagnostics({
               <li key={action}>{action}</li>
             ))}
           </ul>
-          <p className="hint">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             Device setup status · {report.deviceSetup.status}. Run Device setup
             for certificate preparation and a fresh phone connection check.
           </p>

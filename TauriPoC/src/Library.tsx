@@ -1,3 +1,5 @@
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
 import { useEffect, useState } from "react";
 import {
   api,
@@ -59,24 +61,24 @@ export function Library({
     !!inspected &&
     !pending;
   return (
-    <section className="library">
-      <div className="library-heading">
-        <div>
+    <section className="shrink-0 border-b border-border px-4 py-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 [&_h2]:max-w-full [&_h2]:break-all [&_h2]:font-mono [&_h2]:text-sm [&_h2]:font-medium">
+        <div className="min-w-0 flex-1">
           <h2>{inspected ? inspected.id : "Session library"}</h2>
-          <p className="muted">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             {inspected
               ? `${inspected.device?.name ?? "Saved device"} · ${timeLabel(inspected.started_at)}${inspected.legacy ? " · legacy session" : ""}`
               : "Saved sessions remain readable without capture tools."}
           </p>
         </div>
-        <div className="button-row">
-          <button
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
             onClick={() => setExpanded(!expanded)}
             aria-expanded={expanded}
           >
             Saved sessions
-          </button>
-          <button
+          </Button>
+          <Button
             disabled={!!pending}
             onClick={() =>
               void run("Opening session folder", async () => {
@@ -86,35 +88,81 @@ export function Library({
             }
           >
             Open folder
-          </button>
+          </Button>
           {inspected && (
-            <>
-              <button
-                disabled={!!pending}
-                onClick={() =>
-                  void run("Revealing session", () => product.reveal("session"))
-                }
-              >
-                Reveal
-              </button>
-              <button disabled={!!pending} onClick={close}>
-                Close session
-              </button>
-            </>
+            <details className="relative">
+              <summary className="cursor-pointer rounded-md border border-input px-2.5 py-1.5 text-sm">
+                Session actions
+              </summary>
+              <div className="absolute top-full right-0 z-20 mt-1 grid min-w-44 gap-2 rounded-lg border border-border bg-white p-3 shadow-sm">
+                <Button
+                  disabled={!!pending}
+                  onClick={() =>
+                    void run("Revealing session", () =>
+                      product.reveal("session"),
+                    )
+                  }
+                >
+                  Reveal
+                </Button>
+                <Button disabled={!!pending} onClick={close}>
+                  Close session
+                </Button>
+                <Button
+                  disabled={!canSave}
+                  onClick={() =>
+                    void run("Saving archive", async () =>
+                      onOperation(await api.save(inspected.directory)),
+                    )
+                  }
+                >
+                  Save archive
+                </Button>
+                <Button
+                  disabled={!canSave}
+                  onClick={() =>
+                    void run("Copying archive", async () => {
+                      await api.copyArchive();
+                    })
+                  }
+                >
+                  Copy archive to…
+                </Button>
+                <Button
+                  disabled={!!pending}
+                  onClick={() =>
+                    void run("Revealing archive", () =>
+                      product.reveal("archive"),
+                    )
+                  }
+                >
+                  Reveal archive
+                </Button>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Archives are published after validation and routing
+                  restoration.
+                </p>
+              </div>
+            </details>
           )}
         </div>
       </div>
       {expanded && (
-        <div className="session-catalog">
-          <div className="section-heading">
-            <input
+        <div
+          className="mt-3 max-h-56 space-y-2 overflow-y-auto overscroll-contain border-t border-border pt-3"
+          role="region"
+          aria-label="Saved session catalog"
+          tabIndex={0}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Input
               type="search"
               aria-label="Find saved sessions"
               placeholder="Find a session or device"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
-            <button
+            <Button
               disabled={!!pending}
               onClick={() =>
                 void run("Refreshing saved sessions", async () => {
@@ -124,10 +172,13 @@ export function Library({
               }
             >
               Refresh
-            </button>
+            </Button>
           </div>
           {catalogError && (
-            <p className="notice" role="alert">
+            <p
+              className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+              role="alert"
+            >
               {catalogError}
             </p>
           )}
@@ -138,8 +189,9 @@ export function Library({
                 .includes(search.toLocaleLowerCase()),
             )
             .map((session) => (
-              <button
-                className={`session-row ${session.directory === inspected?.directory ? "selected" : ""}`}
+              <Button
+                variant="ghost"
+                className={`flex h-auto w-full flex-col items-start gap-1 rounded-md border border-border p-3 text-left whitespace-normal select-text [&_small]:break-all [&_small]:text-xs [&_span]:text-xs [&_span]:text-muted-foreground ${session.directory === inspected?.directory ? "bg-[#edf5f1]" : ""}`}
                 key={session.directory}
                 disabled={!!pending}
                 onClick={() =>
@@ -154,23 +206,26 @@ export function Library({
                   {timeLabel(session.started_at)}
                 </span>
                 <small>{session.directory}</small>
-              </button>
+              </Button>
             ))}
           {catalog && !catalog.sessions.length && (
-            <p className="hint">
+            <p className="text-xs leading-relaxed text-muted-foreground">
               No saved sessions were found in the capture folder. You can open
               another session folder.
             </p>
           )}
           {catalog?.truncated && (
-            <p className="notice">
+            <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
               The catalog scan reached its limit after {catalog.scanned}{" "}
               folders. Open a session folder directly to inspect another
               capture.
             </p>
           )}
           {catalog?.warnings.map((warning) => (
-            <p className="notice" key={warning}>
+            <p
+              className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+              key={warning}
+            >
               {warning}
             </p>
           ))}
@@ -178,41 +233,11 @@ export function Library({
       )}
       {inspected && (
         <>
-          <div className="session-actions">
-            <button
-              disabled={!canSave}
-              onClick={() =>
-                void run("Saving archive", async () =>
-                  onOperation(await api.save(inspected.directory)),
-                )
-              }
-            >
-              Save archive
-            </button>
-            <button
-              disabled={!canSave}
-              onClick={() =>
-                void run("Copying archive", async () => {
-                  await api.copyArchive();
-                })
-              }
-            >
-              Copy archive to…
-            </button>
-            <button
-              disabled={!!pending}
-              onClick={() =>
-                void run("Revealing archive", () => product.reveal("archive"))
-              }
-            >
-              Reveal archive
-            </button>
-            <span className="hint">
-              Archives are published after validation and routing restoration.
-            </span>
-          </div>
           {inspected.warnings.map((warning) => (
-            <p className="notice" key={warning}>
+            <p
+              className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+              key={warning}
+            >
               {warning}
             </p>
           ))}

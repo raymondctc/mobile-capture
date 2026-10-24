@@ -1,3 +1,6 @@
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Label } from "./components/ui/label";
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { api, type Preferences } from "./api";
@@ -47,29 +50,30 @@ export function Settings({
         /^[A-Za-z]:[\\/]/.test(path),
     );
   return (
-    <div className="settings">
-      <div className="button-row">
-        <button onClick={setup}>Device setup</button>
-        <button onClick={doctor}>Host Doctor</button>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button onClick={setup}>Device setup</Button>
+        <Button onClick={doctor}>Host Doctor</Button>
       </div>
       <p>
         Storage and tool changes apply to the next recording. Capture, saving,
         setup, and recovery must finish first.
       </p>
       {!editable && (
-        <p className="notice">
+        <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
           Settings are read-only until capture ownership and device routing are
           safely idle.
         </p>
       )}
       {editable && !idle && (
-        <p className="notice">
+        <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
           Correct loaded preferences if a tool override prevents initialization.
           The native app verifies capture ownership before saving.
         </p>
       )}
       {draft ? (
         <form
+          className="space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
             if (draft && overridesValid)
@@ -79,20 +83,25 @@ export function Settings({
               });
           }}
         >
-          <fieldset disabled={locked}>
-            <legend>Capture storage</legend>
-            <label>
+          <fieldset
+            className="space-y-3 rounded-lg border border-border p-3"
+            disabled={locked}
+          >
+            <legend className="px-1 text-sm font-medium">
+              Capture storage
+            </legend>
+            <Label>
               Session folder
-              <input
-                className="mono"
+              <Input
+                className="font-mono select-text break-all"
                 value={draft.output_root}
                 onChange={(event) =>
                   update({ ...draft, output_root: event.target.value })
                 }
                 required
               />
-            </label>
-            <button
+            </Label>
+            <Button
               type="button"
               onClick={() =>
                 void run("Choosing capture storage", async () => {
@@ -102,31 +111,36 @@ export function Settings({
               }
             >
               Choose folder
-            </button>
+            </Button>
           </fieldset>
           <Policies value={draft} change={update} disabled={locked} />
-          <fieldset disabled={locked}>
-            <legend>Explicit tool overrides</legend>
-            <p className="hint">
+          <fieldset
+            className="space-y-3 rounded-lg border border-border p-3"
+            disabled={locked}
+          >
+            <legend className="px-1 text-sm font-medium">
+              Explicit tool overrides
+            </legend>
+            <p className="text-xs leading-relaxed text-muted-foreground">
               Packaged tools are the default. Enter an absolute executable path
               only when you deliberately use external tools. A damaged packaged
               payload does not silently fall back to installed tools.
             </p>
-            <label>
+            <Label>
               ADB executable
-              <input
-                className="mono"
+              <Input
+                className="font-mono select-text break-all"
                 value={draft.adb_override ?? ""}
                 placeholder="Use packaged ADB"
                 onChange={(event) =>
                   update({ ...draft, adb_override: event.target.value || null })
                 }
               />
-            </label>
-            <label>
+            </Label>
+            <Label>
               mitmdump executable
-              <input
-                className="mono"
+              <Input
+                className="font-mono select-text break-all"
                 value={draft.mitmdump_override ?? ""}
                 placeholder="Use packaged network engine"
                 onChange={(event) =>
@@ -136,41 +150,48 @@ export function Settings({
                   })
                 }
               />
-            </label>
+            </Label>
             {!overridesValid && (
-              <p className="notice">
+              <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
                 Each override must be an absolute executable path.
               </p>
             )}
           </fieldset>
-          <button className="primary" disabled={locked || !overridesValid}>
+          <Button
+            type="submit"
+            className="bg-primary text-primary-foreground hover:bg-primary/85"
+            disabled={locked || !overridesValid}
+          >
             Save settings
-          </button>
+          </Button>
           {saved && (
-            <p className="success" role="status">
+            <p
+              className="rounded-md border border-[#c8e3d4] bg-[#edf7f1] p-3 text-[#23553e]"
+              role="status"
+            >
               Settings saved for future recordings.
             </p>
           )}
         </form>
       ) : (
-        <p className="notice">
+        <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
           Preferences could not be loaded. Retry connecting to the native app.
         </p>
       )}
-      <section className="about">
+      <section className="space-y-3 border-t border-border pt-4">
         <h3>Mobile Capture Android</h3>
         <p>Version {version || "…"}</p>
         <p>
           Updates use manual installation. Finish capture, save, setup, and
           recovery before opening the Android release page.
         </p>
-        <button
+        <Button
           disabled={!idle || !!pending}
           onClick={() => void run("Opening Android releases", api.updates)}
         >
           Check for updates
-        </button>
-        <p className="hint">
+        </Button>
+        <p className="text-xs leading-relaxed text-muted-foreground">
           Closing the window keeps a normal recording alive. Reopen the app to
           return. Quitting waits for routing restoration and safe shutdown.
         </p>

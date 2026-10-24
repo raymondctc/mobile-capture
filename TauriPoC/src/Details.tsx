@@ -1,3 +1,7 @@
+import { Badge } from "./components/ui/badge";
+import { Checkbox } from "./components/ui/checkbox";
+import { Button } from "./components/ui/button";
+import { Label } from "./components/ui/label";
 import { useEffect, useRef, useState } from "react";
 import {
   decodeChunk,
@@ -17,9 +21,7 @@ type ContentView =
   | { kind: "metadata" }
   | { kind: "body"; side: BodySide; decoded: boolean; binary: boolean };
 type RevealState =
-  | { kind: "idle" }
-  | { kind: "pending" }
-  | { kind: "error"; message: string };
+  { kind: "idle" } | { kind: "pending" } | { kind: "error"; message: string };
 export function hexChunk(bytes: Uint8Array, offset: number): string {
   const lines: string[] = [];
   for (let index = 0; index < bytes.length; index += 16) {
@@ -117,26 +119,33 @@ export function Details({
   }
   return (
     <section
-      className="details"
+      className="space-y-4 select-text"
       aria-label="Event details"
       aria-busy={busy}
     >
-      <div className="section-heading">
-        {offPage && <span className="badge">Selected outside this page</span>}
-        <button
-          className="text"
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {offPage && (
+          <Badge variant="secondary">Selected outside this page</Badge>
+        )}
+        <Button
+          variant="ghost"
           disabled={reveal.kind === "pending"}
           onClick={() => void revealRaw()}
         >
           {reveal.kind === "pending"
             ? "Revealing raw source…"
             : "Reveal raw source"}
-        </button>
+        </Button>
       </div>
       {reveal.kind === "error" && (
-        <p className="notice" role="alert">{reveal.message}</p>
+        <p
+          className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+          role="alert"
+        >
+          {reveal.message}
+        </p>
       )}
-      <dl className="event-facts">
+      <dl className="grid gap-3 text-xs [&_dt]:mb-1 [&_dt]:text-muted-foreground [&_dd]:break-all [&_dd]:font-mono [&_dd]:select-text">
         <div>
           <dt>Time</dt>
           <dd>{timeLabel(detail.event.timestamp)}</dd>
@@ -174,9 +183,11 @@ export function Details({
           </div>
         )}
       </dl>
-      <p className="detail-summary">{detail.event.summary}</p>
-      <div className="detail-tabs">
-        <button
+      <p className="break-words text-sm leading-relaxed select-text">
+        {detail.event.summary}
+      </p>
+      <div className="flex flex-wrap gap-2 [&_button]:h-auto [&_button]:min-h-8 [&_button]:whitespace-normal [&_button]:text-left [&_button[aria-pressed=true]]:border-[#156b58] [&_button[aria-pressed=true]]:bg-[#edf5f1] [&_button[aria-pressed=true]]:text-[#156b58]">
+        <Button
           aria-pressed={view.kind === "metadata"}
           onClick={() => {
             setView({ kind: "metadata" });
@@ -184,23 +195,21 @@ export function Details({
           }}
         >
           Full metadata · {formatBytes(detail.detail_bytes)}
-        </button>
+        </Button>
         {detail.bodies.map((body) => (
-          <div className="body-choice" key={body.side}>
-            <button
+          <div className="flex flex-wrap gap-1" key={body.side}>
+            <Button
               disabled={!body.available}
               aria-pressed={
-                view.kind === "body" &&
-                view.side === body.side &&
-                !view.decoded
+                view.kind === "body" && view.side === body.side && !view.decoded
               }
               onClick={() => showBody(body, false)}
             >
               {body.side === "request" ? "Request" : "Response"} ·{" "}
               {formatBytes(body.bytes)}
-            </button>
+            </Button>
             {body.content_encoding && (
-              <button
+              <Button
                 disabled={!body.decoded_available}
                 title={body.decoded_reason ?? "Read decoded content"}
                 aria-pressed={
@@ -211,7 +220,7 @@ export function Details({
                 onClick={() => showBody(body, true)}
               >
                 Decode {body.content_encoding}
-              </button>
+              </Button>
             )}
           </div>
         ))}
@@ -223,23 +232,25 @@ export function Details({
             (body.content_encoding && !body.decoded_available),
         )
         .map((body) => (
-          <p className="notice" key={body.side}>
+          <p
+            className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+            key={body.side}
+          >
             {body.side} · {body.reason ?? body.decoded_reason}
           </p>
         ))}
       {view.kind === "body" && (
-        <div className="reading-controls">
-          <label className="inline">
-            <input
-              type="checkbox"
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 text-xs">
+          <Label className="flex items-center gap-2 text-xs leading-relaxed">
+            <Checkbox
               checked={view.binary}
-              onChange={(event) =>
-                setView({ ...view, binary: event.target.checked })
+              onCheckedChange={(checked) =>
+                setView({ ...view, binary: checked === true })
               }
             />
             Hexadecimal view
-          </label>
-          <span className="muted">
+          </Label>
+          <span className="text-xs leading-relaxed text-muted-foreground">
             {view.decoded
               ? "Decoded content bytes"
               : "Original retained body bytes"}
@@ -248,40 +259,40 @@ export function Details({
         </div>
       )}
       {error && (
-        <p className="notice" role="alert">
+        <p
+          className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+          role="alert"
+        >
           {error}
         </p>
       )}
       <pre
-        className={`chunk ${wrap && !(view.kind === "body" && view.binary) ? "wrap" : ""}`}
+        className={`min-h-40 overflow-auto rounded-md border border-border bg-[#f8faf9] p-3 font-mono text-xs leading-5 select-text ${wrap && !(view.kind === "body" && view.binary) ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}
         tabIndex={0}
       >
         {busy ? "Reading 64 KiB chunk…" : text || "Empty content"}
       </pre>
-      <div className="pagination">
-        <button
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2 text-xs tabular-nums [&_button]:h-7 [&_button]:text-xs">
+        <Button
           disabled={busy || offset === 0}
           onClick={() => setOffset(Math.max(0, offset - 65536))}
         >
           Previous 64 KiB
-        </button>
+        </Button>
         <span>
           {chunk
             ? `Bytes ${chunk.offset.toLocaleString()}–${(chunk.offset + decodeChunk(chunk.data_base64).length).toLocaleString()} of ${chunk.total_bytes.toLocaleString()}`
             : "64 KiB per chunk"}
         </span>
-        <button
+        <Button
           disabled={busy || !chunk || chunk.next_offset === null}
           onClick={() => {
-            if (
-              chunk?.next_offset !== null &&
-              chunk?.next_offset !== undefined
-            )
+            if (chunk?.next_offset !== null && chunk?.next_offset !== undefined)
               setOffset(chunk.next_offset);
           }}
         >
           Next 64 KiB
-        </button>
+        </Button>
       </div>
     </section>
   );

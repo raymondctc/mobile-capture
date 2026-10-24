@@ -1,3 +1,8 @@
+import { Checkbox } from "./components/ui/checkbox";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Label } from "./components/ui/label";
+import { NativeSelect } from "./components/ui/native-select";
 import { useEffect, useState } from "react";
 import {
   api,
@@ -102,23 +107,26 @@ export function Setup({
     if (operation.state === "preparing_certificate") setStep("prepare");
   }, [operation.state]);
   return (
-    <div className="setup">
+    <div className="space-y-4">
       <p>
         Prepare one Android device for network capture. Host diagnostics and
         phone verification are separate. Your inspected session stays open.
       </p>
-      <nav className="setup-steps" aria-label="Setup steps">
+      <nav
+        className="grid grid-cols-2 gap-1 sm:grid-cols-4 rounded-lg bg-muted p-1 [&_button]:h-9 [&_button[aria-current]]:bg-white [&_button[aria-current]]:text-foreground"
+        aria-label="Setup steps"
+      >
         {steps.map((item) => (
-          <button
+          <Button
             key={item.id}
             aria-current={step === item.id ? "step" : undefined}
             onClick={() => setStep(item.id)}
           >
             {item.title}
-          </button>
+          </Button>
         ))}
       </nav>
-      <div className="setup-summary">
+      <div className="space-y-1 border-y border-border py-3 text-sm">
         <strong>
           {freshness
             ? "Phone connection is not verified"
@@ -129,7 +137,10 @@ export function Setup({
             `Fresh HTTPS check for ${serial}. Expires ${history.check ? timeLabel(history.check.expires_at) : ""}.`}
         </p>
         {identityError && (
-          <p className="notice" role="alert">
+          <p
+            className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+            role="alert"
+          >
             Current certificate identity could not be read. {identityError}
           </p>
         )}
@@ -146,8 +157,8 @@ export function Setup({
               Approve this computer on the phone, then refresh the device list.
             </li>
           </ol>
-          <div className="button-row">
-            <select
+          <div className="flex flex-wrap items-center gap-2">
+            <NativeSelect
               aria-label="Setup device"
               value={serial}
               disabled={busy || snapshot?.phase === "recording" || !!pending}
@@ -163,36 +174,37 @@ export function Setup({
                   {device.name} · {device.state}
                 </option>
               ))}
-            </select>
-            <button
+            </NativeSelect>
+            <Button
               disabled={busy || !!pending}
               onClick={() => void run("Refreshing devices", refresh)}
             >
               Refresh
-            </button>
+            </Button>
           </div>
-          <p className="mono muted">{serial || "No device selected"}</p>
-          <button onClick={doctor}>Check host prerequisites</button>
-          <p className="hint">
+          <p className="font-mono select-text break-all text-xs text-muted-foreground">
+            {serial || "No device selected"}
+          </p>
+          <Button onClick={doctor}>Check host prerequisites</Button>
+          <p className="text-xs leading-relaxed text-muted-foreground">
             Doctor inspects this computer. A ready result does not prove
             certificate trust or traffic from your phone.
           </p>
-          <button
-            className="primary"
+          <Button
+            className="bg-primary text-primary-foreground hover:bg-primary/85"
             disabled={!ready}
             onClick={() => setStep("prepare")}
           >
             Continue to Prepare
-          </button>
+          </Button>
         </section>
       )}
       {(step === "prepare" || step === "check") && (
-        <label className="consent setup-consent">
-          <input
-            type="checkbox"
+        <Label className="flex items-start gap-2 rounded-md border border-border bg-muted/35 p-3 text-sm leading-relaxed">
+          <Checkbox
             checked={consent}
             disabled={busy || !!pending}
-            onChange={(event) => setConsent(event.target.checked)}
+            onCheckedChange={(checked) => setConsent(checked === true)}
           />
           <span>
             I consent to a separate whole-device network setup capture on{" "}
@@ -200,7 +212,7 @@ export function Setup({
             routing. The check runs for up to 45 seconds, then restores routing.
             Captured setup evidence is separate from my session.
           </span>
-        </label>
+        </Label>
       )}
       {step === "prepare" && (
         <section>
@@ -210,8 +222,8 @@ export function Setup({
             restores routing before you install it. The private key remains on
             this computer.
           </p>
-          <button
-            className="primary"
+          <Button
+            className="bg-primary text-primary-foreground hover:bg-primary/85"
             disabled={!allowed || !consent}
             onClick={() =>
               void run("Preparing Android certificate", async () => {
@@ -221,14 +233,17 @@ export function Setup({
             }
           >
             Copy public certificate to phone
-          </button>
+          </Button>
           {operation.state === "preparing_certificate" && (
-            <p className="notice" role="status">
+            <p
+              className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+              role="status"
+            >
               {operation.message}
             </p>
           )}
           {certificate && (
-            <div className="certificate-card">
+            <div className="space-y-4 rounded-lg border border-border p-4">
               <h4>Public certificate</h4>
               <dl>
                 <div>
@@ -237,13 +252,15 @@ export function Setup({
                 </div>
                 <div>
                   <dt>SHA-256 fingerprint</dt>
-                  <dd className="mono">
+                  <dd className="font-mono select-text break-all">
                     {certificate.certificate_fingerprint}
                   </dd>
                 </div>
                 <div>
                   <dt>Phone file</dt>
-                  <dd className="mono">{certificate.device_path}</dd>
+                  <dd className="font-mono select-text break-all">
+                    {certificate.device_path}
+                  </dd>
                 </div>
                 <div>
                   <dt>Routing</dt>
@@ -254,13 +271,13 @@ export function Setup({
                   </dd>
                 </div>
               </dl>
-              <div className="button-row">
+              <div className="flex flex-wrap items-center gap-2">
                 <CopyButton
                   value={certificate.certificate_fingerprint}
                   run={run}
                   label="Copy fingerprint"
                 />
-                <button
+                <Button
                   onClick={() =>
                     void run("Revealing public certificate", () =>
                       product.reveal("certificate"),
@@ -268,7 +285,7 @@ export function Setup({
                   }
                 >
                   Reveal public certificate
-                </button>
+                </Button>
               </div>
               <ol>
                 <li>
@@ -288,30 +305,29 @@ export function Setup({
                   user certificates or use certificate pinning.
                 </li>
               </ol>
-              <label className="consent">
-                <input
-                  type="checkbox"
+              <Label className="flex items-start gap-2 rounded-md border border-border bg-muted/35 p-3 text-sm leading-relaxed">
+                <Checkbox
                   checked={installed}
-                  onChange={(event) => setInstalled(event.target.checked)}
+                  onCheckedChange={(checked) => setInstalled(checked === true)}
                 />
                 <span>
                   I completed manual installation. This acknowledgment does not
                   verify phone trust.
                 </span>
-              </label>
+              </Label>
             </div>
           )}
           {!certificate && identity?.certificate_fingerprint && (
-            <p className="hint mono">
+            <p className="font-mono select-text break-all text-xs leading-relaxed text-muted-foreground">
               Current CA · {identity.certificate_fingerprint}
             </p>
           )}
-          <button
+          <Button
             disabled={!certificate?.routing_restored || !installed}
             onClick={() => setStep("check")}
           >
             Continue to Check
-          </button>
+          </Button>
         </section>
       )}
       {step === "check" && (
@@ -322,8 +338,8 @@ export function Setup({
             confirm you used this phone. A host request, TLS failure, or
             installation acknowledgment cannot pass the check.
           </p>
-          <button
-            className="primary"
+          <Button
+            className="bg-primary text-primary-foreground hover:bg-primary/85"
             disabled={
               !allowed || !consent || !identity?.certificate_fingerprint
             }
@@ -334,23 +350,27 @@ export function Setup({
             }
           >
             Start 45-second connection check
-          </button>
+          </Button>
           {operation.state === "checking_connection" && (
-            <div className="check-card">
-              <p className="countdown" role="timer">
+            <div className="space-y-3 rounded-lg border border-border p-4">
+              <p className="text-lg font-medium tabular-nums" role="timer">
                 {operation.remaining_seconds} seconds remaining
               </p>
-              <label>
+              <Label>
                 Open this URL on the selected phone
-                <input className="mono" readOnly value={operation.url} />
-              </label>
-              <div className="button-row">
+                <Input
+                  className="font-mono select-text break-all"
+                  readOnly
+                  value={operation.url}
+                />
+              </Label>
+              <div className="flex flex-wrap items-center gap-2">
                 <CopyButton
                   value={operation.url}
                   run={run}
                   label="Copy check URL"
                 />
-                <button
+                <Button
                   disabled={!!pending}
                   onClick={() =>
                     void run("Opening check on selected phone", () =>
@@ -359,18 +379,17 @@ export function Setup({
                   }
                 >
                   Open on phone
-                </button>
+                </Button>
               </div>
-              <p className="mono hint">
+              <p className="font-mono select-text break-all text-xs text-muted-foreground">
                 CA fingerprint · {operation.certificate_fingerprint}
               </p>
-              <label className="consent">
-                <input
-                  type="checkbox"
+              <Label className="flex items-start gap-2 rounded-md border border-border bg-muted/35 p-3 text-sm leading-relaxed">
+                <Checkbox
                   checked={operation.phone_origin_confirmed}
                   disabled={!!pending}
-                  onChange={(event) => {
-                    const confirmed = event.target.checked;
+                  onCheckedChange={(checked) => {
+                    const confirmed = checked === true;
                     void run("Confirming phone origin", async () =>
                       onOperation(
                         await api.confirmOrigin(operation.id, confirmed),
@@ -379,13 +398,19 @@ export function Setup({
                   }}
                 />
                 <span>I opened this URL in the browser on {serial}.</span>
-              </label>
-              <p className={operation.https_observed ? "success" : "hint"}>
+              </Label>
+              <p
+                className={
+                  operation.https_observed
+                    ? "text-sm text-[#23553e]"
+                    : "text-xs text-muted-foreground"
+                }
+              >
                 {operation.https_observed
                   ? "The exact fresh HTTPS response was observed."
                   : "Waiting for the exact fresh HTTPS response."}
               </p>
-              <button
+              <Button
                 disabled={!!pending}
                 onClick={() =>
                   void run("Finishing connection check", async () =>
@@ -394,11 +419,11 @@ export function Setup({
                 }
               >
                 Finish check and restore routing
-              </button>
+              </Button>
             </div>
           )}
           {history.check?.serial === serial && (
-            <div className="check-card">
+            <div className="space-y-3 rounded-lg border border-border p-4">
               <p>{history.check.message}</p>
               <dl>
                 <div>
@@ -428,15 +453,15 @@ export function Setup({
                   <dd>{timeLabel(history.check.checked_at)}</dd>
                 </div>
               </dl>
-              <p className="hint">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 This browser check does not establish every app's certificate
                 trust, upstream internet availability, or app attribution.
               </p>
             </div>
           )}
-          <button disabled={busy} onClick={() => setStep("done")}>
+          <Button disabled={busy} onClick={() => setStep("done")}>
             Review result
-          </button>
+          </Button>
         </section>
       )}
       {step === "done" && (
@@ -450,8 +475,8 @@ export function Setup({
             {freshness ||
               "The current device and CA have a fresh verified browser connection check. Capture sources and consent are chosen separately for each recording."}
           </p>
-          <div className="button-row">
-            <button
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
               disabled={busy || !!pending}
               onClick={() =>
                 void run("Exporting readiness report", async () => {
@@ -461,9 +486,9 @@ export function Setup({
               }
             >
               Export readiness report
-            </button>
-            <button
-              className="primary"
+            </Button>
+            <Button
+              className="bg-primary text-primary-foreground hover:bg-primary/85"
               disabled={busy}
               onClick={() => {
                 onHistory({ ...history, deferred: true });
@@ -471,31 +496,34 @@ export function Setup({
               }}
             >
               Finish setup
-            </button>
+            </Button>
           </div>
           {reportPath && (
-            <p className="success mono" role="status">
+            <p
+              className="rounded-md border border-[#c8e3d4] bg-[#edf7f1] p-3 font-mono text-[#23553e] select-text break-all"
+              role="status"
+            >
               Report saved · {reportPath}
             </p>
           )}
-          <p className="hint">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             The report includes public host and setup facts. It excludes
             captured bodies, logs, private keys, and routing files.
           </p>
         </section>
       )}
       {!busy && (
-        <div className="setup-footer">
-          <button
-            className="text"
+        <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+          <Button
+            variant="ghost"
             onClick={() => {
               onHistory({ ...history, deferred: true });
               close();
             }}
           >
             Set up later
-          </button>
-          <span className="hint">
+          </Button>
+          <span className="text-xs leading-relaxed text-muted-foreground">
             You can return through Device setup. Deferral never marks the phone
             verified.
           </span>
