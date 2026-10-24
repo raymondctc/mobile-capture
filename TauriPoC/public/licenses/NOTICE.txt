@@ -1,6 +1,6 @@
 Mobile Capture Android frontend notices
 
-The frontend uses generated shadcn components, Radix UI, Tailwind CSS, Lucide,
+The frontend uses generated shadcn components, Radix UI, Base UI, Tailwind CSS, Lucide,
 React, and the other packages listed in provenance.json. The adjacent files are
 copies of their distributed license texts or, where a package omits a license
 file, its original package metadata and README license declaration. The standard

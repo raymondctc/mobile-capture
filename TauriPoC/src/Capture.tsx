@@ -10,6 +10,15 @@ import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
 import { Label } from "./components/ui/label";
 import { NativeSelect } from "./components/ui/native-select";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "./components/ui/combobox";
+import { RefreshCw, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -75,11 +84,18 @@ export function Capture({
   const blocked =
     !!pending || operationBusy(operation) || !captureSafe(snapshot);
   const hasLogs = draft.selection !== "network";
-  const hasNetwork = draft.selection !== "logs";
   const device = devices.find((entry) => entry.serial === draft.serial);
   const selectedApp = apps.find(
     (app) => app.application_id === draft.application_id,
   );
+  const appOptions = [...new Set(apps.map((app) => app.application_id))];
+  for (const id of [draft.application_id, appSearch.trim()]) {
+    if (
+      /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/.test(id) &&
+      !appOptions.includes(id)
+    )
+      appOptions.push(id);
+  }
   const appValid =
     /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/.test(draft.application_id) &&
     !selectedApp?.shared_uid;
@@ -94,6 +110,7 @@ export function Capture({
     appGeneration.current += 1;
     setApps([]);
     setAppState("");
+    setAppSearch("");
     setLogConsent(false);
   }, [draft.serial]);
   useEffect(() => {
@@ -145,9 +162,6 @@ export function Capture({
     scopeSession?.log_scope.mode === "app"
       ? scopeSession.log_scope.application_id
       : draft.application_id;
-  const noticeNetwork = active
-    ? session?.selection.mode !== "logs"
-    : hasNetwork;
   return (
     <section
       className="shrink-0 rounded-t-lg border border-border bg-white"
@@ -198,11 +212,13 @@ export function Capture({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2>Android device</h2>
                 <Button
-                  variant="ghost"
+                  size="icon"
+                  aria-label="Refresh devices"
+                  title="Refresh devices"
                   disabled={!!pending || active || operationBusy(operation)}
                   onClick={() => void run("Refreshing devices", refresh)}
                 >
-                  Refresh
+                  <RefreshCw aria-hidden="true" />
                 </Button>
               </div>
               <Label htmlFor="capture-device">Capture on</Label>
@@ -240,7 +256,8 @@ export function Capture({
                   Choose a different device explicitly if needed.
                 </p>
               )}
-              <Button variant="ghost" onClick={setup}>
+              <Button onClick={setup}>
+                <Settings2 aria-hidden="true" />
                 Open device setup
               </Button>
             </section>
@@ -251,30 +268,30 @@ export function Capture({
                 disabled={blocked}
               >
                 <legend className="sr-only">Capture sources</legend>
-                <Label>
-                  Sources
-                  <NativeSelect
-                    value={draft.selection}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (
-                        value === "logs" ||
-                        value === "network" ||
-                        value === "logs_and_network"
-                      ) {
-                        change({ ...draft, selection: value });
-                        setLogConsent(false);
-                      }
-                    }}
-                  >
-                    <option value="network">Network only</option>
-                    <option value="logs">Logs only</option>
-                    <option value="logs_and_network">Logs and network</option>
-                  </NativeSelect>
-                </Label>
-                {hasLogs && (
-                  <>
-                    <Label>
+                <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2">
+                  <Label className="min-w-0">
+                    Sources
+                    <NativeSelect
+                      value={draft.selection}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (
+                          value === "logs" ||
+                          value === "network" ||
+                          value === "logs_and_network"
+                        ) {
+                          change({ ...draft, selection: value });
+                          setLogConsent(false);
+                        }
+                      }}
+                    >
+                      <option value="network">Network only</option>
+                      <option value="logs">Logs only</option>
+                      <option value="logs_and_network">Logs and network</option>
+                    </NativeSelect>
+                  </Label>
+                  {hasLogs && (
+                    <Label className="min-w-0">
                       Log scope
                       <NativeSelect
                         value={draft.log_mode}
@@ -290,77 +307,97 @@ export function Capture({
                         <option value="whole_device">Whole device</option>
                       </NativeSelect>
                     </Label>
+                  )}
+                </div>
+                {hasLogs && (
+                  <>
                     {draft.log_mode === "app" ? (
                       <>
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <Label htmlFor="app-search">Installed apps</Label>
                           <Button
-                            variant="ghost"
+                            size="sm"
                             disabled={device?.state !== "ready"}
                             onClick={() =>
                               void run("Refreshing installed apps", refreshApps)
                             }
                           >
+                            <RefreshCw aria-hidden="true" />
                             Refresh apps
                           </Button>
                         </div>
-                        <Input
-                          id="app-search"
-                          type="search"
-                          placeholder="Find installed apps"
-                          value={appSearch}
-                          onChange={(event) => setAppSearch(event.target.value)}
-                        />
-                        <NativeSelect
-                          aria-label="Installed app"
-                          value={selectedApp ? draft.application_id : ""}
-                          onChange={(event) =>
-                            change({
-                              ...draft,
-                              application_id: event.target.value,
-                            })
+                        <Combobox
+                          items={appOptions}
+                          value={draft.application_id || null}
+                          disabled={blocked}
+                          onInputValueChange={setAppSearch}
+                          onValueChange={(id) =>
+                            change({ ...draft, application_id: id ?? "" })
                           }
+                          itemToStringLabel={(id) => {
+                            const app = apps.find(
+                              (entry) => entry.application_id === id,
+                            );
+                            return app ? `${app.label} · ${id}` : id;
+                          }}
+                          filter={(id, query) => {
+                            const app = apps.find(
+                              (entry) => entry.application_id === id,
+                            );
+                            return `${app?.label ?? ""} ${id}`
+                              .toLocaleLowerCase()
+                              .includes(query.toLocaleLowerCase());
+                          }}
                         >
-                          <option value="">Select an installed app</option>
-                          {apps
-                            .filter((app) =>
-                              `${app.label} ${app.application_id}`
-                                .toLocaleLowerCase()
-                                .includes(appSearch.toLocaleLowerCase()),
-                            )
-                            .map((app) => (
-                              <option
-                                key={`${app.application_id}:${app.user_id}`}
-                                value={app.application_id}
-                                disabled={app.shared_uid}
-                              >
-                                {app.label} · {app.application_id}
-                                {app.shared_uid
-                                  ? " · shared UID, unavailable"
-                                  : ""}
-                              </option>
-                            ))}
-                        </NativeSelect>
+                          <ComboboxInput
+                            id="app-search"
+                            aria-describedby="app-status"
+                            placeholder="Search by name or app ID"
+                            disabled={blocked}
+                            showClear
+                          />
+                          <ComboboxContent>
+                            <ComboboxEmpty>
+                              No matching apps. Enter an application ID to use
+                              it.
+                            </ComboboxEmpty>
+                            <ComboboxList>
+                              {(id: string) => {
+                                const app = apps.find(
+                                  (entry) => entry.application_id === id,
+                                );
+                                return (
+                                  <ComboboxItem
+                                    key={id}
+                                    value={id}
+                                    disabled={app?.shared_uid}
+                                    className="min-w-0 flex-col items-start gap-0.5 py-2"
+                                  >
+                                    <span className="break-words">
+                                      {app?.label ?? "Use application ID"}
+                                    </span>
+                                    <span className="max-w-full break-all font-mono text-xs text-muted-foreground">
+                                      {id}
+                                    </span>
+                                    {app?.shared_uid && (
+                                      <span className="text-xs text-muted-foreground">
+                                        Shared UID · unavailable
+                                      </span>
+                                    )}
+                                  </ComboboxItem>
+                                );
+                              }}
+                            </ComboboxList>
+                          </ComboboxContent>
+                        </Combobox>
                         <p
                           className="text-xs leading-relaxed text-muted-foreground"
                           role="status"
+                          id="app-status"
                         >
                           {appState ||
                             "Refresh to read installed apps. Shared UID apps cannot be isolated."}
                         </p>
-                        <Label>
-                          Or enter an application ID
-                          <Input
-                            value={draft.application_id}
-                            placeholder="com.example.app"
-                            onChange={(event) =>
-                              change({
-                                ...draft,
-                                application_id: event.target.value.trim(),
-                              })
-                            }
-                          />
-                        </Label>
                         {selectedApp?.shared_uid && (
                           <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
                             This app shares its UID. Select another app or
@@ -559,8 +596,8 @@ export function Capture({
                   <p>
                     {session.log_attribution.strategy.replaceAll("_", " ")} ·{" "}
                     {session.log_attribution.application_id ?? "All apps"} ·
-                    buffers {session.log_attribution.buffers.join(", ")} · levels{" "}
-                    {session.log_attribution.levels}
+                    buffers {session.log_attribution.buffers.join(", ")} ·
+                    levels {session.log_attribution.levels}
                   </p>
                   {session.log_attribution.exclusions.map((item) => (
                     <p key={item}>{item}</p>
@@ -643,9 +680,6 @@ export function Capture({
                 <Button
                   className="bg-primary text-primary-foreground hover:bg-primary/85"
                   disabled={!canStart}
-                  aria-describedby={
-                    noticeNetwork ? "network-recording-notice" : undefined
-                  }
                   onClick={() => void run("Starting capture", start)}
                 >
                   Start recording
@@ -666,15 +700,6 @@ export function Capture({
                 </Button>
               )}
             </div>
-            {noticeNetwork && (
-              <p
-                className="col-span-2 max-w-[460px] text-xs leading-[1.45] text-muted-foreground sm:text-right"
-                id="network-recording-notice"
-              >
-                Start records whole-device HTTP(S) traffic and temporarily
-                changes proxy routing. HTTPS requires manual CA trust.
-              </p>
-            )}
           </section>,
           actionHost,
         )}

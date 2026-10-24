@@ -2,7 +2,7 @@
 
 The Android UI adopts create-tauri-ui 1.2.0's shadcn and Tailwind frontend foundation from upstream commit `8eb86d894c19b6df04ff883ab28b412b1e5f23ea`. Its repository is [agmmnn/tauri-ui](https://github.com/agmmnn/tauri-ui). The reference frontend was generated separately with shadcn, preserving this app's existing native project and capture backend.
 
-The reference used `npx shadcn@4.16.1 init --template vite --base radix --preset nova` and emitted the `radix-nova` style. `components.json` retains that generated configuration. The app copies and adapts 11 generated components and the generated `cn` export. Unused Tabs and Separator files are omitted.
+The reference used `npx shadcn@4.16.1 init --template vite --base radix --preset nova` and emitted the `radix-nova` style. `components.json` retains that generated configuration. The app copies and adapts 13 generated components and the generated `cn` export. Unused Tabs and Separator files are omitted. The combobox and input-group were generated with `npx shadcn@4.16.1 add combobox --yes`. The current official Radix combobox registry uses Base UI 1.9.0 for editable selection. Its dependency is pinned and its distributed notices are included.
 
 The generated controls now appear in Capture, Library, Timeline, event details, Setup, Doctor, Settings, operation feedback, and launch-link notices. The app wrapper guards every tool dialog dismissal while setup is locked. The event inspector remains modeless and keeps its local reads outside capture action ownership.
 

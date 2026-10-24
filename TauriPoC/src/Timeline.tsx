@@ -17,6 +17,7 @@ import {
 } from "./product";
 import { timelineFence, useReading } from "./state";
 import { Details } from "./Details";
+import { X } from "lucide-react";
 
 type QueryState = {
   source: string;
@@ -505,8 +506,14 @@ export function Timeline({
         >
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 [&_h2]:text-base [&_h2]:font-medium [&_button]:h-7 [&_button]:text-xs">
             <h2 id="event-inspector-title">Event details</h2>
-            <Button ref={closeButton} onClick={closeInspector}>
-              Close event details
+            <Button
+              ref={closeButton}
+              size="icon-sm"
+              aria-label="Close event details"
+              title="Close event details"
+              onClick={closeInspector}
+            >
+              <X aria-hidden="true" />
             </Button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">

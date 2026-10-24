@@ -50,8 +50,17 @@
       {
         "file": "src/components/ui/textarea.tsx",
         "generated_sha256": "82601c91ffc6c727d924162c78d7cb853114bcced4e2eb922a68ca12d4239c0f"
+      },
+      {
+        "file": "src/components/ui/combobox.tsx",
+        "generated_sha256": "59bc52d5f288d04909ff304a3304d7c6d930179c734da0986be1d04d331a11fb"
+      },
+      {
+        "file": "src/components/ui/input-group.tsx",
+        "generated_sha256": "c8753d5bc132f180454c7b9f582bd9007e54bb8cae9d3ab4a545872dbb0fde8b"
       }
-    ]
+    ],
+    "additional_components_command": "npx shadcn@4.16.1 add combobox --yes"
   },
   "fonts": [
     {
@@ -74,6 +83,90 @@
     }
   ],
   "packages": [
+    {
+      "package": "@babel/runtime",
+      "version": "7.29.10",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "babel--runtime--LICENSE",
+          "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@base-ui/react",
+      "version": "1.9.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "base-ui--react--LICENSE",
+          "sha256": "07fc1b39d69d14bc7d40482a628f47226258eb01265db68ae684944b916beb2a"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@base-ui/utils",
+      "version": "0.5.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "base-ui--utils--LICENSE",
+          "sha256": "07fc1b39d69d14bc7d40482a628f47226258eb01265db68ae684944b916beb2a"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@floating-ui/core",
+      "version": "1.8.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "floating-ui--core--LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@floating-ui/dom",
+      "version": "1.8.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "floating-ui--dom--LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@floating-ui/react-dom",
+      "version": "2.1.9",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "floating-ui--react-dom--LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@floating-ui/utils",
+      "version": "0.2.12",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "floating-ui--utils--LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+        }
+      ],
+      "license_text_in_package": true
+    },
     {
       "package": "@radix-ui/primitive",
       "version": "1.2.0",
@@ -509,6 +602,18 @@
       "license_text_in_package": true
     },
     {
+      "package": "reselect",
+      "version": "5.3.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "reselect--LICENSE",
+          "sha256": "e98047a5dee068b33f82e8c4b7a63037b5108c93393198efd4097753004af5dd"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
       "package": "scheduler",
       "version": "0.28.0",
       "license": "MIT",
@@ -592,6 +697,18 @@
         {
           "file": "use-sidecar--LICENSE",
           "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "use-sync-external-store",
+      "version": "1.7.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "use-sync-external-store--LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
         }
       ],
       "license_text_in_package": true

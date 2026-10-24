@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from "react";
+import { X } from "lucide-react";
 import type { RunAction } from "./state";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -63,8 +64,10 @@ export function Dialog({
               disabled={locked}
               onClick={requestClose}
               aria-label={`Close ${title}`}
+              title={`Close ${title}`}
+              size="icon"
             >
-              Close
+              <X aria-hidden="true" />
             </Button>
           </div>
           <DialogDescription className="sr-only">

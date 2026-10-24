@@ -301,14 +301,8 @@ async function checkCapture() {
   assert.equal(starts.length, 0);
   const start = screen.getByRole("button", { name: "Start recording" });
   assert.equal(start.disabled, false);
-  const notice = document.getElementById(
-    start.getAttribute("aria-describedby")!,
-  );
-  assert.match(
-    notice!.textContent!,
-    /whole-device HTTP\(S\).*proxy routing.*manual CA trust/,
-  );
-  assert.equal(actionHost.contains(notice), true);
+  assert.equal(start.getAttribute("aria-describedby"), null);
+  assert.equal(screen.queryByText(/Start records whole-device HTTP/), null);
   assert.equal(screen.queryByRole("checkbox"), null);
   await user.click(start);
   assert.deepEqual(starts[0], {
@@ -382,7 +376,7 @@ async function checkCapture() {
     screen.getByRole("region", { name: "Capture scope" }).textContent!,
     /SourcesNetwork/,
   );
-  assert.ok(screen.getByText(/Start records whole-device HTTP/));
+  assert.equal(screen.queryByText(/Start records whole-device HTTP/), null);
   await user.click(screen.getByText("Add marker", { selector: "summary" }));
   await user.type(
     screen.getByLabelText("Timeline marker"),
@@ -395,7 +389,10 @@ async function checkCapture() {
         phase: "recording",
         session: {
           ...session,
-          selection: { mode: "logs_and_network", consent: { whole_device: true } },
+          selection: {
+            mode: "logs_and_network",
+            consent: { whole_device: true },
+          },
           log_attribution: {
             strategy: "android_uid",
             application_id: "invalid.example.demostore",
@@ -427,6 +424,96 @@ async function checkCapture() {
   actionHost.remove();
   console.log(
     "Capture DOM checks passed. Explicit network Start, separate keyboard log consent, policy gates, active scope, marker form submit and closed Log coverage visibility.",
+  );
+}
+async function checkAppCombobox() {
+  const starts: unknown[] = [];
+  const apps = [
+    {
+      application_id: "com.example.shop",
+      label: "Shop",
+      user_id: 0,
+      uid: 10001,
+      shared_uid: false,
+    },
+    {
+      application_id: "com.example.shared",
+      label: "Shared app",
+      user_id: 0,
+      uid: 10002,
+      shared_uid: true,
+    },
+  ];
+  product.applications = async () => apps;
+  api.start = async (request) => {
+    starts.push(request);
+    return idle;
+  };
+  const actionHost = document.createElement("div");
+  document.body.append(actionHost);
+  function Harness() {
+    const [draft, change] = useState({
+      ...initialDraft,
+      serial: "phone-a",
+      selection: "logs",
+      log_mode: "app",
+    });
+    return (
+      <Capture
+        snapshot={idle}
+        operation={{ state: "idle" }}
+        devices={[device]}
+        draft={draft}
+        change={change}
+        preferences={preferences}
+        savePreferences={async () => {}}
+        refresh={async () => {}}
+        run={run}
+        pending=""
+        onSnapshot={() => {}}
+        onOperation={() => {}}
+        setup={() => {}}
+        actionHost={actionHost}
+      />
+    );
+  }
+  render(<Harness />);
+  await user.click(screen.getByRole("button", { name: "Edit capture scope" }));
+  const start = screen.getByRole("button", { name: "Start recording" });
+  assert.equal(start.disabled, true);
+  assert.equal(screen.queryByLabelText("Or enter an application ID"), null);
+  await user.click(screen.getByRole("button", { name: "Refresh apps" }));
+  const input = screen.getByRole("combobox", { name: "Installed apps" });
+  await user.type(input, "Shop");
+  await user.keyboard("{ArrowDown}{Enter}");
+  await waitFor(() => assert.match(input.value, /com\.example\.shop/));
+  assert.equal(start.disabled, false);
+  await user.click(start);
+  assert.deepEqual(starts[0].log_scope, {
+    mode: "app",
+    application_id: "com.example.shop",
+  });
+  await user.click(screen.getByRole("button", { name: "Clear selection" }));
+  assert.equal(start.disabled, true);
+  await user.type(input, "Shared");
+  const shared = await screen.findByRole("option", { name: /Shared app/ });
+  assert.equal(shared.getAttribute("aria-disabled"), "true");
+  await user.keyboard("{Escape}");
+  await user.clear(input);
+  await user.type(input, "com.example.manual");
+  await user.click(
+    await screen.findByRole("option", { name: /Use application ID/ }),
+  );
+  assert.equal(start.disabled, false);
+  await user.click(start);
+  assert.deepEqual(starts[1].log_scope, {
+    mode: "app",
+    application_id: "com.example.manual",
+  });
+  cleanup();
+  actionHost.remove();
+  console.log(
+    "App combobox DOM checks passed. Keyboard selection searches labels and IDs, shared UIDs stay disabled, clear resets admission and manual IDs use the same control.",
   );
 }
 async function checkTimeline() {
@@ -935,6 +1022,7 @@ async function checks() {
       progress: checkProgress,
       scope: checkCaptureScope,
       capture: checkCapture,
+      apps: checkAppCombobox,
       timeline: checkTimeline,
       details: checkDetails,
       modal: checkModal,
