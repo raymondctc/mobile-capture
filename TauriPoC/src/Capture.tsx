@@ -1,8 +1,3 @@
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./components/ui/collapsible";
 import { Badge } from "./components/ui/badge";
 import { Checkbox } from "./components/ui/checkbox";
 import { Button } from "./components/ui/button";
@@ -18,9 +13,19 @@ import {
   ComboboxItem,
   ComboboxList,
 } from "./components/ui/combobox";
-import { RefreshCw, Settings2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./components/ui/popover";
+import { ChevronDown, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   api,
   captureSafe,
@@ -39,7 +44,17 @@ import {
 } from "./product";
 import type { CaptureDraft, RunAction } from "./state";
 import { Policies } from "./Policies";
+import { CaptureInfo, isRoutineNotice } from "./Notices";
 
+const allApps = "__all_apps__";
+const phaseNames: Record<Snapshot["phase"], string> = {
+  idle: "Ready",
+  recording: "Recording",
+  stopped: "Stopped",
+  failed: "Partial evidence",
+  unverified_shutdown: "Shutdown needs verification",
+  recovery_required: "Routing needs recovery",
+};
 export function Capture({
   snapshot,
   operation,
@@ -53,8 +68,6 @@ export function Capture({
   pending,
   onSnapshot,
   onOperation,
-  setup,
-  actionHost,
 }: {
   snapshot: Snapshot | undefined;
   operation: Operation;
@@ -68,8 +81,6 @@ export function Capture({
   pending: string;
   onSnapshot: (snapshot: Snapshot) => void;
   onOperation: (operation: Operation) => void;
-  setup: () => void;
-  actionHost: HTMLDivElement | null;
 }) {
   const [apps, setApps] = useState<Application[]>([]);
   const [appSearch, setAppSearch] = useState("");
@@ -88,7 +99,10 @@ export function Capture({
   const selectedApp = apps.find(
     (app) => app.application_id === draft.application_id,
   );
-  const appOptions = [...new Set(apps.map((app) => app.application_id))];
+  const appOptions = [
+    allApps,
+    ...new Set(apps.map((app) => app.application_id)),
+  ];
   for (const id of [draft.application_id, appSearch.trim()]) {
     if (
       /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/.test(id) &&
@@ -147,85 +161,60 @@ export function Capture({
     onSnapshot(await api.start(request));
     setLogConsent(false);
   }
-  const needsScope =
-    !active &&
-    (!device ||
-      device.state !== "ready" ||
-      !preferences ||
-      !contextValidation.success ||
-      (hasLogs && (draft.log_mode === "app" ? !appValid : !logConsent)));
-  const [editingScope, setEditingScope] = useState(!draft.serial);
-  const scopeSession = active ? session : undefined;
+  const scopeSession =
+    session &&
+    (!captureSafe(snapshot) ||
+      operation.state === "restoring" ||
+      (operation.state === "failed" && operation.recovery_required))
+      ? session
+      : undefined;
+  const scopeSerial = scopeSession?.device.serial ?? draft.serial;
+  const scopeDevice = scopeSession?.device ?? device;
   const scopeMode = scopeSession?.selection.mode ?? draft.selection;
   const scopeLog = scopeSession?.log_scope.mode ?? draft.log_mode;
   const scopeApp =
     scopeSession?.log_scope.mode === "app"
       ? scopeSession.log_scope.application_id
       : draft.application_id;
+  const scopeContext = scopeSession?.context ?? draft.context;
+  const scopePolicy =
+    preferences && scopeSession
+      ? {
+          ...preferences,
+          limits: scopeSession.limits,
+          network_policy: scopeSession.network_policy,
+        }
+      : (editedPolicy ?? preferences);
+  if (scopeApp && !appOptions.includes(scopeApp)) appOptions.push(scopeApp);
   return (
     <section
-      className="shrink-0 rounded-t-lg border border-border bg-card"
+      className="shrink-0 border-b border-border bg-background"
       aria-label="Capture scope"
     >
-      <Collapsible open={editingScope} onOpenChange={setEditingScope}>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2">
-          <div className="min-w-0 text-sm">
-            <span className="mr-2 text-xs text-muted-foreground">Device</span>
-            <span className="font-medium">
-              {scopeSession?.device.name ?? device?.name ?? "Choose device"}
-            </span>
-          </div>
-          <div className="text-sm">
-            <span className="mr-2 text-xs text-muted-foreground">Sources</span>
-            {scopeMode === "network"
-              ? "Network"
-              : scopeMode === "logs"
-                ? "Logs"
-                : "Logs + network"}
-          </div>
-          {scopeMode !== "network" && (
-            <div className="min-w-0 break-all text-sm">
-              <span className="mr-2 text-xs text-muted-foreground">Logs</span>
-              {scopeLog === "whole_device"
-                ? "Whole device"
-                : scopeApp || "Choose app"}
-            </div>
-          )}
-          <Badge variant="secondary" className="text-xs">
-            {active
-              ? "Recording scope"
-              : canStart
-                ? "Ready"
-                : needsScope
-                  ? "Complete capture scope"
-                  : "Capture unavailable"}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-3 py-2">
+        <div className="flex min-w-0 flex-wrap items-end gap-2">
+          <Badge
+            variant="secondary"
+            className="my-1 h-auto max-w-40 gap-1.5 whitespace-normal text-xs"
+            role="status"
+          >
+            <span
+              className={`size-1.5 shrink-0 rounded-full ${active ? "bg-emerald-400" : "bg-muted-foreground"}`}
+            />
+            {pending || (snapshot ? phaseNames[snapshot.phase] : "Connecting…")}
           </Badge>
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="ml-auto">
-              {editingScope ? "Hide capture scope" : "Edit capture scope"}
-            </Button>
-          </CollapsibleTrigger>
-        </div>
-        <CollapsibleContent className="max-h-[42vh] overflow-y-auto overscroll-contain border-t border-border px-4 py-3">
-          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_minmax(0,1fr)]">
-            <section className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2>Android device</h2>
-                <Button
-                  size="icon"
-                  aria-label="Refresh devices"
-                  title="Refresh devices"
-                  disabled={!!pending || active || operationBusy(operation)}
-                  onClick={() => void run("Refreshing devices", refresh)}
-                >
-                  <RefreshCw aria-hidden="true" />
-                </Button>
-              </div>
-              <Label htmlFor="capture-device">Capture on</Label>
+          <div className="min-w-0 w-44">
+            <Label
+              htmlFor="capture-device"
+              className="mb-1 text-xs text-muted-foreground"
+            >
+              Device
+            </Label>
+            <div className="flex min-w-0 gap-1">
               <NativeSelect
                 id="capture-device"
-                value={draft.serial}
-                disabled={active || operationBusy(operation) || !!pending}
+                value={scopeSerial}
+                disabled={blocked}
                 onChange={(event) =>
                   change({
                     ...draft,
@@ -235,304 +224,396 @@ export function Capture({
                 }
               >
                 <option value="">Select a device</option>
-                {draft.serial && !device && (
-                  <option value={draft.serial}>
-                    {draft.serial} · unavailable
-                  </option>
-                )}
+                {scopeSerial &&
+                  !devices.some((item) => item.serial === scopeSerial) && (
+                    <option value={scopeSerial}>
+                      {scopeDevice?.name ?? scopeSerial} ·{" "}
+                      {scopeDevice?.state ?? "unavailable"}
+                    </option>
+                  )}
                 {devices.map((item) => (
                   <option key={item.serial} value={item.serial}>
                     {item.name} · {item.state}
                   </option>
                 ))}
               </NativeSelect>
-              <p className="font-mono select-text break-all text-xs text-muted-foreground">
-                {draft.serial || "Connect USB and enable USB debugging."}
-              </p>
-              {draft.serial && device?.state !== "ready" && (
-                <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
-                  The selected device is {device?.state ?? "unavailable"}.
-                  Unlock it, approve USB debugging, reconnect, and refresh.
-                  Choose a different device explicitly if needed.
-                </p>
-              )}
-              <Button onClick={setup}>
-                <Settings2 aria-hidden="true" />
-                Open device setup
-              </Button>
-            </section>
-            <section className="space-y-3">
-              <h2>Sources and scope</h2>
-              <fieldset
-                className="space-y-3 rounded-lg border border-border p-3"
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="Refresh devices"
                 disabled={blocked}
+                onClick={() => void run("Refreshing devices", refresh)}
               >
-                <legend className="sr-only">Capture sources</legend>
-                <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2">
-                  <Label className="min-w-0">
-                    Sources
-                    <NativeSelect
-                      value={draft.selection}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        if (
-                          value === "logs" ||
-                          value === "network" ||
-                          value === "logs_and_network"
-                        ) {
-                          change({ ...draft, selection: value });
-                          setLogConsent(false);
-                        }
-                      }}
-                    >
-                      <option value="network">Network only</option>
-                      <option value="logs">Logs only</option>
-                      <option value="logs_and_network">Logs and network</option>
-                    </NativeSelect>
-                  </Label>
-                  {hasLogs && (
-                    <Label className="min-w-0">
-                      Log scope
-                      <NativeSelect
-                        value={draft.log_mode}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          if (value === "app" || value === "whole_device") {
-                            change({ ...draft, log_mode: value });
-                            setLogConsent(false);
-                          }
-                        }}
-                      >
-                        <option value="app">Selected app</option>
-                        <option value="whole_device">Whole device</option>
-                      </NativeSelect>
-                    </Label>
-                  )}
-                </div>
-                {hasLogs && (
-                  <>
-                    {draft.log_mode === "app" ? (
-                      <>
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <Label htmlFor="app-search">Installed apps</Label>
-                          <Button
-                            size="sm"
-                            disabled={device?.state !== "ready"}
-                            onClick={() =>
-                              void run("Refreshing installed apps", refreshApps)
-                            }
-                          >
-                            <RefreshCw aria-hidden="true" />
-                            Refresh apps
-                          </Button>
-                        </div>
-                        <Combobox
-                          items={appOptions}
-                          value={draft.application_id || null}
-                          disabled={blocked}
-                          onInputValueChange={setAppSearch}
-                          onValueChange={(id) =>
-                            change({ ...draft, application_id: id ?? "" })
-                          }
-                          itemToStringLabel={(id) => {
-                            const app = apps.find(
-                              (entry) => entry.application_id === id,
-                            );
-                            return app ? `${app.label} · ${id}` : id;
-                          }}
-                          filter={(id, query) => {
-                            const app = apps.find(
-                              (entry) => entry.application_id === id,
-                            );
-                            return `${app?.label ?? ""} ${id}`
-                              .toLocaleLowerCase()
-                              .includes(query.toLocaleLowerCase());
-                          }}
-                        >
-                          <ComboboxInput
-                            id="app-search"
-                            aria-describedby="app-status"
-                            placeholder="Search by name or app ID"
-                            disabled={blocked}
-                            showClear
-                          />
-                          <ComboboxContent>
-                            <ComboboxEmpty>
-                              No matching apps. Enter an application ID to use
-                              it.
-                            </ComboboxEmpty>
-                            <ComboboxList>
-                              {(id: string) => {
-                                const app = apps.find(
-                                  (entry) => entry.application_id === id,
-                                );
-                                return (
-                                  <ComboboxItem
-                                    key={id}
-                                    value={id}
-                                    disabled={app?.shared_uid}
-                                    className="min-w-0 flex-col items-start gap-0.5 py-2"
-                                  >
-                                    <span className="break-words">
-                                      {app?.label ?? "Use application ID"}
-                                    </span>
-                                    <span className="max-w-full break-all font-mono text-xs text-muted-foreground">
-                                      {id}
-                                    </span>
-                                    {app?.shared_uid && (
-                                      <span className="text-xs text-muted-foreground">
-                                        Shared UID · unavailable
-                                      </span>
-                                    )}
-                                  </ComboboxItem>
-                                );
-                              }}
-                            </ComboboxList>
-                          </ComboboxContent>
-                        </Combobox>
-                        <p
-                          className="text-xs leading-relaxed text-muted-foreground"
-                          role="status"
-                          id="app-status"
-                        >
-                          {appState ||
-                            "Refresh to read installed apps. Shared UID apps cannot be isolated."}
-                        </p>
-                        {selectedApp?.shared_uid && (
-                          <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
-                            This app shares its UID. Select another app or
-                            explicitly choose whole-device logs.
-                          </p>
-                        )}
-                        <p className="text-xs leading-relaxed text-muted-foreground">
-                          The app identity is checked before collecting logs. A
-                          missing or changed identity stops app log collection.
-                        </p>
-                      </>
-                    ) : (
-                      <Label className="flex items-start gap-2 rounded-md border border-border bg-muted/35 p-3 text-sm leading-relaxed">
-                        <Checkbox
-                          checked={
-                            active
-                              ? session?.log_scope.mode === "whole_device"
-                              : logConsent
-                          }
-                          onCheckedChange={(checked) =>
-                            setLogConsent(checked === true)
-                          }
-                        />
-                        <span>
-                          I consent to logs from every app and system process
-                          for this recording.
-                        </span>
-                      </Label>
-                    )}
-                  </>
-                )}
-              </fieldset>
-            </section>
-            <section className="space-y-3">
-              <details className="space-y-3 [&>summary]:cursor-pointer [&>summary]:text-sm [&>summary]:font-medium">
-                <summary>Task context (optional)</summary>
-                <fieldset
-                  className="space-y-3 rounded-lg border border-border p-3"
-                  disabled={blocked}
-                >
-                  <Label>
-                    Title
-                    <Input
-                      maxLength={512}
-                      value={draft.context.title}
-                      onChange={(event) =>
-                        change({
-                          ...draft,
-                          context: {
-                            ...draft.context,
-                            title: event.target.value,
-                          },
-                        })
-                      }
-                      placeholder="What are you investigating?"
-                    />
-                  </Label>
-                  <Label>
-                    Notes
-                    <Textarea
-                      maxLength={32768}
-                      value={draft.context.notes}
-                      onChange={(event) =>
-                        change({
-                          ...draft,
-                          context: {
-                            ...draft.context,
-                            notes: event.target.value,
-                          },
-                        })
-                      }
-                      rows={3}
-                    />
-                  </Label>
-                  <Label>
-                    Reproduction steps, one per line
-                    <Textarea
-                      maxLength={409600}
-                      value={draft.context.steps.join("\n")}
-                      onChange={(event) =>
-                        change({
-                          ...draft,
-                          context: {
-                            ...draft.context,
-                            steps: event.target.value.split("\n"),
-                          },
-                        })
-                      }
-                      rows={3}
-                    />
-                  </Label>
-                </fieldset>
-              </details>
-              {!contextValidation.success && (
-                <p
-                  className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
-                  role="alert"
-                >
-                  Task context is too long. Title allows 512 UTF-8 bytes, notes
-                  32,768 bytes, and up to 100 steps of 4,096 bytes each.
-                </p>
-              )}
-              <details className="space-y-3 [&>summary]:cursor-pointer [&>summary]:text-sm [&>summary]:font-medium">
-                <summary>Capture limits</summary>
-                {preferences && (
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void run("Saving capture limits", async () => {
-                        await savePreferences({
-                          ...preferences,
-                          limits: editedPolicy?.limits ?? preferences.limits,
-                          network_policy:
-                            editedPolicy?.network_policy ??
-                            preferences.network_policy,
-                        });
-                        setEditedPolicy(undefined);
+                <RefreshCw aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+          <Label className="w-36 min-w-0 text-xs text-muted-foreground">
+            Sources
+            <NativeSelect
+              value={scopeMode}
+              disabled={blocked}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (
+                  value === "logs" ||
+                  value === "network" ||
+                  value === "logs_and_network"
+                ) {
+                  change({ ...draft, selection: value });
+                  setLogConsent(false);
+                }
+              }}
+            >
+              <option value="network">Network only</option>
+              <option value="logs">Logs only</option>
+              <option value="logs_and_network">Logs and network</option>
+            </NativeSelect>
+          </Label>
+          {scopeMode !== "network" && (
+            <div className="w-56 min-w-0">
+              <Label
+                htmlFor="app-search"
+                className="mb-1 text-xs text-muted-foreground"
+              >
+                Log app
+              </Label>
+              <div className="flex min-w-0 gap-1">
+                <div className="min-w-0 flex-1">
+                  <Combobox
+                    items={appOptions}
+                    value={
+                      scopeLog === "whole_device" ? allApps : scopeApp || null
+                    }
+                    disabled={blocked}
+                    onInputValueChange={setAppSearch}
+                    onValueChange={(id) => {
+                      change({
+                        ...draft,
+                        log_mode: id === allApps ? "whole_device" : "app",
+                        application_id:
+                          id === allApps ? draft.application_id : (id ?? ""),
                       });
+                      setLogConsent(false);
+                    }}
+                    itemToStringLabel={(id) => {
+                      if (id === allApps) return "All apps";
+                      const app = apps.find(
+                        (entry) => entry.application_id === id,
+                      );
+                      return app ? `${app.label} · ${id}` : id;
+                    }}
+                    filter={(id, query) => {
+                      const app = apps.find(
+                        (entry) => entry.application_id === id,
+                      );
+                      return `${id === allApps ? "All apps" : (app?.label ?? "")} ${id}`
+                        .toLocaleLowerCase()
+                        .includes(query.toLocaleLowerCase());
                     }}
                   >
-                    <Policies
-                      value={editedPolicy ?? preferences}
-                      change={setEditedPolicy}
+                    <ComboboxInput
+                      id="app-search"
+                      placeholder="All apps or app ID"
                       disabled={blocked}
+                      showClear={scopeLog !== "whole_device"}
                     />
-                    <Button type="submit" disabled={blocked || !editedPolicy}>
-                      Save limits
-                    </Button>
-                  </form>
-                )}
-              </details>
-            </section>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+                    <ComboboxContent>
+                      <ComboboxEmpty>
+                        No matching apps. Enter an application ID to use it.
+                      </ComboboxEmpty>
+                      <ComboboxList>
+                        {(id: string) => {
+                          const app = apps.find(
+                            (entry) => entry.application_id === id,
+                          );
+                          return (
+                            <ComboboxItem
+                              key={id}
+                              value={id}
+                              disabled={app?.shared_uid}
+                              className="min-w-0 flex-col items-start gap-0.5 py-2"
+                            >
+                              <span className="break-words">
+                                {id === allApps
+                                  ? "All apps"
+                                  : (app?.label ?? "Use application ID")}
+                              </span>
+                              {id !== allApps && (
+                                <span className="max-w-full break-all font-mono text-xs text-muted-foreground">
+                                  {id}
+                                </span>
+                              )}
+                              {app?.shared_uid && (
+                                <span className="text-xs text-muted-foreground">
+                                  Shared UID · unavailable
+                                </span>
+                              )}
+                            </ComboboxItem>
+                          );
+                        }}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                </div>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Refresh apps"
+                  disabled={blocked || device?.state !== "ready"}
+                  onClick={() =>
+                    void run("Refreshing installed apps", refreshApps)
+                  }
+                >
+                  <RefreshCw aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+          )}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm">
+                <SlidersHorizontal aria-hidden="true" />
+                Advanced
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              aria-label="Advanced capture settings"
+              align="start"
+              className="max-h-[min(36rem,75dvh)] w-[min(38rem,calc(100vw-2rem))] overflow-y-auto p-4"
+            >
+              <h2 className="font-medium">Task context and capture limits</h2>
+              <fieldset className="space-y-3" disabled={blocked}>
+                <Label>
+                  Title
+                  <Input
+                    maxLength={512}
+                    value={scopeContext.title}
+                    onChange={(event) =>
+                      change({
+                        ...draft,
+                        context: {
+                          ...draft.context,
+                          title: event.target.value,
+                        },
+                      })
+                    }
+                    placeholder="What are you investigating?"
+                  />
+                </Label>
+                <Label>
+                  Notes
+                  <Textarea
+                    maxLength={32768}
+                    value={scopeContext.notes}
+                    onChange={(event) =>
+                      change({
+                        ...draft,
+                        context: {
+                          ...draft.context,
+                          notes: event.target.value,
+                        },
+                      })
+                    }
+                    rows={3}
+                  />
+                </Label>
+                <Label>
+                  Reproduction steps, one per line
+                  <Textarea
+                    maxLength={409600}
+                    value={scopeContext.steps.join("\n")}
+                    onChange={(event) =>
+                      change({
+                        ...draft,
+                        context: {
+                          ...draft.context,
+                          steps: event.target.value.split("\n"),
+                        },
+                      })
+                    }
+                    rows={3}
+                  />
+                </Label>
+              </fieldset>
+              {scopePolicy && preferences && (
+                <form
+                  className="space-y-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (blocked) return;
+                    void run("Saving capture limits", async () => {
+                      await savePreferences({
+                        ...preferences,
+                        limits: editedPolicy?.limits ?? preferences.limits,
+                        network_policy:
+                          editedPolicy?.network_policy ??
+                          preferences.network_policy,
+                      });
+                      setEditedPolicy(undefined);
+                    });
+                  }}
+                >
+                  <Policies
+                    value={scopePolicy}
+                    change={setEditedPolicy}
+                    disabled={blocked}
+                  />
+                  <Button type="submit" disabled={blocked || !editedPolicy}>
+                    Save limits
+                  </Button>
+                </form>
+              )}
+            </PopoverContent>
+          </Popover>
+          <CaptureInfo>
+            <h2 className="font-medium text-foreground">Capture information</h2>
+            <p>App selection limits Android logs only.</p>
+            {!session?.warnings.some(
+              (warning) =>
+                isRoutineNotice(warning) &&
+                warning.includes("Network capture covers"),
+            ) && (
+              <p>
+                Network capture covers whole-device HTTP(S). HTTPS requires
+                manual CA trust; certificate pinning can prevent observation.
+              </p>
+            )}
+            <p>
+              Recording continues when this window closes. Reopen Mobile Capture
+              Android to return.
+            </p>
+            {scopeMode !== "network" && (
+              <p id="app-status">
+                {appState ||
+                  "Refresh to read installed apps. Shared UID apps cannot be isolated."}{" "}
+                The app identity is checked before collecting logs. A missing or
+                changed identity stops app log collection.
+              </p>
+            )}
+            {session?.warnings.filter(isRoutineNotice).map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+            {session?.log_attribution && (
+              <>
+                <p>
+                  {session.log_attribution.strategy.replaceAll("_", " ")} ·{" "}
+                  {session.log_attribution.application_id ?? "All apps"} ·
+                  buffers {session.log_attribution.buffers.join(", ")} · levels{" "}
+                  {session.log_attribution.levels}
+                </p>
+                {session.log_attribution.exclusions.map((item) => (
+                  <p key={item}>{item}</p>
+                ))}
+              </>
+            )}
+          </CaptureInfo>
+        </div>
+        <section
+          className="flex shrink-0 flex-wrap items-center justify-end gap-1 pt-4"
+          aria-label="Recording controls"
+        >
+          {active ? (
+            <>
+              <Button
+                variant="default"
+                disabled={!!pending || operationBusy(operation)}
+                onClick={() =>
+                  void run("Stopping and saving", async () =>
+                    onOperation(await api.save(null)),
+                  )
+                }
+              >
+                Stop &amp; Save
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon"
+                    aria-label="More recording actions"
+                    disabled={!!pending || operationBusy(operation)}
+                  >
+                    <ChevronDown aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem
+                    disabled={!!pending || operationBusy(operation)}
+                    onSelect={() =>
+                      void run("Stopping capture", async () =>
+                        onSnapshot(await api.stop()),
+                      )
+                    }
+                  >
+                    Stop without archive
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          ) : (
+            <Button
+              variant="default"
+              disabled={!canStart}
+              onClick={() => void run("Starting capture", start)}
+            >
+              Start recording
+            </Button>
+          )}
+          {(snapshot?.phase === "recovery_required" ||
+            snapshot?.phase === "unverified_shutdown") && (
+            <Button
+              className="border-destructive/30 bg-destructive/5 text-destructive"
+              disabled={!!pending || operationBusy(operation)}
+              onClick={() =>
+                void run("Recovering device routing", async () =>
+                  onSnapshot(await api.recover()),
+                )
+              }
+            >
+              Retry safe recovery
+            </Button>
+          )}
+        </section>
+      </div>
+      {scopeMode !== "network" && scopeLog === "whole_device" && (
+        <Label className="mx-3 mb-2 flex items-center gap-2 text-xs leading-relaxed">
+          <Checkbox
+            disabled={blocked}
+            checked={
+              scopeSession
+                ? scopeSession.log_scope.mode === "whole_device"
+                : logConsent
+            }
+            onCheckedChange={(checked) => setLogConsent(checked === true)}
+          />
+          <span>
+            I consent to logs from every app and system process for this
+            recording.
+          </span>
+        </Label>
+      )}
+      {!scopeSession && draft.serial && device?.state !== "ready" && (
+        <p className="mx-3 mb-2 text-xs text-warning">
+          The selected device is {device?.state ?? "unavailable"}. Unlock it,
+          approve USB debugging, reconnect, and refresh. Choose a different
+          device explicitly if needed.
+        </p>
+      )}
+      {!scopeSession &&
+        hasLogs &&
+        selectedApp?.shared_uid &&
+        draft.log_mode === "app" && (
+          <p className="mx-3 mb-2 text-xs text-warning">
+            This app shares its UID. Select another app or explicitly choose All
+            apps.
+          </p>
+        )}
+      {!scopeSession && !contextValidation.success && (
+        <p className="mx-3 mb-2 text-xs text-warning" role="alert">
+          Task context is too long. Title allows 512 UTF-8 bytes, notes 32,768
+          bytes, and up to 100 steps of 4,096 bytes each.
+        </p>
+      )}
       <section className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 text-xs [&:has(>*)]:border-t [&:has(>*)]:border-border [&:has(>*)]:py-2">
         {session && (
           <>
@@ -548,13 +629,11 @@ export function Capture({
                 </span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {session.receipt
-                ? `Logs ended · ${session.receipt.reason.replaceAll("_", " ")}`
-                : active
-                  ? "Recording continues when this window closes. Reopen Mobile Capture Android to return."
-                  : "Capture stopped."}
-            </p>
+            {session.receipt && (
+              <p className="text-xs text-muted-foreground">
+                Logs ended · {session.receipt.reason.replaceAll("_", " ")}
+              </p>
+            )}
             {session.network.state === "recording" && (
               <p className="text-xs leading-relaxed text-muted-foreground">
                 Network · {session.network.detail.decoded_http_events} decoded
@@ -585,34 +664,16 @@ export function Capture({
                 . {session.network.detail.reasons.join(" ")}
               </p>
             )}
-            {session.log_attribution && (
-              <Collapsible className="min-w-0 max-w-full">
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm">
-                    Log coverage
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-2 pt-2 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere] select-text">
-                  <p>
-                    {session.log_attribution.strategy.replaceAll("_", " ")} ·{" "}
-                    {session.log_attribution.application_id ?? "All apps"} ·
-                    buffers {session.log_attribution.buffers.join(", ")} ·
-                    levels {session.log_attribution.levels}
-                  </p>
-                  {session.log_attribution.exclusions.map((item) => (
-                    <p key={item}>{item}</p>
-                  ))}
-                </CollapsibleContent>
-              </Collapsible>
-            )}
-            {session.warnings.map((warning) => (
-              <p
-                className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
-                key={warning}
-              >
-                {warning}
-              </p>
-            ))}
+            {session.warnings
+              .filter((warning) => !isRoutineNotice(warning))
+              .map((warning) => (
+                <p
+                  className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
+                  key={warning}
+                >
+                  {warning}
+                </p>
+              ))}
           </>
         )}
         {active && (
@@ -645,64 +706,6 @@ export function Capture({
           </details>
         )}
       </section>
-      {actionHost &&
-        createPortal(
-          <section
-            className="contents sm:flex sm:min-w-0 sm:flex-col sm:items-end sm:gap-1.5"
-            aria-label="Recording controls"
-          >
-            <div className="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-2">
-              {active ? (
-                <>
-                  <Button
-                    variant="default"
-                    disabled={!!pending || operationBusy(operation)}
-                    onClick={() =>
-                      void run("Stopping and saving", async () =>
-                        onOperation(await api.save(null)),
-                      )
-                    }
-                  >
-                    Stop &amp; Save
-                  </Button>
-                  <Button
-                    disabled={!!pending || operationBusy(operation)}
-                    onClick={() =>
-                      void run("Stopping capture", async () =>
-                        onSnapshot(await api.stop()),
-                      )
-                    }
-                  >
-                    Stop without archive
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="default"
-                  disabled={!canStart}
-                  onClick={() => void run("Starting capture", start)}
-                >
-                  Start recording
-                </Button>
-              )}
-              {(snapshot?.phase === "recovery_required" ||
-                snapshot?.phase === "unverified_shutdown") && (
-                <Button
-                  className="border-destructive/30 bg-destructive/5 text-destructive"
-                  disabled={!!pending || operationBusy(operation)}
-                  onClick={() =>
-                    void run("Recovering device routing", async () =>
-                      onSnapshot(await api.recover()),
-                    )
-                  }
-                >
-                  Retry safe recovery
-                </Button>
-              )}
-            </div>
-          </section>,
-          actionHost,
-        )}
     </section>
   );
 }

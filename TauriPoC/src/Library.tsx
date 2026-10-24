@@ -13,6 +13,7 @@ import { product, type SessionDescriptor, type catalogSchema } from "./product";
 import type { z } from "zod";
 import type { RunAction } from "./state";
 import { timeLabel } from "./ui";
+import { Notices, isRoutineNotice } from "./Notices";
 export function Library({
   inspected,
   open,
@@ -23,6 +24,7 @@ export function Library({
   run,
   pending,
   revision,
+  visible = true,
 }: {
   inspected: SessionDescriptor | undefined;
   open: (directory: string) => Promise<void>;
@@ -33,6 +35,7 @@ export function Library({
   run: RunAction;
   pending: string;
   revision: number;
+  visible?: boolean;
 }) {
   const [catalog, setCatalog] = useState<z.infer<typeof catalogSchema>>();
   const [catalogError, setCatalogError] = useState("");
@@ -221,27 +224,29 @@ export function Library({
               capture.
             </p>
           )}
-          {catalog?.warnings.map((warning) => (
-            <p
-              className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
-              key={warning}
-            >
-              {warning}
-            </p>
-          ))}
+          {catalog && (
+            <Notices
+              messages={catalog.warnings}
+              visible={visible}
+              label="Catalog information"
+            />
+          )}
         </div>
       )}
       {inspected && (
-        <>
-          {inspected.warnings.map((warning) => (
-            <p
-              className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
-              key={warning}
-            >
-              {warning}
-            </p>
-          ))}
-        </>
+        <Notices
+          messages={inspected.warnings.filter(
+            (message) =>
+              !(
+                snapshot &&
+                snapshot.phase !== "idle" &&
+                snapshot.session.directory === inspected.directory &&
+                isRoutineNotice(message)
+              ),
+          )}
+          visible={visible}
+          label="Session information"
+        />
       )}
     </section>
   );

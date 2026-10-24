@@ -58,9 +58,22 @@
       {
         "file": "src/components/ui/input-group.tsx",
         "generated_sha256": "c8753d5bc132f180454c7b9f582bd9007e54bb8cae9d3ab4a545872dbb0fde8b"
+      },
+      {
+        "file": "src/components/ui/dropdown-menu.tsx",
+        "generated_sha256": "1b9c748a8ea8c2890124f316e3edf840153ef43f6df76b3ff1878d8fd37f9685"
+      },
+      {
+        "file": "src/components/ui/popover.tsx",
+        "generated_sha256": "61be62a441fb6b90e26ceaf93353f57411a4d114f305e0417b8f1122750b9018"
+      },
+      {
+        "file": "src/components/ui/tooltip.tsx",
+        "generated_sha256": "fc4380a53b7c847ff3d692c320f8d889eaaf3d6878dcba1da926ec4ab3a7c037"
       }
     ],
-    "additional_components_command": "npx shadcn@4.16.1 add combobox --yes"
+    "additional_components_command": "npx shadcn@4.16.1 add combobox --yes",
+    "overlay_components_command": "env PATH=/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/bin:/bin npx --yes shadcn@4.16.1 add dropdown-menu popover tooltip --yes"
   },
   "fonts": [
     {
@@ -180,6 +193,18 @@
       "license_text_in_package": true
     },
     {
+      "package": "@radix-ui/react-arrow",
+      "version": "1.1.17",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-arrow--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
       "package": "@radix-ui/react-checkbox",
       "version": "1.4.1",
       "license": "MIT",
@@ -198,6 +223,18 @@
       "files": [
         {
           "file": "radix-ui--react-collapsible--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-collection",
+      "version": "1.2.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-collection--LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
         }
       ],
@@ -240,12 +277,36 @@
       "license_text_in_package": true
     },
     {
+      "package": "@radix-ui/react-direction",
+      "version": "1.2.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-direction--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
       "package": "@radix-ui/react-dismissable-layer",
       "version": "1.2.1",
       "license": "MIT",
       "files": [
         {
           "file": "radix-ui--react-dismissable-layer--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-dropdown-menu",
+      "version": "2.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-dropdown-menu--LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
         }
       ],
@@ -300,6 +361,42 @@
       "license_text_in_package": true
     },
     {
+      "package": "@radix-ui/react-menu",
+      "version": "2.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-menu--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-popover",
+      "version": "1.3.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-popover--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-popper",
+      "version": "1.4.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-popper--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
       "package": "@radix-ui/react-portal",
       "version": "1.2.0",
       "license": "MIT",
@@ -348,12 +445,36 @@
       "license_text_in_package": true
     },
     {
+      "package": "@radix-ui/react-roving-focus",
+      "version": "1.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-roving-focus--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
       "package": "@radix-ui/react-slot",
       "version": "1.5.0",
       "license": "MIT",
       "files": [
         {
           "file": "radix-ui--react-slot--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-tooltip",
+      "version": "1.4.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-tooltip--LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
         }
       ],
@@ -396,6 +517,18 @@
       "license_text_in_package": true
     },
     {
+      "package": "@radix-ui/react-use-is-hydrated",
+      "version": "0.1.3",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-use-is-hydrated--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
       "package": "@radix-ui/react-use-layout-effect",
       "version": "1.1.4",
       "license": "MIT",
@@ -414,6 +547,18 @@
       "files": [
         {
           "file": "radix-ui--react-use-size--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-visually-hidden",
+      "version": "1.2.13",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-visually-hidden--LICENSE",
           "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
         }
       ],

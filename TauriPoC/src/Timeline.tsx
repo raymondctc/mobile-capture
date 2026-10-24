@@ -218,15 +218,15 @@ export function Timeline({
     !page?.rows.some((row) => row.event.id === visibleInspector.eventId);
   return (
     <section
-      className="relative flex h-[calc(100dvh-18rem)] min-h-[32rem] shrink-0 overflow-hidden sm:min-h-[24rem]"
+      className="relative flex min-h-[16rem] min-w-0 flex-1 overflow-hidden"
       aria-label="Captured evidence"
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 pt-2 [&>div:first-child]:flex [&>div:first-child]:flex-wrap [&>div:first-child]:items-baseline [&>div:first-child]:gap-3 [&_h2]:text-base [&_h2]:font-medium">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 pt-2 [&>div:first-child]:flex [&>div:first-child]:flex-wrap [&>div:first-child]:items-baseline [&>div:first-child]:gap-3 [&_h1]:text-base [&_h1]:font-medium">
           <div>
-            <h2 ref={heading} tabIndex={-1}>
+            <h1 ref={heading} tabIndex={-1}>
               Timeline
-            </h2>
+            </h1>
             <p className="text-xs leading-relaxed text-muted-foreground">
               {inspected
                 ? `${page?.matching.toLocaleString() ?? "…"} matching · ${page?.total.toLocaleString() ?? "…"} indexed events`

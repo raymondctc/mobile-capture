@@ -39,6 +39,11 @@ for (const name of [
         : dom.window[name],
   });
 globalThis.PointerEvent = dom.window.MouseEvent;
+globalThis.ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(
   dom.window,
 );

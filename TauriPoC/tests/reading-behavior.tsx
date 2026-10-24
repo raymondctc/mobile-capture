@@ -17,6 +17,8 @@ import { OperationStatus } from "../src/Operation";
 import { Dialog } from "../src/ui";
 import { Settings } from "../src/Settings";
 import { HandoffNotices } from "../src/Handoff";
+import { Library } from "../src/Library";
+import { isRoutineNotice } from "../src/Notices";
 import { App } from "../src/main";
 import { api } from "../src/api";
 import { product } from "../src/product";
@@ -170,8 +172,6 @@ async function checkCaptureScope() {
     starts.push(request);
     return idle;
   };
-  const actionHost = document.createElement("div");
-  document.body.append(actionHost);
   const unavailable = {
     serial: "phone-offline",
     name: "Offline phone",
@@ -197,65 +197,45 @@ async function checkCaptureScope() {
         pending=""
         onSnapshot={() => {}}
         onOperation={() => {}}
-        setup={() => {}}
-        actionHost={actionHost}
       />
     );
   }
   const mounted = render(<Harness />);
-  const captureDevice = screen.getByLabelText("Capture on");
+  const captureDevice = screen.getByLabelText("Device");
   await user.selectOptions(captureDevice, unavailable.serial);
-  const scope = screen.getByRole("region", { name: "Capture scope" });
-  const trigger = within(scope).getByRole("button", {
-    expanded: true,
-  });
-  assert.equal(
-    trigger.disabled,
-    false,
-    "Incomplete capture scope can be collapsed",
-  );
-  await user.click(trigger);
-  assert.equal(trigger.getAttribute("aria-expanded"), "false");
-  assert.equal(screen.queryByLabelText("Capture on"), null);
-  assert.match(scope.textContent!, /Complete capture scope/);
+  assert.equal(screen.queryByRole("button", { name: /capture scope/ }), null);
+  assert.equal(screen.getByLabelText("Device").value, unavailable.serial);
+  assert.ok(screen.getByText(/The selected device is offline/));
   assert.equal(
     screen.getByRole("button", { name: "Start recording" }).disabled,
     true,
   );
   mounted.rerender(<Harness devices={[]} />);
-  assert.equal(trigger.getAttribute("aria-expanded"), "false");
-  assert.equal(screen.queryByLabelText("Capture on"), null);
+  assert.equal(screen.getByLabelText("Device").value, unavailable.serial);
   assert.equal(
     screen.getByRole("button", { name: "Start recording" }).disabled,
     true,
   );
-  await user.click(trigger);
-  assert.equal(screen.getByLabelText("Capture on").value, unavailable.serial);
   assert.equal(starts.length, 0);
   cleanup();
   const savedDraft = { ...initialDraft, serial: device.serial };
   const restored = render(
     <Harness devices={[]} draftValue={savedDraft} loading />,
   );
-  const restoredTrigger = within(
-    screen.getByRole("region", { name: "Capture scope" }),
-  ).getByRole("button", { name: /capture scope/ });
+  assert.equal(screen.getByLabelText("Device").value, device.serial);
   assert.equal(
-    restoredTrigger.getAttribute("aria-expanded"),
-    "false",
-    "Loading discovery does not expand an existing capture draft",
+    screen.getByRole("button", { name: "Start recording" }).disabled,
+    true,
   );
   restored.rerender(<Harness draftValue={savedDraft} />);
-  assert.equal(restoredTrigger.getAttribute("aria-expanded"), "false");
   assert.equal(
     screen.getByRole("button", { name: "Start recording" }).disabled,
     false,
   );
   assert.equal(starts.length, 0);
   cleanup();
-  actionHost.remove();
   console.log(
-    "Capture scope DOM checks passed. Missing setup opens guidance, an unavailable device can be collapsed and reopened, refresh keeps deliberate collapse, and Start stays disabled without autostart.",
+    "Direct scope DOM checks passed. Device and Sources stay available, unavailable selection persists through discovery, and Start requires readiness without autostart.",
   );
 }
 async function checkCapture() {
@@ -269,8 +249,6 @@ async function checkCapture() {
     markers.push(text);
     return { phase: "recording", session };
   };
-  const actionHost = document.createElement("div");
-  document.body.append(actionHost);
   function Harness({
     snapshot = idle,
     pending = "",
@@ -292,8 +270,6 @@ async function checkCapture() {
         pending={pending}
         onSnapshot={() => {}}
         onOperation={() => {}}
-        setup={() => {}}
-        actionHost={actionHost}
       />
     );
   }
@@ -314,16 +290,21 @@ async function checkCapture() {
     network_policy: policy,
     context: initialDraft.context,
   });
-  await user.click(screen.getByRole("button", { name: "Edit capture scope" }));
   assert.equal(
-    screen.getByText("Task context (optional)").parentElement!.open,
-    false,
+    screen
+      .getByRole("button", { name: "Advanced" })
+      .getAttribute("aria-expanded"),
+    "false",
   );
+  assert.equal(screen.queryByLabelText("Title"), null);
+  assert.equal(screen.queryByRole("combobox", { name: "Log app" }), null);
   await user.selectOptions(
     screen.getByLabelText("Sources"),
     "logs_and_network",
   );
-  await user.selectOptions(screen.getByLabelText("Log scope"), "whole_device");
+  const logApp = screen.getByRole("combobox", { name: "Log app" });
+  await user.click(logApp);
+  await user.click(await screen.findByRole("option", { name: "All apps" }));
   assert.equal(start.disabled, true);
   const consent = screen.getByRole("checkbox", {
     name: /I consent to logs from every app/,
@@ -334,6 +315,12 @@ async function checkCapture() {
   assert.equal(start.disabled, false);
   await user.click(start);
   assert.equal(starts[1].whole_device_consent, true);
+  assert.equal(consent.getAttribute("aria-checked"), "false");
+  assert.equal(
+    start.disabled,
+    true,
+    "All apps consent is required again for the next recording",
+  );
   mounted.unmount();
   for (const props of [
     { pending: "Saving" },
@@ -372,10 +359,10 @@ async function checkCapture() {
       }}
     />,
   );
-  assert.match(
-    screen.getByRole("region", { name: "Capture scope" }).textContent!,
-    /SourcesNetwork/,
-  );
+  assert.equal(screen.getByLabelText("Sources").value, "network");
+  assert.equal(screen.getByLabelText("Device").value, session.device.serial);
+  assert.equal(screen.getByLabelText("Sources").disabled, true);
+  assert.equal(screen.getByLabelText("Device").disabled, true);
   assert.equal(screen.queryByText(/Start records whole-device HTTP/), null);
   await user.click(screen.getByText("Add marker", { selector: "summary" }));
   await user.type(
@@ -393,6 +380,11 @@ async function checkCapture() {
             mode: "logs_and_network",
             consent: { whole_device: true },
           },
+          warnings: [
+            "Device clock uncertainty is unknown. Time proximity does not establish causality.",
+            "Unknown coverage error. Inspect the collector.",
+            "FIXTURE MODE. Compiled fake ADB evidence, not a phone.",
+          ],
           log_attribution: {
             strategy: "android_uid",
             application_id: "invalid.example.demostore",
@@ -407,25 +399,248 @@ async function checkCapture() {
       }}
     />,
   );
-  const coverageTrigger = screen.getByRole("button", { name: "Log coverage" });
+  assert.ok(screen.getByText("Unknown coverage error. Inspect the collector."));
+  assert.ok(
+    screen.getByText("FIXTURE MODE. Compiled fake ADB evidence, not a phone."),
+  );
+  assert.equal(
+    screen.queryByText(
+      "Device clock uncertainty is unknown. Time proximity does not establish causality.",
+    ),
+    null,
+  );
+  const coverageTrigger = screen.getByRole("button", {
+    name: "Capture information",
+  });
   assert.equal(coverageTrigger.getAttribute("aria-expanded"), "false");
   assert.equal(screen.queryByText(/android uid ·/), null);
   await user.click(coverageTrigger);
+  assert.ok(screen.getByRole("dialog", { name: "Capture information" }));
   assert.equal(coverageTrigger.getAttribute("aria-expanded"), "true");
   assert.match(
     screen.getByText(/android uid ·/).textContent!,
     /android uid · invalid.example.demostore · buffers main, system, crash · levels V/,
   );
   assert.ok(screen.getByText("Shared UID apps are excluded."));
+  assert.ok(
+    screen.getByText(
+      "Device clock uncertainty is unknown. Time proximity does not establish causality.",
+    ),
+  );
   await user.click(coverageTrigger);
   assert.equal(screen.queryByText(/android uid ·/), null);
   assert.equal(screen.queryByText("Shared UID apps are excluded."), null);
   cleanup();
-  actionHost.remove();
   console.log(
-    "Capture DOM checks passed. Explicit network Start, separate keyboard log consent, policy gates, active scope, marker form submit and closed Log coverage visibility.",
+    "Capture DOM checks passed. Explicit network Start, separate keyboard log consent, policy gates, active scope, marker form submit and closed Capture information visibility.",
   );
 }
+async function checkOwnedScope() {
+  const owned = {
+    ...session,
+    device: { ...device, serial: "owned-phone", name: "Owned phone" },
+    selection: { mode: "logs_and_network", consent: { whole_device: true } },
+    log_scope: { mode: "app", application_id: "com.owned.app" },
+    context: {
+      title: "Owned investigation",
+      notes: "Owned notes",
+      steps: ["Owned step"],
+    },
+    limits: { ...limits, records: 99 },
+  };
+  const stopped = { ...owned, network: { state: "not_selected" } };
+  const draft = {
+    ...initialDraft,
+    serial: "next-phone",
+    selection: "logs",
+    application_id: "com.next.app",
+    context: { title: "Next investigation", notes: "", steps: [] },
+  };
+  const props = {
+    devices: [{ ...device, serial: draft.serial }],
+    draft,
+    change: () => {},
+    preferences,
+    savePreferences: async () => {},
+    refresh: async () => {},
+    run,
+    onSnapshot: () => {},
+    onOperation: () => {},
+    pending: "",
+    operation: { state: "idle" },
+  };
+  for (const capture of [
+    { snapshot: { phase: "recording", session: owned } },
+    { snapshot: { phase: "recovery_required", session: owned } },
+    { snapshot: { phase: "unverified_shutdown", session: owned } },
+    {
+      snapshot: { phase: "stopped", session: stopped },
+      operation: {
+        state: "restoring",
+        id: "restore",
+        kind: "save",
+        message: "Restoring routing",
+      },
+    },
+  ]) {
+    render(<Capture {...props} {...capture} />);
+    assert.equal(screen.getByLabelText("Device").value, owned.device.serial);
+    assert.equal(screen.getByLabelText("Device").disabled, true);
+    assert.equal(screen.getByLabelText("Sources").value, owned.selection.mode);
+    assert.equal(screen.getByLabelText("Sources").disabled, true);
+    assert.equal(
+      screen.getByRole("combobox", { name: "Log app" }).value,
+      "com.owned.app",
+    );
+    assert.equal(
+      screen.getByRole("combobox", { name: "Log app" }).disabled,
+      true,
+    );
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    assert.ok(
+      screen.getByRole("dialog", { name: "Advanced capture settings" }),
+    );
+    assert.equal(screen.getByLabelText("Title").value, owned.context.title);
+    assert.equal(screen.getByLabelText("Title").matches(":disabled"), true);
+    assert.equal(screen.getByLabelText("Maximum records").value, "99");
+    assert.equal(
+      screen.getByLabelText("Maximum records").matches(":disabled"),
+      true,
+    );
+    cleanup();
+  }
+  render(
+    <Capture
+      {...props}
+      snapshot={{ phase: "stopped", session: stopped }}
+      pending="Starting capture"
+    />,
+  );
+  assert.equal(screen.getByLabelText("Device").value, draft.serial);
+  assert.equal(screen.getByLabelText("Sources").value, draft.selection);
+  assert.equal(
+    screen.getByRole("combobox", { name: "Log app" }).value,
+    draft.application_id,
+  );
+  assert.equal(screen.getByLabelText("Device").disabled, true);
+  await user.click(screen.getByRole("button", { name: "Advanced" }));
+  assert.equal(screen.getByLabelText("Title").value, draft.context.title);
+  assert.equal(
+    screen.getByLabelText("Maximum records").value,
+    String(limits.records),
+  );
+  assert.equal(screen.getByLabelText("Title").matches(":disabled"), true);
+  cleanup();
+  console.log(
+    "Owned scope DOM checks passed. Recording, recovery, shutdown verification and restoration show locked actual scope and limits. A pending new Start retains the submitted draft over an old safe session.",
+  );
+}
+
+async function checkNotices() {
+  const routine = [
+    'Android log scope: App { application_id: "com.example.app" }. All available emitted levels from main, system, and crash buffers.',
+    "Android log scope: WholeDevice. All available emitted levels from main, system, and crash buffers.",
+    "Device clock uncertainty is unknown. Time proximity does not establish causality.",
+    "Device logs were not selected. Network capture covers whole-device HTTP(S). HTTPS requires manual CA trust; certificate pinning can prevent observation.",
+    "Device logs are limited to com.example.app. Network capture covers whole-device HTTP(S). HTTPS requires manual CA trust; certificate pinning can prevent observation.",
+    "Device logs cover all apps and system processes. Network capture covers whole-device HTTP(S). HTTPS requires manual CA trust; certificate pinning can prevent observation.",
+    "Timestamp proximity does not prove causation.",
+    "Whole-device proxy evidence. Manual CA trust, certificate pinning, and omissions limit coverage.",
+    "Device clock uncertainty unknown",
+  ];
+  const actionable = [
+    "Unknown coverage error. Check the collector.",
+    "Device clock calibration failed.",
+    "Guardian interrupted. The proxy listener may have stopped before recovery. Original evidence is partial.",
+    "FIXTURE MODE. Compiled fake ADB evidence, not a phone.",
+    routine[0] + " Collector failed.",
+    routine[3] + " Recovery required.",
+  ];
+  for (const message of routine)
+    assert.equal(isRoutineNotice(message), true, message);
+  for (const message of actionable)
+    assert.equal(isRoutineNotice(message), false, message);
+  product.catalog = async () => ({
+    sessions: [],
+    warnings: [routine[1], actionable[1]],
+    scanned: 0,
+    truncated: false,
+  });
+  const props = {
+    open: async () => {},
+    close: () => {},
+    operation: { state: "idle" },
+    onOperation: () => {},
+    run,
+    pending: "",
+    revision: 0,
+  };
+  const mounted = render(
+    <Library
+      {...props}
+      inspected={{ ...descriptor, warnings: [routine[0], actionable[0]] }}
+      snapshot={idle}
+    />,
+  );
+  assert.ok(screen.getByText(actionable[0]));
+  assert.equal(screen.queryByText(routine[0]), null);
+  await user.click(screen.getByRole("button", { name: "Session information" }));
+  assert.ok(screen.getByText(routine[0]));
+  await user.click(screen.getByRole("button", { name: "Session information" }));
+  await user.click(screen.getByRole("button", { name: "Saved sessions" }));
+  assert.ok(await screen.findByText(actionable[1]));
+  assert.equal(screen.queryByText(routine[1]), null);
+  await user.click(screen.getByRole("button", { name: "Catalog information" }));
+  assert.ok(screen.getByText(routine[1]));
+  mounted.rerender(
+    <Library
+      {...props}
+      inspected={{ ...descriptor, warnings: [routine[0], actionable[0]] }}
+      snapshot={idle}
+      visible={false}
+    />,
+  );
+  assert.equal(
+    screen.queryByText(routine[1]),
+    null,
+    "Hidden retained Library cannot leak an information portal",
+  );
+  mounted.rerender(
+    <Library
+      {...props}
+      inspected={{ ...descriptor, warnings: [routine[0], actionable[0]] }}
+      snapshot={idle}
+      visible
+    />,
+  );
+  assert.equal(
+    screen.queryByText(routine[1]),
+    null,
+    "Returning to Library does not reopen its old information portal",
+  );
+  mounted.rerender(
+    <Library
+      {...props}
+      inspected={{
+        ...descriptor,
+        directory: session.directory,
+        warnings: [routine[0], actionable[0]],
+      }}
+      snapshot={{ phase: "recording", session }}
+    />,
+  );
+  assert.equal(
+    screen.queryByRole("button", { name: "Session information" }),
+    null,
+    "Current session routine information has one owner",
+  );
+  assert.ok(screen.getByText(actionable[0]));
+  cleanup();
+  console.log(
+    "Notice DOM checks passed. Complete producer forms move to information in session and catalog views, unknown clock/coverage failures and fixture provenance remain visible, and current-session explanations are not duplicated.",
+  );
+}
+
 async function checkAppCombobox() {
   const starts: unknown[] = [];
   const apps = [
@@ -449,8 +664,6 @@ async function checkAppCombobox() {
     starts.push(request);
     return idle;
   };
-  const actionHost = document.createElement("div");
-  document.body.append(actionHost);
   function Harness() {
     const [draft, change] = useState({
       ...initialDraft,
@@ -472,18 +685,15 @@ async function checkAppCombobox() {
         pending=""
         onSnapshot={() => {}}
         onOperation={() => {}}
-        setup={() => {}}
-        actionHost={actionHost}
       />
     );
   }
   render(<Harness />);
-  await user.click(screen.getByRole("button", { name: "Edit capture scope" }));
   const start = screen.getByRole("button", { name: "Start recording" });
   assert.equal(start.disabled, true);
   assert.equal(screen.queryByLabelText("Or enter an application ID"), null);
   await user.click(screen.getByRole("button", { name: "Refresh apps" }));
-  const input = screen.getByRole("combobox", { name: "Installed apps" });
+  const input = screen.getByRole("combobox", { name: "Log app" });
   await user.type(input, "Shop");
   await user.keyboard("{ArrowDown}{Enter}");
   await waitFor(() => assert.match(input.value, /com\.example\.shop/));
@@ -511,7 +721,6 @@ async function checkAppCombobox() {
     application_id: "com.example.manual",
   });
   cleanup();
-  actionHost.remove();
   console.log(
     "App combobox DOM checks passed. Keyboard selection searches labels and IDs, shared UIDs stay disabled, clear resets admission and manual IDs use the same control.",
   );
@@ -862,6 +1071,116 @@ async function checkSettingsHandoffs() {
     "Settings and handoff DOM checks passed. Preference repair stays available, paths validate before explicit Save, updates stay idle-only, and retained launch links require an available Apply action.",
   );
 }
+async function checkViewPreservation() {
+  localStorage.clear();
+  localStorage.setItem(
+    "android.capture.setup.v1",
+    JSON.stringify({ deferred: true, certificate: null, check: null }),
+  );
+  localStorage.setItem(
+    "android.capture.draft.v1",
+    JSON.stringify({ ...initialDraft, serial: "phone-a" }),
+  );
+  let work = { state: "idle" };
+  api.snapshot = async () => idle;
+  api.operation = async () => work;
+  api.discover = async () => [device];
+  api.preferences = async () => preferences;
+  api.pendingHandoff = async () => null;
+  api.identity = async () => {
+    throw new Error("No setup identity in DOM fixture");
+  };
+  product.catalog = async () => ({
+    sessions: [descriptor],
+    warnings: [],
+    scanned: 1,
+    truncated: false,
+  });
+  product.open = async () => descriptor;
+  product.chooseFolder = async () => descriptor.directory;
+  product.query = async () => page;
+  product.detail = async () => detail("one");
+  product.detailChunk = async () => emptyChunk;
+  render(<App />);
+  await waitFor(() =>
+    assert.equal(
+      screen.getByRole("button", { name: "Start recording" }).disabled,
+      false,
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Open folder" }));
+  await user.selectOptions(screen.getByLabelText("Source filter"), "network");
+  await user.click(
+    await screen.findByRole("button", {
+      name: /GET https:\/\/example.invalid\/one/,
+    }),
+  );
+  const inspector = await screen.findByRole("dialog", {
+    name: "Event details",
+  });
+  const evidence = screen.getByRole("region", { name: "Capture evidence" });
+  const filter = screen.getByLabelText("Source filter");
+  await user.click(screen.getByRole("button", { name: "Settings" }));
+  assert.equal(
+    screen
+      .getByRole("button", { name: "Settings" })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  assert.equal(evidence.hidden, true);
+  assert.equal(evidence.hasAttribute("inert"), true);
+  assert.equal(getComputedStyle(evidence).display, "none");
+  assert.equal(screen.queryByRole("dialog", { name: "Event details" }), null);
+  assert.equal(evidence.contains(document.activeElement), false);
+  const folder = screen.getByLabelText("Session folder");
+  await user.clear(folder);
+  await user.type(folder, "/unsaved-evidence");
+  await user.click(screen.getByRole("button", { name: "Host Doctor" }));
+  assert.ok(screen.getByRole("dialog", { name: "Host Doctor" }));
+  await user.click(
+    screen.getByRole("button", { name: "Storage and tool settings" }),
+  );
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(screen.getByLabelText("Session folder"), folder);
+  assert.equal(folder.value, "/unsaved-evidence");
+  await user.click(screen.getByRole("button", { name: "Device setup" }));
+  await user.click(screen.getByRole("button", { name: "Close Device setup" }));
+  assert.ok(screen.getByRole("heading", { name: "Settings" }));
+  assert.equal(folder.value, "/unsaved-evidence");
+  await user.click(screen.getByRole("button", { name: "Capture" }));
+  assert.equal(screen.getByLabelText("Source filter"), filter);
+  assert.equal(filter.value, "network");
+  assert.equal(
+    screen.getByRole("dialog", { name: "Event details" }),
+    inspector,
+  );
+  assert.equal(screen.queryByRole("textbox", { name: "Session folder" }), null);
+  await user.click(screen.getByRole("button", { name: "Settings" }));
+  assert.equal(screen.getByLabelText("Session folder"), folder);
+  assert.equal(folder.value, "/unsaved-evidence");
+  await user.click(screen.getByRole("button", { name: "Device setup" }));
+  work = {
+    state: "restoring",
+    id: "restore-test",
+    kind: "connection_check",
+    message: "Restoring fixture routing",
+  };
+  await waitFor(
+    () =>
+      assert.equal(
+        screen.getByRole("button", { name: "Close Device setup" }).disabled,
+        true,
+      ),
+    { timeout: 2500 },
+  );
+  await user.keyboard("{Escape}");
+  assert.ok(screen.getByRole("dialog", { name: "Device setup" }));
+  cleanup();
+  console.log(
+    "View lifetime DOM checks passed. Timeline filters and modeless inspector survive hidden/inert view switches; unsaved Settings survive Capture, Doctor and Setup; restoring routing locks Setup dismissal.",
+  );
+}
+
 async function checkWholeApp() {
   for (const read of ["detail", "metadata", "body", "raw"]) {
     localStorage.clear();
@@ -951,7 +1270,7 @@ async function checkWholeApp() {
     render(<App />);
     const stop = await screen.findByRole(
       "button",
-      { name: "Stop without archive" },
+      { name: "More recording actions" },
       { timeout: 2500 },
     );
     await waitFor(() => assert.equal(stop.disabled, false));
@@ -968,11 +1287,16 @@ async function checkWholeApp() {
         await screen.findByRole("button", { name: "Reveal raw source" }),
       );
     assert.equal(stop.disabled, false);
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    assert.ok(screen.getByRole("heading", { name: "Settings" }));
     if (read === "detail") {
       await user.click(screen.getByRole("button", { name: "Stop & Save" }));
       await waitFor(() => assert.deepEqual(saveCalls, [null]));
     } else {
       await user.click(stop);
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Stop without archive" }),
+      );
       await waitFor(() => assert.deepEqual(stopCalls, [[]]));
     }
     cleanup();
@@ -1023,6 +1347,9 @@ async function checks() {
       scope: checkCaptureScope,
       capture: checkCapture,
       apps: checkAppCombobox,
+      ownership: checkOwnedScope,
+      notices: checkNotices,
+      views: checkViewPreservation,
       timeline: checkTimeline,
       details: checkDetails,
       modal: checkModal,
