@@ -363,17 +363,23 @@ mod tests {
     }
 
     #[test]
-    fn frontend_permissions_allow_version_and_dragging_without_updater_access() {
+    fn frontend_permissions_allow_version_dragging_and_titlebar_maximize_without_updater_access() {
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
-        let permissions = capability["permissions"].as_array().unwrap();
-        assert_eq!(permissions.len(), 2);
-        assert!(permissions
+        let permissions = capability["permissions"]
+            .as_array()
+            .unwrap()
             .iter()
-            .any(|permission| permission == "core:app:allow-version"));
-        assert!(permissions
-            .iter()
-            .any(|permission| permission == "core:window:allow-start-dragging"));
+            .map(|permission| permission.as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            permissions,
+            std::collections::BTreeSet::from([
+                "core:app:allow-version",
+                "core:window:allow-start-dragging",
+                "core:window:allow-internal-toggle-maximize",
+            ])
+        );
     }
 
     #[test]

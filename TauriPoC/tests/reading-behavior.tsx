@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { useState } from "react";
 import {
   act,
@@ -138,6 +141,160 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const user = userEvent.setup();
+async function checkTitlebarDragging() {
+  const lockedVersion = readFileSync("Cargo.lock", "utf8").match(
+    /\[\[package\]\]\r?\nname = "tauri"\r?\nversion = "([^"]+)"/,
+  )?.[1];
+  assert.ok(lockedVersion, "Cargo.lock identifies the Tauri runtime version");
+  const registry = join(
+    process.env.CARGO_HOME ?? join(homedir(), ".cargo"),
+    "registry",
+    "src",
+  );
+  const scriptPath = (existsSync(registry) ? readdirSync(registry) : [])
+    .map((source) =>
+      join(
+        registry,
+        source,
+        `tauri-${lockedVersion}`,
+        "src/window/scripts/drag.js",
+      ),
+    )
+    .find(existsSync);
+  assert.ok(
+    scriptPath,
+    "Run npm run verify to fetch the locked Tauri runtime before the titlebar check",
+  );
+  const commands: string[] = [];
+  const removeListeners: (() => void)[] = [];
+  new Function(
+    "window",
+    "document",
+    "HTMLElement",
+    readFileSync(scriptPath, "utf8").replace(
+      "__TEMPLATE_os_name__",
+      JSON.stringify("macos"),
+    ),
+  )(
+    {
+      __TAURI_INTERNALS__: {
+        invoke: (command: string) => commands.push(command),
+      },
+    },
+    {
+      addEventListener(type: string, listener: EventListener) {
+        document.addEventListener(type, listener);
+        removeListeners.push(() => document.removeEventListener(type, listener));
+      },
+    },
+    HTMLElement,
+  );
+  render(
+    <Capture
+      snapshot={idle}
+      operation={{ state: "idle" }}
+      devices={[device]}
+      draft={{
+        ...initialDraft,
+        serial: device.serial,
+        selection: "logs_and_network",
+      }}
+      change={() => {}}
+      preferences={preferences}
+      savePreferences={async () => {}}
+      refresh={async () => {}}
+      run={run}
+      pending=""
+      onSnapshot={() => {}}
+      onOperation={() => {}}
+    />,
+  );
+  const toolbar = document.querySelector(".capture-toolbar");
+  assert.ok(toolbar instanceof HTMLElement);
+  const blankArea = toolbar.firstElementChild;
+  const status = within(toolbar).getByRole("status");
+  const statusDot = status.firstElementChild;
+  assert.ok(blankArea instanceof HTMLElement);
+  assert.ok(statusDot instanceof HTMLElement);
+  const dragTargets = [
+    { name: "nested blank area", target: blankArea },
+    { name: "status", target: status },
+    { name: "status dot", target: statusDot },
+    ...["Device", "Sources", "Log app"].map((name) => ({
+      name: `${name} label`,
+      target: within(toolbar).getByText(name, { selector: "label" }),
+    })),
+  ];
+  const position = { clientX: 120, clientY: 80 };
+  fireEvent.mouseDown(toolbar, { button: 0, detail: 1, ...position });
+  assert.deepEqual(
+    commands.splice(0),
+    ["plugin:window|start_dragging"],
+    "A direct toolbar hit starts native dragging",
+  );
+  const drags = dragTargets.map(({ name, target }) => {
+    fireEvent.mouseDown(target, { button: 0, detail: 1, ...position });
+    return { target: name, commands: commands.splice(0) };
+  });
+  assert.deepEqual(
+    drags,
+    dragTargets.map(({ name }) => ({
+      target: name,
+      commands: ["plugin:window|start_dragging"],
+    })),
+    "Toolbar blank areas, status, and labels start native dragging",
+  );
+  const refreshIcon = within(toolbar)
+    .getByRole("button", { name: "Refresh devices" })
+    .querySelector("svg");
+  assert.ok(refreshIcon);
+  const blockedTargets = [
+    { name: "button descendant", target: refreshIcon },
+    {
+      name: "input",
+      target: within(toolbar).getByRole("combobox", { name: "Log app" }),
+    },
+    { name: "Device select", target: within(toolbar).getByLabelText("Device") },
+    { name: "Sources select", target: within(toolbar).getByLabelText("Sources") },
+  ];
+  for (const { name, target } of blockedTargets) {
+    fireEvent.mouseDown(target, { button: 0, detail: 1, ...position });
+    fireEvent.mouseDown(target, { button: 0, detail: 2, ...position });
+    fireEvent.mouseUp(target, { button: 0, detail: 2, ...position });
+    assert.deepEqual(
+      commands.splice(0),
+      [],
+      `${name} keeps its normal interaction`,
+    );
+  }
+  for (const { name, target } of dragTargets) {
+    fireEvent.mouseDown(target, { button: 0, detail: 2, ...position });
+    assert.deepEqual(commands.splice(0), [], `${name} waits for macOS mouseup`);
+    fireEvent.mouseUp(target, { button: 0, detail: 2, ...position });
+    assert.deepEqual(
+      commands.splice(0),
+      ["plugin:window|internal_toggle_maximize"],
+      `${name} toggles native maximization on an unmoved double click`,
+    );
+  }
+  for (const moved of [
+    { clientX: position.clientX + 1, clientY: position.clientY },
+    { clientX: position.clientX, clientY: position.clientY + 1 },
+  ]) {
+    fireEvent.mouseDown(blankArea, { button: 0, detail: 2, ...position });
+    fireEvent.mouseUp(blankArea, { button: 0, detail: 2, ...moved });
+    assert.deepEqual(
+      commands.splice(0),
+      [],
+      "Moving either axis cancels maximization",
+    );
+  }
+  for (const remove of removeListeners) remove();
+  cleanup();
+  console.log(
+    `Titlebar DOM checks passed with locked Tauri ${lockedVersion}. Blank areas, status, and all scope labels drag; controls keep their interactions; macOS double click maximizes only on unmoved mouseup.`,
+  );
+}
 async function checkProgress() {
   const props = {
     change: () => {},
@@ -1213,10 +1370,6 @@ async function checkViewPreservation() {
   product.detailChunk = async () => emptyChunk;
   render(<App />);
   assert.equal(document.querySelector(".titlebar-drag"), null);
-  const toolbar = document.querySelector(".capture-toolbar");
-  assert.ok(toolbar?.hasAttribute("data-tauri-drag-region"));
-  for (const control of toolbar.querySelectorAll("button, input, select"))
-    assert.equal(control.hasAttribute("data-tauri-drag-region"), false);
 
   await waitFor(() =>
     assert.equal(
@@ -1472,11 +1625,12 @@ async function checks() {
       updates: checkUpdates,
       settings: checkSettingsHandoffs,
       app: checkWholeApp,
+      titlebar: checkTitlebarDragging,
     };
     const requested = process.env.ANDROID_UI_CHECK;
     assert.ok(!requested || requested in checks, "Unknown Android UI check");
     for (const [name, check] of Object.entries(checks)) {
-      if (!requested || requested === name) await check();
+      if (requested ? requested === name : name !== "titlebar") await check();
     }
   } finally {
     cleanup();
