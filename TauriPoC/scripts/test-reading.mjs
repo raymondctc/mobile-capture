@@ -78,7 +78,7 @@ try {
       {
         name: "component-entry",
         setup(build) {
-          build.onLoad({ filter: /src\/main\.tsx$/ }, async ({ path }) => {
+          build.onLoad({ filter: /[\\/]src[\\/]main\.tsx$/ }, async ({ path }) => {
             const source = await readFile(path, "utf8");
             return {
               contents: source.slice(
