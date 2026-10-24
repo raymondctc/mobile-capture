@@ -43,7 +43,7 @@ export function Diagnostics({
           <option value="network">Network only</option>
         </NativeSelect>
         <Button
-          className="bg-primary text-primary-foreground hover:bg-primary/85"
+          variant="default"
           disabled={!!pending}
           onClick={() =>
             void run("Checking host prerequisites", async () =>
@@ -58,7 +58,7 @@ export function Diagnostics({
       {report && (
         <>
           <div
-            className={`rounded-md border p-3 ${report.hostPrerequisitesReady ? "border-[#c8e3d4] bg-[#edf7f1] text-[#23553e]" : "border-[#e4dac0] bg-[#fbf8ef] text-[#665026]"}`}
+            className={`rounded-md border p-3 ${report.hostPrerequisitesReady ? "border-success/25 bg-success/10 text-success" : "border-warning/30 bg-warning/10 text-warning"}`}
           >
             <strong>
               {report.hostPrerequisitesReady
@@ -87,8 +87,8 @@ export function Diagnostics({
                     variant="secondary"
                     className={
                       check.status === "ready"
-                        ? "bg-[#edf5f1] text-[#156b58]"
-                        : "bg-[#fbf8ef] text-[#665026]"
+                        ? "bg-accent text-accent-foreground"
+                        : "bg-warning/10 text-warning"
                     }
                   >
                     {check.status.replace("needsAction", "Action needed")}

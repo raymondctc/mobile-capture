@@ -164,7 +164,7 @@ export function Capture({
       : draft.application_id;
   return (
     <section
-      className="shrink-0 rounded-t-lg border border-border bg-white"
+      className="shrink-0 rounded-t-lg border border-border bg-card"
       aria-label="Capture scope"
     >
       <Collapsible open={editingScope} onOpenChange={setEditingScope}>
@@ -250,7 +250,7 @@ export function Capture({
                 {draft.serial || "Connect USB and enable USB debugging."}
               </p>
               {draft.serial && device?.state !== "ready" && (
-                <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+                <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
                   The selected device is {device?.state ?? "unavailable"}.
                   Unlock it, approve USB debugging, reconnect, and refresh.
                   Choose a different device explicitly if needed.
@@ -399,7 +399,7 @@ export function Capture({
                             "Refresh to read installed apps. Shared UID apps cannot be isolated."}
                         </p>
                         {selectedApp?.shared_uid && (
-                          <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+                          <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
                             This app shares its UID. Select another app or
                             explicitly choose whole-device logs.
                           </p>
@@ -493,7 +493,7 @@ export function Capture({
               </details>
               {!contextValidation.success && (
                 <p
-                  className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+                  className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
                   role="alert"
                 >
                   Task context is too long. Title allows 512 UTF-8 bytes, notes
@@ -565,7 +565,7 @@ export function Capture({
               </p>
             )}
             {session.network.state === "recovery_required" && (
-              <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+              <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
                 {session.network.detail.message}
               </p>
             )}
@@ -575,7 +575,7 @@ export function Capture({
                 className={
                   session.network.detail.routing_restored
                     ? "text-xs text-muted-foreground"
-                    : "rounded-md border border-[#e4dac0] bg-[#fbf8ef] p-2 text-xs text-[#665026]"
+                    : "rounded-md border border-warning/30 bg-warning/10 p-2 text-xs text-warning"
                 }
               >
                 Network routing{" "}
@@ -607,7 +607,7 @@ export function Capture({
             )}
             {session.warnings.map((warning) => (
               <p
-                className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+                className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
                 key={warning}
               >
                 {warning}
@@ -619,7 +619,7 @@ export function Capture({
           <details className="relative ml-auto">
             <summary className="cursor-pointer text-sm">Add marker</summary>
             <form
-              className="absolute top-full right-0 z-20 mt-2 flex w-[min(360px,80vw)] flex-wrap items-end gap-2 rounded-lg border border-border bg-white p-3 shadow-sm [&_label]:min-w-48 [&_label]:flex-1"
+              className="absolute top-full right-0 z-20 mt-2 flex w-[min(360px,80vw)] flex-wrap items-end gap-2 rounded-lg border border-border bg-card p-3 shadow-sm [&_label]:min-w-48 [&_label]:flex-1"
               onSubmit={(event) => {
                 event.preventDefault();
                 if (marker.trim())
@@ -655,7 +655,7 @@ export function Capture({
               {active ? (
                 <>
                   <Button
-                    className="bg-primary text-primary-foreground hover:bg-primary/85"
+                    variant="default"
                     disabled={!!pending || operationBusy(operation)}
                     onClick={() =>
                       void run("Stopping and saving", async () =>
@@ -678,7 +678,7 @@ export function Capture({
                 </>
               ) : (
                 <Button
-                  className="bg-primary text-primary-foreground hover:bg-primary/85"
+                  variant="default"
                   disabled={!canStart}
                   onClick={() => void run("Starting capture", start)}
                 >

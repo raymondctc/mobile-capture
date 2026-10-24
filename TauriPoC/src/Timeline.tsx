@@ -334,7 +334,7 @@ export function Timeline({
         </div>
         {invalidation && (
           <div
-            className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+            className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
             role="status"
           >
             {invalidation}{" "}
@@ -345,7 +345,7 @@ export function Timeline({
         )}
         {error && (
           <div
-            className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+            className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
             role="alert"
           >
             {error}
@@ -423,7 +423,7 @@ export function Timeline({
                     aria-pressed={visibleInspector?.eventId === event.id}
                     aria-haspopup="dialog"
                     variant="ghost"
-                    className={`grid h-auto min-h-16 w-full grid-cols-[70px_48px_minmax(0,1fr)] items-start justify-start gap-3 rounded-none border-0 border-b border-border px-4 py-3 text-left font-normal whitespace-normal select-text ${visibleInspector?.eventId === event.id ? "bg-[#edf5f1] hover:bg-[#edf5f1]" : "hover:bg-muted/50"}`}
+                    className={`grid h-auto min-h-16 w-full grid-cols-[70px_48px_minmax(0,1fr)] items-start justify-start gap-3 rounded-none border-0 border-b border-border px-4 py-3 text-left font-normal whitespace-normal select-text ${visibleInspector?.eventId === event.id ? "bg-accent hover:bg-accent" : "hover:bg-muted/50"}`}
                     onClick={(click) =>
                       void select(event.id, click.currentTarget)
                     }
@@ -437,7 +437,7 @@ export function Timeline({
                     </span>
                     <Badge
                       variant="secondary"
-                      className={`mt-0.5 h-5 px-1.5 text-xs ${event.source === "network" ? "bg-[#edf5f1] text-[#156b58]" : ""}`}
+                      className={`mt-0.5 h-5 px-1.5 text-xs ${event.source === "network" ? "bg-accent text-accent-foreground" : ""}`}
                     >
                       {event.source === "network"
                         ? "NET"
@@ -492,7 +492,7 @@ export function Timeline({
       </div>
       {visibleInspector && (
         <aside
-          className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l border-border bg-white md:static md:w-[clamp(320px,34vw,400px)] md:shrink-0"
+          className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col border-l border-border bg-card md:static md:w-[clamp(320px,34vw,400px)] md:shrink-0"
           role="dialog"
           aria-modal={false}
           aria-labelledby="event-inspector-title"
@@ -522,7 +522,7 @@ export function Timeline({
             )}
             {visibleInspector.kind === "error" && (
               <p
-                className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+                className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
                 role="alert"
               >
                 {visibleInspector.message}

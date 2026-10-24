@@ -60,13 +60,13 @@ export function Settings({
         setup, and recovery must finish first.
       </p>
       {!editable && (
-        <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+        <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
           Settings are read-only until capture ownership and device routing are
           safely idle.
         </p>
       )}
       {editable && !idle && (
-        <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+        <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
           Correct loaded preferences if a tool override prevents initialization.
           The native app verifies capture ownership before saving.
         </p>
@@ -152,21 +152,21 @@ export function Settings({
               />
             </Label>
             {!overridesValid && (
-              <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+              <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
                 Each override must be an absolute executable path.
               </p>
             )}
           </fieldset>
           <Button
             type="submit"
-            className="bg-primary text-primary-foreground hover:bg-primary/85"
+            variant="default"
             disabled={locked || !overridesValid}
           >
             Save settings
           </Button>
           {saved && (
             <p
-              className="rounded-md border border-[#c8e3d4] bg-[#edf7f1] p-3 text-[#23553e]"
+              className="rounded-md border border-success/25 bg-success/10 p-3 text-success"
               role="status"
             >
               Settings saved for future recordings.
@@ -174,7 +174,7 @@ export function Settings({
           )}
         </form>
       ) : (
-        <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+        <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
           Preferences could not be loaded. Retry connecting to the native app.
         </p>
       )}

@@ -730,5 +730,10 @@
     "source": "src-tauri/icons/icon.png",
     "asset": "src/assets/app-icon.png",
     "sha256": "60d107ada79cabf8866735cff1b8e3073765455c5552321d334fa3788154104e"
+  },
+  "theme": {
+    "base_color": "zinc",
+    "default_mode": "dark",
+    "source": "https://ui.shadcn.com/r/colors/zinc.json"
   }
 }

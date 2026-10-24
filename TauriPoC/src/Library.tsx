@@ -94,7 +94,7 @@ export function Library({
               <summary className="cursor-pointer rounded-md border border-input px-2.5 py-1.5 text-sm">
                 Session actions
               </summary>
-              <div className="absolute top-full right-0 z-20 mt-1 grid min-w-44 gap-2 rounded-lg border border-border bg-white p-3 shadow-sm">
+              <div className="absolute top-full right-0 z-20 mt-1 grid min-w-44 gap-2 rounded-lg border border-border bg-card p-3 shadow-sm">
                 <Button
                   disabled={!!pending}
                   onClick={() =>
@@ -176,7 +176,7 @@ export function Library({
           </div>
           {catalogError && (
             <p
-              className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+              className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
               role="alert"
             >
               {catalogError}
@@ -191,7 +191,7 @@ export function Library({
             .map((session) => (
               <Button
                 variant="ghost"
-                className={`flex h-auto w-full flex-col items-start gap-1 rounded-md border border-border p-3 text-left whitespace-normal select-text [&_small]:break-all [&_small]:text-xs [&_span]:text-xs [&_span]:text-muted-foreground ${session.directory === inspected?.directory ? "bg-[#edf5f1]" : ""}`}
+                className={`flex h-auto w-full flex-col items-start gap-1 rounded-md border border-border p-3 text-left whitespace-normal select-text [&_small]:break-all [&_small]:text-xs [&_span]:text-xs [&_span]:text-muted-foreground ${session.directory === inspected?.directory ? "bg-accent" : ""}`}
                 key={session.directory}
                 disabled={!!pending}
                 onClick={() =>
@@ -215,7 +215,7 @@ export function Library({
             </p>
           )}
           {catalog?.truncated && (
-            <p className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text">
+            <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text">
               The catalog scan reached its limit after {catalog.scanned}{" "}
               folders. Open a session folder directly to inspect another
               capture.
@@ -223,7 +223,7 @@ export function Library({
           )}
           {catalog?.warnings.map((warning) => (
             <p
-              className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+              className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
               key={warning}
             >
               {warning}
@@ -235,7 +235,7 @@ export function Library({
         <>
           {inspected.warnings.map((warning) => (
             <p
-              className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+              className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
               key={warning}
             >
               {warning}

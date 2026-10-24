@@ -6,7 +6,7 @@ The reference used `npx shadcn@4.16.1 init --template vite --base radix --preset
 
 The generated controls now appear in Capture, Library, Timeline, event details, Setup, Doctor, Settings, operation feedback, and launch-link notices. The app wrapper guards every tool dialog dismissal while setup is locked. The event inspector remains modeless and keeps its local reads outside capture action ownership.
 
-The design uses the selected achromatic ledger direction with the existing teal, a green-grey frame, and white evidence. The current taste-skill source was commit `6010f91a9935f1c167dfc500fb1a475681892e6b`. Its app-screen rules apply. The large region contains actual event evidence. No mock data enters the product.
+The design keeps the selected achromatic ledger composition. At the user’s request it uses the official shadcn Zinc dark tokens by default, with semantic warning/success colors. The HTML, native window theme and initial WebView background start dark. Hardcoded light surfaces use the same tokens as the controls. The current taste-skill source was commit `6010f91a9935f1c167dfc500fb1a475681892e6b`. Its app-screen rules apply. The large region contains actual event evidence. No mock data enters the product.
 
 Geist and Geist Mono 5.3.0 use local Latin variable WOFF2 files. The app makes no remote font requests. `public/licenses` contains their original SIL OFL texts, distributed frontend dependency notices, and `provenance.json` with source hashes and exact package versions. Vite copies this directory into `dist/licenses`. The existing native license inventory stays in its original locations.
 

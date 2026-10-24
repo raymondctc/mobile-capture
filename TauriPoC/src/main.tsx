@@ -387,7 +387,7 @@ export function App() {
     <>
       {handoffError && (
         <p
-          className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+          className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
           role="alert"
         >
           Android launch links could not be checked. {handoffError}
@@ -433,7 +433,7 @@ export function App() {
               role="status"
             >
               <span
-                className={`size-1.5 shrink-0 rounded-full ${snapshot?.phase === "recording" ? "bg-[#156b58]" : "bg-muted-foreground"}`}
+                className={`size-1.5 shrink-0 rounded-full ${snapshot?.phase === "recording" ? "bg-emerald-400" : "bg-muted-foreground"}`}
               />
               {pending ||
                 (snapshot
@@ -475,7 +475,7 @@ export function App() {
               </summary>
               <nav
                 aria-label="Compact workspace tools"
-                className="absolute top-full left-0 z-30 mt-1 grid min-w-40 gap-1 rounded-lg border border-border bg-white p-2 shadow-sm"
+                className="absolute top-full left-0 z-30 mt-1 grid min-w-40 gap-1 rounded-lg border border-border bg-card p-2 shadow-sm"
               >
                 <Button
                   variant="ghost"
@@ -509,7 +509,7 @@ export function App() {
       </header>
       {snapshot?.session.fixture && (
         <div
-          className="mx-4 flex flex-wrap gap-2 rounded-md border border-border bg-white px-3 py-2 text-xs text-muted-foreground"
+          className="mx-4 flex flex-wrap gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground"
           role="status"
         >
           <strong>Fixture mode</strong>
@@ -579,7 +579,7 @@ export function App() {
           setup={() => setPanel("setup")}
           actionHost={actionHost}
         />
-        <main className="flex flex-1 flex-col rounded-b-lg border border-t-0 border-border bg-white">
+        <main className="flex flex-1 flex-col rounded-b-lg border border-t-0 border-border bg-card">
           <Library
             inspected={inspected}
             open={open}

@@ -115,7 +115,7 @@ export function HandoffNotices({
 }) {
   return notices.map((notice) => (
     <section
-      className="mx-4 flex flex-wrap items-start justify-between gap-3 rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs text-[#665026] select-text"
+      className="mx-4 flex flex-wrap items-start justify-between gap-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning select-text"
       role="status"
       key={notice.id}
       aria-label="Android launch link"

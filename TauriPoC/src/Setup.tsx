@@ -113,7 +113,7 @@ export function Setup({
         phone verification are separate. Your inspected session stays open.
       </p>
       <nav
-        className="grid grid-cols-2 gap-1 sm:grid-cols-4 rounded-lg bg-muted p-1 [&_button]:h-9 [&_button[aria-current]]:bg-white [&_button[aria-current]]:text-foreground"
+        className="grid grid-cols-2 gap-1 sm:grid-cols-4 rounded-lg bg-muted p-1 [&_button]:h-9 [&_button[aria-current]]:bg-card [&_button[aria-current]]:text-foreground"
         aria-label="Setup steps"
       >
         {steps.map((item) => (
@@ -138,7 +138,7 @@ export function Setup({
         </p>
         {identityError && (
           <p
-            className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+            className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
             role="alert"
           >
             Current certificate identity could not be read. {identityError}
@@ -191,7 +191,7 @@ export function Setup({
             certificate trust or traffic from your phone.
           </p>
           <Button
-            className="bg-primary text-primary-foreground hover:bg-primary/85"
+            variant="default"
             disabled={!ready}
             onClick={() => setStep("prepare")}
           >
@@ -223,7 +223,7 @@ export function Setup({
             this computer.
           </p>
           <Button
-            className="bg-primary text-primary-foreground hover:bg-primary/85"
+            variant="default"
             disabled={!allowed || !consent}
             onClick={() =>
               void run("Preparing Android certificate", async () => {
@@ -236,7 +236,7 @@ export function Setup({
           </Button>
           {operation.state === "preparing_certificate" && (
             <p
-              className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+              className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
               role="status"
             >
               {operation.message}
@@ -339,7 +339,7 @@ export function Setup({
             installation acknowledgment cannot pass the check.
           </p>
           <Button
-            className="bg-primary text-primary-foreground hover:bg-primary/85"
+            variant="default"
             disabled={
               !allowed || !consent || !identity?.certificate_fingerprint
             }
@@ -402,7 +402,7 @@ export function Setup({
               <p
                 className={
                   operation.https_observed
-                    ? "text-sm text-[#23553e]"
+                    ? "text-sm text-success"
                     : "text-xs text-muted-foreground"
                 }
               >
@@ -488,7 +488,7 @@ export function Setup({
               Export readiness report
             </Button>
             <Button
-              className="bg-primary text-primary-foreground hover:bg-primary/85"
+              variant="default"
               disabled={busy}
               onClick={() => {
                 onHistory({ ...history, deferred: true });
@@ -500,7 +500,7 @@ export function Setup({
           </div>
           {reportPath && (
             <p
-              className="rounded-md border border-[#c8e3d4] bg-[#edf7f1] p-3 font-mono text-[#23553e] select-text break-all"
+              className="rounded-md border border-success/25 bg-success/10 p-3 font-mono text-success select-text break-all"
               role="status"
             >
               Report saved · {reportPath}

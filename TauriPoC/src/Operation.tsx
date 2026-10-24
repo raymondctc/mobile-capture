@@ -37,7 +37,7 @@ export function OperationStatus({
   )
     return (
       <div
-        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs text-[#665026]"
+        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning"
         role="status"
       >
         {operation.state === "checking_connection"
@@ -49,7 +49,7 @@ export function OperationStatus({
   if (operation.state === "saving")
     return (
       <div
-        className="mx-4 flex flex-wrap items-center gap-3 border-b border-border bg-white px-3 py-2 text-xs [&_p]:text-muted-foreground"
+        className="mx-4 flex flex-wrap items-center gap-3 border-b border-border bg-card px-3 py-2 text-xs [&_p]:text-muted-foreground"
         role="status"
       >
         <div>
@@ -83,7 +83,7 @@ export function OperationStatus({
   if (operation.state === "restoring")
     return (
       <div
-        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs text-[#665026]"
+        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning"
         role="status"
       >
         <strong>Restoring device routing</strong>
@@ -138,7 +138,7 @@ export function OperationStatus({
   if (operation.state === "cancelled")
     return (
       <div
-        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs text-[#665026]"
+        className="mx-4 flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning"
         role="status"
       >
         {operation.message} Raw evidence and any previous archive are preserved.
@@ -147,7 +147,7 @@ export function OperationStatus({
   if (operation.result.kind === "save")
     return (
       <div
-        className="mx-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#c8e3d4] bg-[#edf7f1] px-3 py-2 text-xs text-[#23553e]"
+        className="mx-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-success/25 bg-success/10 px-3 py-2 text-xs text-success"
         role="status"
       >
         <div>

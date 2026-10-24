@@ -139,7 +139,7 @@ export function Details({
       </div>
       {reveal.kind === "error" && (
         <p
-          className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+          className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
           role="alert"
         >
           {reveal.message}
@@ -186,7 +186,7 @@ export function Details({
       <p className="break-words text-sm leading-relaxed select-text">
         {detail.event.summary}
       </p>
-      <div className="flex flex-wrap gap-2 [&_button]:h-auto [&_button]:min-h-8 [&_button]:whitespace-normal [&_button]:text-left [&_button[aria-pressed=true]]:border-[#156b58] [&_button[aria-pressed=true]]:bg-[#edf5f1] [&_button[aria-pressed=true]]:text-[#156b58]">
+      <div className="flex flex-wrap gap-2 [&_button]:h-auto [&_button]:min-h-8 [&_button]:whitespace-normal [&_button]:text-left [&_button[aria-pressed=true]]:border-primary [&_button[aria-pressed=true]]:bg-accent [&_button[aria-pressed=true]]:text-accent-foreground">
         <Button
           aria-pressed={view.kind === "metadata"}
           onClick={() => {
@@ -233,7 +233,7 @@ export function Details({
         )
         .map((body) => (
           <p
-            className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+            className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
             key={body.side}
           >
             {body.side} · {body.reason ?? body.decoded_reason}
@@ -260,14 +260,14 @@ export function Details({
       )}
       {error && (
         <p
-          className="rounded-md border border-[#e4dac0] bg-[#fbf8ef] px-3 py-2 text-xs leading-relaxed text-[#665026] select-text"
+          className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning select-text"
           role="alert"
         >
           {error}
         </p>
       )}
       <pre
-        className={`min-h-40 overflow-auto rounded-md border border-border bg-[#f8faf9] p-3 font-mono text-xs leading-5 select-text ${wrap && !(view.kind === "body" && view.binary) ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}
+        className={`min-h-40 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 select-text ${wrap && !(view.kind === "body" && view.binary) ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}
         tabIndex={0}
       >
         {busy ? "Reading 64 KiB chunk…" : text || "Empty content"}

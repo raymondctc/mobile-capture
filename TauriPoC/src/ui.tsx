@@ -76,7 +76,7 @@ export function Dialog({
         </DialogHeader>
         <div className="min-h-0 overflow-y-auto overscroll-contain p-5">
           {locked && (
-            <Alert className="mb-4 border-[#e4dac0] bg-[#fbf8ef] text-[#665026]">
+            <Alert className="mb-4 border-warning/30 bg-warning/10 text-warning">
               <AlertDescription className="text-inherit">
                 Finish the current check or recovery before closing setup.
               </AlertDescription>
