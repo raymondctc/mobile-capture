@@ -419,7 +419,8 @@ export async function checkHandoffBehavior() {
       onSnapshot={() => {}}
       onOperation={() => {}}
       setup={() => {}}
+      actionHost={null}
     />,
   );
-  assert.match(captureMarkup, /disabled="">Start recording/);
+  assert.match(captureMarkup, /<fieldset disabled="">/);
 }

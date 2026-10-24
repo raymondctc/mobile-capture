@@ -259,14 +259,15 @@ const markup = renderToStaticMarkup(
     onSnapshot={() => {}}
     onOperation={() => {}}
     setup={() => {}}
+    actionHost={null}
   />,
 );
 assert.match(
   markup,
   /<option value="network" selected="">Network only<\/option>/,
 );
-assert.match(markup, /whole-device network capture/);
-assert.match(markup, /disabled="">Start recording/);
+assert.doesNotMatch(markup, /I consent to whole-device network/);
+assert.match(markup, /<details><summary>Task context \(optional\)<\/summary>/);
 assert.doesNotMatch(markup, /iPhone|Simulator|Homebrew/);
 const activeMarkup = renderToStaticMarkup(
   <Capture
@@ -283,9 +284,10 @@ const activeMarkup = renderToStaticMarkup(
     onSnapshot={() => {}}
     onOperation={() => {}}
     setup={() => {}}
+    actionHost={null}
   />,
 );
-assert.equal((activeMarkup.match(/checked=""/g) ?? []).length, 2);
+assert.equal((activeMarkup.match(/checked=""/g) ?? []).length, 1);
 assert.match(activeMarkup, /raw log data/);
 assert.doesNotMatch(activeMarkup, />0 logs</);
 void checkHandoffBehavior().then(

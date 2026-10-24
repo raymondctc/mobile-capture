@@ -33,11 +33,11 @@ Choose **Export readiness report** to save the current public host and setup fac
 1. Select a ready Android device. The app retains an unavailable selection so that reconnecting cannot silently target another phone.
 2. Choose **Network only**, **Logs only**, or **Logs and network**. Network only is the initial default.
 3. For logs, keep **Selected app** and choose **Refresh apps**. Search the installed apps, or enter the application ID manually.
-4. Enter a task title, notes, and reproduction steps if needed.
+4. Open **Task context (optional)** to add a title, notes, or reproduction steps if needed.
 5. Review **Capture limits** and save changes before recording.
-6. Accept each applicable consent disclosure and choose **Start recording**.
+6. Review the notice beside **Start recording** in the upper right. For whole-device logs, accept the separate log consent. Choose **Start recording**.
 
-Shared UID apps cannot be isolated. An app log recording checks identity before writing logs. If you choose whole-device logs, consent applies to that recording. Whole-device network capture has a separate disclosure. Stopping or changing the selected device clears both consent choices.
+Shared UID apps cannot be isolated. An app log recording checks identity before writing logs. Choosing **Start recording** authorizes whole-device network capture and temporary proxy routing for that recording when network is selected. HTTPS requires manual CA trust. Whole-device log consent remains separate and clears when recording stops or the selected device changes.
 
 Task context and display choices persist for the next recording. Source and policy changes apply to a new recording. Log limits and network limits are independent. Reaching a log limit does not stop network recording. When the network admission duration or budget ends, forwarding continues until you stop and restore routing.
 
@@ -61,7 +61,9 @@ Use the reading controls as follows.
 
 If a page cursor becomes invalid, the workspace reports the reason and reloads the first page with your filters preserved. A selected event stays open when it is outside the current page.
 
-Select an event to read full metadata, retained request bodies, or retained response bodies. Content loads in bounded 64 KiB chunks. Use the chunk buttons to read the complete retained content. Text uses UTF-8. Binary content has a hexadecimal view. Compressed bodies offer a decoded view when safe decoding is available. Original retained body bytes remain separate from decoded content. Unavailable bodies and decoding limits have explicit reasons.
+Select an event to open the inspector on the right. Choose **Close event details** or press Escape inside the inspector to return to the timeline. The recording controls stay in the upper right.
+
+The inspector shows full metadata, retained request bodies, or retained response bodies. Content loads in bounded 64 KiB chunks. Use the chunk buttons to read the complete retained content. Text uses UTF-8. Binary content has a hexadecimal view. Compressed bodies offer a decoded view when safe decoding is available. Original retained body bytes remain separate from decoded content. Unavailable bodies and decoding limits have explicit reasons.
 
 Use **Reveal raw source** to locate the admitted source file for the selected event. Read-only inspection never changes raw evidence.
 
