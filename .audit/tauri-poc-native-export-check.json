@@ -1,0 +1,19 @@
+{
+  "archive": "/var/folders/9d/_w0dsyv95ys3r_6hd99pcxch0000gp/T/mobile-capture-poc-fixture-U6406p/tauri-poc-f39guT/capture-package.zip",
+  "verified": true,
+  "counts": {
+    "logs": 88,
+    "network": 0,
+    "markers": 1
+  },
+  "package_state": "partial",
+  "files": [
+    "README.txt",
+    "SHA256SUMS",
+    "context.json",
+    "logs/device.log",
+    "manifest.json",
+    "timeline/events.jsonl",
+    "timeline/markers.jsonl"
+  ]
+}

@@ -1,0 +1,884 @@
+{
+  "generator": {
+    "package": "create-tauri-ui",
+    "version": "1.2.0",
+    "repository": "https://github.com/agmmnn/tauri-ui",
+    "commit": "8eb86d894c19b6df04ff883ab28b412b1e5f23ea",
+    "initialization": "npx shadcn@4.16.1 init --template vite --base radix --preset nova",
+    "emitted_style": "radix-nova",
+    "generated_components": [
+      {
+        "file": "src/components/ui/alert.tsx",
+        "generated_sha256": "f253568242c1c69b343f12474002fdbe229f603158171c59e21c491ab79f2e6e"
+      },
+      {
+        "file": "src/components/ui/badge.tsx",
+        "generated_sha256": "59953420d01d23d172b4e32583426db153ff09226e2d460d53526b9f25282801"
+      },
+      {
+        "file": "src/components/ui/button.tsx",
+        "generated_sha256": "08e5f87833c5db8436e89337ebde0f776bcdbf649d3de69fb89be6441ca2e366"
+      },
+      {
+        "file": "src/components/ui/checkbox.tsx",
+        "generated_sha256": "822b3036f883e950fe76cf78ac2710cbbca4512e7012c03c346845b7710bd232"
+      },
+      {
+        "file": "src/components/ui/collapsible.tsx",
+        "generated_sha256": "eb4ee2a9ddb3c566c509753a79e4f4c9425d9f8474d55f61f8c8694928b6a509"
+      },
+      {
+        "file": "src/components/ui/dialog.tsx",
+        "generated_sha256": "7dbb00eeb1b68a7403c6a326904aa5d1e0d40edbea6f34c8460aadc48c8b56b1"
+      },
+      {
+        "file": "src/components/ui/input.tsx",
+        "generated_sha256": "75418e030b2a54dd017ac0f4588db4bbdbabca7525e88bbc9d84cb3e18bcb905"
+      },
+      {
+        "file": "src/components/ui/label.tsx",
+        "generated_sha256": "b823de7355666bd6a6a2cf88a6630e436d021b38fdbef5b749fac0921b86f44d"
+      },
+      {
+        "file": "src/components/ui/native-select.tsx",
+        "generated_sha256": "93262e9e6c108df664725a0043f0c06ef844e173088b18c0f807e753e2f86d22"
+      },
+      {
+        "file": "src/components/ui/progress.tsx",
+        "generated_sha256": "64645ac35c13d5b9862b5535fcecc3471dcc153e8427f562046d5a7f37c8592a"
+      },
+      {
+        "file": "src/components/ui/textarea.tsx",
+        "generated_sha256": "82601c91ffc6c727d924162c78d7cb853114bcced4e2eb922a68ca12d4239c0f"
+      },
+      {
+        "file": "src/components/ui/combobox.tsx",
+        "generated_sha256": "59bc52d5f288d04909ff304a3304d7c6d930179c734da0986be1d04d331a11fb"
+      },
+      {
+        "file": "src/components/ui/input-group.tsx",
+        "generated_sha256": "c8753d5bc132f180454c7b9f582bd9007e54bb8cae9d3ab4a545872dbb0fde8b"
+      },
+      {
+        "file": "src/components/ui/dropdown-menu.tsx",
+        "generated_sha256": "1b9c748a8ea8c2890124f316e3edf840153ef43f6df76b3ff1878d8fd37f9685"
+      },
+      {
+        "file": "src/components/ui/popover.tsx",
+        "generated_sha256": "61be62a441fb6b90e26ceaf93353f57411a4d114f305e0417b8f1122750b9018"
+      },
+      {
+        "file": "src/components/ui/tooltip.tsx",
+        "generated_sha256": "fc4380a53b7c847ff3d692c320f8d889eaaf3d6878dcba1da926ec4ab3a7c037"
+      }
+    ],
+    "additional_components_command": "npx shadcn@4.16.1 add combobox --yes",
+    "overlay_components_command": "env PATH=/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/bin:/bin npx --yes shadcn@4.16.1 add dropdown-menu popover tooltip --yes"
+  },
+  "fonts": [
+    {
+      "family": "Geist",
+      "package": "@fontsource-variable/geist",
+      "version": "5.3.0",
+      "asset": "geist-latin-wght-normal.woff2",
+      "sha256": "19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1",
+      "license_file": "Geist-OFL.txt",
+      "license_sha256": "71609cbb5c78b5870d712eab73a31d76622635c6ed034ab5cee3b9ecbda8685f"
+    },
+    {
+      "family": "Geist Mono",
+      "package": "@fontsource-variable/geist-mono",
+      "version": "5.3.0",
+      "asset": "geist-mono-latin-wght-normal.woff2",
+      "sha256": "684ad5b531f81d43c1e8c7038262d5db7cdc1f68006e04d6c7769efa8d33c8cc",
+      "license_file": "Geist-Mono-OFL.txt",
+      "license_sha256": "cc815ed4fc045f0e991abb10395b7932bd028c6a067deb13316d6002105074e6"
+    }
+  ],
+  "packages": [
+    {
+      "package": "@babel/runtime",
+      "version": "7.29.10",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "babel--runtime--LICENSE",
+          "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@base-ui/react",
+      "version": "1.9.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "base-ui--react--LICENSE",
+          "sha256": "07fc1b39d69d14bc7d40482a628f47226258eb01265db68ae684944b916beb2a"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@base-ui/utils",
+      "version": "0.5.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "base-ui--utils--LICENSE",
+          "sha256": "07fc1b39d69d14bc7d40482a628f47226258eb01265db68ae684944b916beb2a"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@floating-ui/core",
+      "version": "1.8.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "floating-ui--core--LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@floating-ui/dom",
+      "version": "1.8.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "floating-ui--dom--LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@floating-ui/react-dom",
+      "version": "2.1.9",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "floating-ui--react-dom--LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@floating-ui/utils",
+      "version": "0.2.12",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "floating-ui--utils--LICENSE",
+          "sha256": "0e4c9a9b6c71019cbbea3bdc20b01223110a9035700f9c960c8fcbf78c2325ce"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/primitive",
+      "version": "1.2.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--primitive--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-arrow",
+      "version": "1.1.17",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-arrow--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-checkbox",
+      "version": "1.4.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-checkbox--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-collapsible",
+      "version": "1.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-collapsible--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-collection",
+      "version": "1.2.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-collection--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-compose-refs",
+      "version": "1.1.5",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-compose-refs--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-context",
+      "version": "1.3.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-context--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-dialog",
+      "version": "1.3.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-dialog--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-direction",
+      "version": "1.2.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-direction--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-dismissable-layer",
+      "version": "1.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-dismissable-layer--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-dropdown-menu",
+      "version": "2.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-dropdown-menu--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-focus-guards",
+      "version": "1.2.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-focus-guards--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-focus-scope",
+      "version": "1.3.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-focus-scope--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-id",
+      "version": "1.1.4",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-id--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-label",
+      "version": "2.1.17",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-label--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-menu",
+      "version": "2.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-menu--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-popover",
+      "version": "1.3.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-popover--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-popper",
+      "version": "1.4.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-popper--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-portal",
+      "version": "1.2.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-portal--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-presence",
+      "version": "1.1.11",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-presence--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-primitive",
+      "version": "2.2.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-primitive--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-progress",
+      "version": "1.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-progress--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-roving-focus",
+      "version": "1.2.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-roving-focus--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-slot",
+      "version": "1.5.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-slot--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-tooltip",
+      "version": "1.4.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-tooltip--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-use-callback-ref",
+      "version": "1.1.5",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-use-callback-ref--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-use-controllable-state",
+      "version": "1.3.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-use-controllable-state--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-use-effect-event",
+      "version": "0.0.5",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-use-effect-event--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-use-is-hydrated",
+      "version": "0.1.3",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-use-is-hydrated--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-use-layout-effect",
+      "version": "1.1.4",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-use-layout-effect--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-use-size",
+      "version": "1.1.5",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-use-size--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@radix-ui/react-visually-hidden",
+      "version": "1.2.13",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--react-visually-hidden--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "@tauri-apps/api",
+      "version": "2.12.4",
+      "license": "Apache-2.0 OR MIT",
+      "files": [
+        {
+          "file": "tauri-apps--api--LICENSE-APACHE-2.0",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "file": "tauri-apps--api--LICENSE-MIT",
+          "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "aria-hidden",
+      "version": "1.2.6",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "aria-hidden--LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "class-variance-authority",
+      "version": "0.7.1",
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "file": "class-variance-authority--LICENSE",
+          "sha256": "0ccbf956cffc8dcf515809433cb5242ee67c94513d46e48c261d68d0880de406"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "clsx",
+      "version": "2.1.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "clsx--license",
+          "sha256": "9a9edad7baae52622bddf3c15b2ef8a33d2c89f2d25408ad13e8a7481c6b0c97"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "cn",
+      "version": "0.5.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "cn--LICENSE",
+          "sha256": "00ff8408e93e2ecc4d90c0edeabdf434100c3aff50acc5d330e17eccd4a3faa5"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "get-nonce",
+      "version": "1.0.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "get-nonce--LICENSE",
+          "sha256": "acf3b087b348d2f2e731b9d4131af185aad694c1204ce14a46909483fd42da05"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "lucide-react",
+      "version": "1.61.0",
+      "license": "ISC",
+      "files": [
+        {
+          "file": "lucide-react--LICENSE",
+          "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "radix-ui",
+      "version": "1.8.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "radix-ui--LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "react",
+      "version": "19.3.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "react--LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "react-dom",
+      "version": "19.3.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "react-dom--LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "react-remove-scroll",
+      "version": "2.7.2",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "react-remove-scroll--LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "react-remove-scroll-bar",
+      "version": "2.3.8",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "react-remove-scroll-bar--package.json",
+          "sha256": "e372f857ce05f266137c65293436b5380fec42ac311e6acb9378ed78b98d75d0"
+        },
+        {
+          "file": "react-remove-scroll-bar--README.md",
+          "sha256": "486442209236ffa3893312e508694699a6b8834d30a2f9c083c1f3379983e4f9"
+        }
+      ],
+      "license_text_in_package": false,
+      "source_license_lookup": {
+        "published_git_head": "b3b1287aad81def2e2ae707274b74531b61ddbaf",
+        "repository": "https://github.com/theKashey/react-remove-scroll-bar",
+        "pinned_license_url": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/b3b1287aad81def2e2ae707274b74531b61ddbaf/LICENSE",
+        "pinned_license_http_status": 404,
+        "pinned_tree_url": "https://api.github.com/repos/theKashey/react-remove-scroll-bar/git/trees/b3b1287aad81def2e2ae707274b74531b61ddbaf?recursive=1",
+        "pinned_tree_http_status": 422,
+        "compatible_patch_checked": {
+          "version": "2.3.7",
+          "published_git_head": "29e9fcd1eecf7d3b77a767941c4a57fe461fc1e4",
+          "tag": "v2.3.7",
+          "tree_url": "https://api.github.com/repos/theKashey/react-remove-scroll-bar/git/trees/v2.3.7?recursive=1",
+          "complete_tree_has_license_file": false,
+          "npm_archive_has_license_file": false,
+          "readme_license_section": "# License\nMIT\n"
+        },
+        "selection": "Retain 2.3.8. Both package versions omit the full text. Preserve the original package metadata and README declarations without inventing text."
+      }
+    },
+    {
+      "package": "react-style-singleton",
+      "version": "2.2.3",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "react-style-singleton--LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "reselect",
+      "version": "5.3.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "reselect--LICENSE",
+          "sha256": "e98047a5dee068b33f82e8c4b7a63037b5108c93393198efd4097753004af5dd"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "scheduler",
+      "version": "0.28.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "scheduler--LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "shadcn",
+      "version": "4.22.1",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "shadcn--LICENSE.md",
+          "sha256": "1564074e13439397221ffd522e2e504d56561994a23d371aa5e3ad43e4f5423f"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "tailwindcss",
+      "version": "4.3.3",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "tailwindcss--LICENSE",
+          "sha256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "tslib",
+      "version": "2.8.1",
+      "license": "0BSD",
+      "files": [
+        {
+          "file": "tslib--CopyrightNotice.txt",
+          "sha256": "da16ddb65f8ca390998fb99223d0112498b56b45784d00afd77ff8ce1ac4de8b"
+        },
+        {
+          "file": "tslib--LICENSE.txt",
+          "sha256": "210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "tw-animate-css",
+      "version": "1.4.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "tw-animate-css--LICENSE",
+          "sha256": "039184dfa0a822397b3f45a435b5b1e538721587fbade96b9fa80f86cb354109"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "use-callback-ref",
+      "version": "1.3.3",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "use-callback-ref--LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "use-sidecar",
+      "version": "1.1.3",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "use-sidecar--LICENSE",
+          "sha256": "30f0cfddf483d1128e3610205020f2041a6c5e837aa999e0aa82e5576187d4a9"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "use-sync-external-store",
+      "version": "1.7.0",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "use-sync-external-store--LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "license_text_in_package": true
+    },
+    {
+      "package": "zod",
+      "version": "4.6.7",
+      "license": "MIT",
+      "files": [
+        {
+          "file": "zod--LICENSE",
+          "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+        }
+      ],
+      "license_text_in_package": true
+    }
+  ],
+  "app_icon": {
+    "source": "src-tauri/icons/icon.png",
+    "asset": "src/assets/app-icon.png",
+    "sha256": "60d107ada79cabf8866735cff1b8e3073765455c5552321d334fa3788154104e"
+  },
+  "theme": {
+    "base_color": "zinc",
+    "default_mode": "dark",
+    "source": "https://ui.shadcn.com/r/colors/zinc.json"
+  }
+}

@@ -1,0 +1,40 @@
+[
+  {
+    "directory": "/var/folders/9d/_w0dsyv95ys3r_6hd99pcxch0000gp/T/mobile-capture-poc-fixture-KcpJ8E/tauri-poc-0btVGq",
+    "session": {
+      "coordinator": "tauri-poc",
+      "id": "tauri-poc-0btVGq",
+      "started_at": "2026-10-20T17:24:13.217990Z"
+    },
+    "receipt": {
+      "reason": "lease_closed",
+      "bytes": 4290,
+      "records": 100,
+      "incomplete_tail": false,
+      "child_reaped": true,
+      "forced": false,
+      "exit_code": null,
+      "stderr": "",
+      "ended_at": "2026-10-20T17:24:16.978759Z"
+    }
+  },
+  {
+    "directory": "/var/folders/9d/_w0dsyv95ys3r_6hd99pcxch0000gp/T/mobile-capture-poc-fixture-KcpJ8E/tauri-poc-vqWSSz",
+    "session": {
+      "coordinator": "tauri-poc",
+      "id": "tauri-poc-vqWSSz",
+      "started_at": "2026-10-20T17:23:15.128265Z"
+    },
+    "receipt": {
+      "reason": "collector_exit",
+      "bytes": 4290,
+      "records": 100,
+      "incomplete_tail": false,
+      "child_reaped": true,
+      "forced": false,
+      "exit_code": 23,
+      "stderr": "",
+      "ended_at": "2026-10-20T17:23:19.330030Z"
+    }
+  }
+]

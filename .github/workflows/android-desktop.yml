@@ -1,0 +1,98 @@
+name: Android desktop packages
+
+on:
+  pull_request:
+    paths: ['TauriPoC/**', 'Dependencies/Capture/**', 'CaptureRuntime/evidence.py', '.github/workflows/android-desktop.yml']
+  push:
+    branches: ['main']
+    paths: ['TauriPoC/**', 'Dependencies/Capture/**', 'CaptureRuntime/evidence.py', '.github/workflows/android-desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            architecture: macOS-arm64
+            payload: android-package/Mobile Capture Android.app/Contents/Resources/android-tools
+          - os: windows-2022
+            architecture: Windows-x64
+            payload: android-installed/android-tools
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: TauriPoC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: TauriPoC/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: npm ci
+      - run: npm run web:build
+      - run: cargo fmt --all -- --check
+      - run: npm run test:delivery
+      - name: Probe Windows process lifetimes
+        if: runner.os == 'Windows'
+        run: python scripts/probe-windows-launch.py
+      - name: Build complete development bundle
+        run: python scripts/package-android.py --channel development --cache "${{ runner.temp }}/android-dependency-cache" --output "${{ runner.temp }}/android-package"
+      - name: Install Windows bundle in user scope
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "${{ runner.temp }}/android-package/*.exe" | Select-Object -First 1
+          $destination = "${{ runner.temp }}\android-installed"
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$destination" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "NSIS installation failed with $($process.ExitCode)" }
+          python scripts/smoke-installed.py --app "$destination"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Windows Doctor failed' }
+      - name: Verify Windows missing-state handoff before the crash matrix
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cases = @(
+            'completed_network_handoff_after_directory_moves_preserves_evidence',
+            'missing_network_state_cannot_release_active_or_recovery_required_session',
+            'missing_completed_state_still_requires_actual_owner_lease_handoff',
+            'missing_completed_state_can_retry_a_launch_failure_before_pending_routing'
+          )
+          foreach ($case in $cases) {
+            cargo test -p capture-poc-core --test network $case --locked -- --exact --test-threads=1
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Verify completed capture handoff before the crash matrix
+        run: cargo test -p capture-poc-core --test network completed_control_release_allows_isolated_setup_and_original_export --locked -- --exact --test-threads=1
+      - name: Verify setup releases completed control
+        run: cargo test -p capture-poc-core --test setup completed_setup_releases_control_before_export_and_stays_finished_during_next_capture --locked -- --exact --test-threads=1
+      - name: Verify setup waits for held control
+        run: cargo test -p capture-poc-core --test setup restored_setup_remains_retryable_until_completed_control_is_released --locked -- --exact --test-threads=1
+      - name: Verify bundled mitmdump evidence and capture beyond two minutes
+        run: python scripts/probe-bundled-engine.py --package "${{ runner.temp }}/android-package" --payload "${{ runner.temp }}/${{ matrix.payload }}"
+      - name: Verify serial core fixtures, desktop adapter, and normalized evidence
+        run: npm run verify
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Probe Windows process lifetimes inside the Rust test Job
+        if: runner.os == 'Windows'
+        run: cargo test -p capture-poc-core --test network windows_launch_probe_runs_inside_rust_test_job --locked -- --exact --nocapture
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MobileCaptureAndroid-${{ matrix.architecture }}-development
+          path: ${{ runner.temp }}/android-package/
+          if-no-files-found: error

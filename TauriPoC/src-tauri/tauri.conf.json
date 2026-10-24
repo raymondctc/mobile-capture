@@ -1,0 +1,64 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Mobile Capture Android",
+  "version": "0.1.0",
+  "identifier": "dev.mobilecapture.tauri-poc",
+  "build": {
+    "beforeDevCommand": "npm run prepare:worker && npm run web:dev",
+    "beforeBuildCommand": "node scripts/require-package.mjs && npm run web:build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Mobile Capture Android",
+        "width": 1200,
+        "height": 790,
+        "minWidth": 900,
+        "minHeight": 620,
+        "theme": "Dark",
+        "backgroundColor": "#09090b"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "externalBin": [
+      "binaries/collector-worker",
+      "binaries/capture-guardian",
+      "binaries/android-doctor"
+    ],
+    "resources": {
+      "../resources/network_addon.py": "network_addon.py"
+    },
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Android logs and HTTP(S) capture",
+    "longDescription": "Capture and inspect selected Android app logs and device network traffic with explicit setup and safe routing restoration.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "mobilecapture-android"
+        ]
+      }
+    }
+  }
+}

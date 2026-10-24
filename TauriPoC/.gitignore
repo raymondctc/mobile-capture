@@ -1,0 +1,9 @@
+node_modules/
+target/
+dist/
+src-tauri/binaries/collector-worker-*
+src-tauri/binaries/capture-guardian-*
+fixture-sessions/
+src-tauri/gen/
+src-tauri/binaries/android-doctor-*
+src-tauri/generated/

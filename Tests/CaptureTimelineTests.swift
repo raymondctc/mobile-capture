@@ -180,8 +180,17 @@ struct CaptureTimelineTests {
 
         let append = try FileHandle(forWritingTo: directory.appendingPathComponent("logs/device.log"))
         try append.seekToEnd(); try append.write(contentsOf: rawLogs); try append.close()
+        let importDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("capture-import-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: importDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: importDirectory) }
+        for source in ["logs", "network", "timeline"] {
+            try FileManager.default.copyItem(at: directory.appendingPathComponent(source), to: importDirectory.appendingPathComponent(source))
+        }
+        var importState = state
+        importState["directory"] = importDirectory.path
+        try JSONSerialization.data(withJSONObject: importState).write(to: importDirectory.appendingPathComponent("session.json"))
         let imported = CaptureStore()
-        await imported.loadSession(at: directory)
+        await imported.loadSession(at: importDirectory)
         try require(imported.pendingTimelineBytes > 0, "saved-session imports remain bounded")
         let inspectedSelection = imported.selectedDeviceID
         await imported.applyExternalSelection(platform: "android", deviceID: "different-device", applicationID: nil)

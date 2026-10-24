@@ -1,0 +1,469 @@
+use crate::{lease, model::*};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::{
+    io::{Read, Write},
+    net::{Ipv4Addr, SocketAddrV4, TcpStream},
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
+
+const FRAME_LIMIT: usize = 4 * 1024 * 1024;
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Bootstrap {
+    pub paths: CapturePaths,
+    pub tools: ToolSelection,
+    pub fixture: bool,
+    pub request: StartRequest,
+    pub directory: PathBuf,
+    pub recovery: bool,
+    #[serde(default)]
+    pub fixture_drop_initial_reply: bool,
+    pub ca: PathBuf,
+    pub lock: PathBuf,
+    #[serde(default)]
+    pub resolved_logs: Option<crate::android::ResolvedLogs>,
+    #[serde(default)]
+    pub descriptor_version: u32,
+}
+#[derive(Serialize, Deserialize)]
+pub(super) struct Descriptor {
+    pub port: u16,
+    pub token: String,
+}
+#[derive(Serialize, Deserialize)]
+pub(super) struct Frame {
+    pub token: String,
+    pub command: Action,
+}
+#[derive(Serialize, Deserialize)]
+pub(crate) enum Action {
+    Attach,
+    Snapshot,
+    Status,
+    Marker(String),
+    Stop,
+    Recover,
+    Export,
+    ExportControlled(String),
+}
+#[derive(Serialize, Deserialize)]
+pub(crate) enum Reply {
+    Snapshot(Snapshot),
+    Stop(StopOutcome),
+    Archive(PathBuf),
+    Error(String),
+}
+
+pub(super) fn send<T: Serialize>(stream: &mut TcpStream, value: &T) -> Result<()> {
+    let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+    if bytes.len() > FRAME_LIMIT {
+        return Err("Control response exceeded bounded frame".into());
+    }
+    stream
+        .write_all(&(bytes.len() as u32).to_be_bytes())
+        .and_then(|_| stream.write_all(&bytes))
+        .map_err(|e| e.to_string())
+}
+pub(super) fn receive<T: DeserializeOwned>(stream: &mut TcpStream) -> Result<T> {
+    receive_with_timeout(stream, Duration::from_secs(2))
+}
+fn receive_with_timeout<T: DeserializeOwned>(
+    stream: &mut TcpStream,
+    timeout: Duration,
+) -> Result<T> {
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|e| e.to_string())?;
+    let mut length = [0; 4];
+    stream.read_exact(&mut length).map_err(|e| e.to_string())?;
+    let length = u32::from_be_bytes(length) as usize;
+    if length > FRAME_LIMIT {
+        return Err("Control frame exceeds bound".into());
+    }
+    let mut bytes = vec![0; length];
+    stream.read_exact(&mut bytes).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("Invalid control frame {e}"))
+}
+pub(crate) struct Client {
+    pub directory: PathBuf,
+    lease: Option<TcpStream>,
+    completion: Option<AuthenticatedCompletion>,
+}
+struct AuthenticatedCompletion;
+impl Client {
+    pub fn detached(directory: PathBuf) -> Self {
+        Self {
+            directory,
+            lease: None,
+            completion: None,
+        }
+    }
+    pub fn attach(directory: PathBuf) -> Result<Self> {
+        let descriptor: Descriptor = lease::read(&directory.join("runtime/control.json"))?;
+        let mut stream = connect(&descriptor)?;
+        send(
+            &mut stream,
+            &Frame {
+                token: descriptor.token,
+                command: Action::Attach,
+            },
+        )?;
+        let reply = receive_with_timeout(&mut stream, Duration::from_secs(40))?;
+        match &reply {
+            Reply::Snapshot(_) => {
+                let mut client = Self {
+                    directory,
+                    lease: Some(stream),
+                    completion: None,
+                };
+                client.observe(&reply);
+                Ok(client)
+            }
+            Reply::Error(e) => Err(e.clone()),
+            _ => Err("Unexpected guardian attachment response".into()),
+        }
+    }
+    pub fn launch(config: Bootstrap) -> Result<Self> {
+        let startup_path = config
+            .directory
+            .join("runtime")
+            .join(format!("startup-{}.json", lease::random_token()?));
+        lease::write(&startup_path, &config)?;
+        let mut command = Command::new(&config.tools.guardian);
+        command
+            .arg(&startup_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+        #[cfg(windows)]
+        let child = spawn_windows_guardian(&mut command, config.fixture);
+        #[cfg(not(windows))]
+        let child = command.spawn();
+        let mut child = child.map_err(|e| format!("Cannot launch independent guardian {e}"))?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if startup_path.with_extension("ready").exists() {
+                reap_later(child);
+                return Self::attach(config.directory).map_err(|error| {
+                    let failure = lease::read::<String>(&startup_path.with_extension("error"))
+                        .unwrap_or_default();
+                    format!("Guardian attachment failed. {error}. {failure}")
+                });
+            }
+            if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                return Err(lease::read::<String>(&startup_path.with_extension("error"))
+                    .unwrap_or_else(|_| "Guardian failed before routing".into()));
+            }
+            if Instant::now() >= deadline {
+                reap_later(child);
+                return Err(
+                    "Guardian startup handshake timed out; session remains recoverable".into(),
+                );
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+    pub fn request(&mut self, command: Action) -> Result<Reply> {
+        let timeout = if matches!(command, Action::ExportControlled(_)) {
+            Duration::from_secs(60 * 60)
+        } else {
+            Duration::from_secs(40)
+        };
+        let descriptor: Descriptor = lease::read(&self.directory.join("runtime/control.json"))?;
+        let mut stream = connect(&descriptor)?;
+        send(
+            &mut stream,
+            &Frame {
+                token: descriptor.token,
+                command,
+            },
+        )?;
+        let reply = receive_with_timeout(&mut stream, timeout)?;
+        self.observe(&reply);
+        Ok(reply)
+    }
+    fn observe(&mut self, reply: &Reply) {
+        let view = match reply {
+            Reply::Snapshot(Snapshot::Stopped(view) | Snapshot::Failed(view))
+            | Reply::Stop(StopOutcome::Ready(view)) => Some(view),
+            Reply::Snapshot(_) | Reply::Stop(_) => None,
+            _ => return,
+        };
+        self.completion = view
+            .filter(|view| {
+                view.directory == self.directory
+                    && matches!(
+                        &view.network,
+                        NetworkView::Stopped(completion) | NetworkView::Interrupted(completion)
+                            if completion.routing_restored
+                    )
+            })
+            .map(|_| AuthenticatedCompletion);
+    }
+    pub fn has_authenticated_completion(&self) -> bool {
+        self.completion.is_some()
+    }
+    pub fn has_lease(&self) -> bool {
+        self.lease.is_some()
+    }
+    pub fn missing_state(&self) -> Result<bool> {
+        for path in [
+            self.directory.join("session.json"),
+            self.directory.join("runtime/bootstrap.json"),
+        ] {
+            match std::fs::metadata(&path) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+                Err(error) => {
+                    return Err(format!(
+                        "Cannot inspect capture state at {}. {error}",
+                        path.display()
+                    ))
+                }
+            }
+        }
+        Ok(false)
+    }
+    pub fn release(&mut self, lock: &Path) -> Result<()> {
+        self.lease.take();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match lease::FileLease::acquire_owner(lock) {
+                Ok(mut owner) => {
+                    if self.has_authenticated_completion()
+                        && owner.prior()?.as_deref() == Some(self.directory.as_path())
+                        && self.missing_state()?
+                    {
+                        owner.clear()?;
+                    }
+                    return Ok(());
+                }
+                Err(error) if Instant::now() >= deadline => return Err(error),
+                Err(_) => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+    }
+}
+#[cfg(windows)]
+fn spawn_windows_guardian(command: &mut Command, fixture: bool) -> std::io::Result<Child> {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::{
+        Foundation::{GetLastError, ERROR_ACCESS_DENIED},
+        System::{
+            JobObjects::{
+                IsProcessInJob, JobObjectExtendedLimitInformation, QueryInformationJobObject,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            },
+            Threading::{
+                GetCurrentProcess, CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP,
+                DETACHED_PROCESS,
+            },
+        },
+    };
+
+    let detached_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    let first = command
+        .creation_flags(CREATE_BREAKAWAY_FROM_JOB | detached_flags)
+        .spawn();
+    let first_spawn_error = first.as_ref().err().and_then(|error| error.raw_os_error());
+    if first_spawn_error != Some(ERROR_ACCESS_DENIED as i32) && !fixture {
+        return first;
+    }
+    let mut in_job = 0;
+    let membership_result =
+        unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job) };
+    let membership_error = (membership_result == 0).then(|| unsafe { GetLastError() });
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    let (query_result, query_error) = if membership_result != 0 && in_job != 0 {
+        let result = unsafe {
+            QueryInformationJobObject(
+                std::ptr::null_mut(),
+                JobObjectExtendedLimitInformation,
+                (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        let error = (result == 0).then(|| unsafe { GetLastError() });
+        (Some(result), error)
+    } else {
+        (None, None)
+    };
+    let immediate_limit_flags = query_result
+        .filter(|result| *result != 0)
+        .map(|_| limits.BasicLimitInformation.LimitFlags);
+    let retry_attempted = first_spawn_error == Some(ERROR_ACCESS_DENIED as i32)
+        && immediate_limit_flags
+            .is_some_and(|flags| flags & !JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0);
+    let result = if retry_attempted {
+        command.creation_flags(detached_flags).spawn()
+    } else {
+        first
+    };
+    if fixture {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "probe": "windows_guardian_launch_rust",
+                "pid_for_diagnostics_only": std::process::id(),
+                "membership_result": membership_result,
+                "membership_error": membership_error,
+                "in_job": (membership_result != 0).then_some(in_job != 0),
+                "query_result": query_result,
+                "query_error": query_error,
+                "immediate_limit_flags": immediate_limit_flags,
+                "first_spawn_error": first_spawn_error,
+                "retry_attempted": retry_attempted,
+                "retry_spawn_error": if retry_attempted {
+                    result.as_ref().err().and_then(|error| error.raw_os_error())
+                } else {
+                    None
+                },
+            })
+        );
+    }
+    result
+}
+fn connect(descriptor: &Descriptor) -> Result<TcpStream> {
+    let stream = TcpStream::connect_timeout(
+        &SocketAddrV4::new(Ipv4Addr::LOCALHOST, descriptor.port).into(),
+        Duration::from_millis(500),
+    )
+    .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| e.to_string())?;
+    Ok(stream)
+}
+pub(crate) fn namespace(paths: &CapturePaths, fixture: bool) -> Result<(PathBuf, PathBuf)> {
+    if let Some(root) = &paths.runtime_root {
+        if !fixture {
+            return Err("Private runtime override is restricted to fixture mode".into());
+        }
+        return Ok((root.join("owner.lock"), root.join("ca")));
+    }
+    #[cfg(unix)]
+    let lock = PathBuf::from(format!("/tmp/capture-companion-{}/owner.lock", unsafe {
+        libc::getuid()
+    }));
+    #[cfg(windows)]
+    let lock = PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA unavailable")?)
+        .join("MobileCapture/owner.lock");
+    #[cfg(target_os = "macos")]
+    let ca = PathBuf::from(std::env::var_os("HOME").ok_or("HOME unavailable")?)
+        .join("Library/Application Support/MobileCapture/TauriPoC/ca");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let ca = PathBuf::from(std::env::var_os("HOME").ok_or("HOME unavailable")?)
+        .join(".local/share/MobileCapture/TauriPoC/ca");
+    #[cfg(windows)]
+    let ca = PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA unavailable")?)
+        .join("MobileCapture/TauriPoC/ca");
+    Ok((lock, ca))
+}
+pub(crate) fn prior(lock: &Path) -> Result<Option<PathBuf>> {
+    let Some(parent) = lock.parent() else {
+        return Err("Invalid routing lease path".into());
+    };
+    let Some(bytes) = crate::files::read(parent, "owner.lock")? else {
+        return Ok(None);
+    };
+    let text = String::from_utf8(bytes).map_err(|_| "Invalid routing lease locator")?;
+    if text.trim().is_empty() {
+        Ok(None)
+    } else {
+        let path = PathBuf::from(text.trim());
+        if !path.is_absolute() {
+            return Err("Routing lease locator is not absolute".into());
+        }
+        Ok(Some(path))
+    }
+}
+
+fn reap_later(mut child: Child) {
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn release_clears_only_authenticated_missing_state_for_its_current_locator() {
+        for authenticated in [false, true] {
+            for matching_locator in [false, true] {
+                for missing in [
+                    None,
+                    Some("session.json"),
+                    Some("runtime/bootstrap.json"),
+                    Some("directory"),
+                ] {
+                    let root = tempfile::tempdir().unwrap();
+                    let lock = root.path().join("private/owner.lock");
+                    let directory = root.path().join("previous-session");
+                    fs::create_dir_all(directory.join("runtime")).unwrap();
+                    fs::write(directory.join("session.json"), b"{}").unwrap();
+                    fs::write(directory.join("runtime/bootstrap.json"), b"{}").unwrap();
+                    match missing {
+                        Some("directory") => fs::remove_dir_all(&directory).unwrap(),
+                        Some(missing) => fs::remove_file(directory.join(missing)).unwrap(),
+                        None => (),
+                    }
+                    let locator = if matching_locator {
+                        directory.clone()
+                    } else {
+                        root.path().join("another-session")
+                    };
+                    let mut owner = lease::FileLease::acquire_owner(&lock).unwrap();
+                    owner.publish(&locator).unwrap();
+                    drop(owner);
+                    let mut client = Client::detached(directory);
+                    if authenticated {
+                        client.completion = Some(AuthenticatedCompletion);
+                    }
+                    client.release(&lock).unwrap();
+                    let expected = if authenticated && matching_locator && missing.is_some() {
+                        None
+                    } else {
+                        Some(locator)
+                    };
+                    assert_eq!(
+                        prior(&lock).unwrap(), expected,
+                        "authenticated={authenticated}, matching={matching_locator}, missing={missing:?}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn authenticated_missing_state_cannot_clear_a_held_owner_locator() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = root.path().join("private/owner.lock");
+        let directory = root.path().join("missing-session");
+        let mut owner = lease::FileLease::acquire_owner(&lock).unwrap();
+        owner.publish(&directory).unwrap();
+        let mut client = Client::detached(directory.clone());
+        client.completion = Some(AuthenticatedCompletion);
+        assert_eq!(
+            client.release(&lock).unwrap_err(),
+            "Another capture owns this connection or source"
+        );
+        assert_eq!(owner.prior().unwrap(), Some(directory));
+    }
+}

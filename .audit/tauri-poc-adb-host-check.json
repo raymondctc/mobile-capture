@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/Users/raymond/Library/Android/sdk/platform-tools/adb",
+    "-H",
+    "127.0.0.1",
+    "-P",
+    "55714",
+    "devices"
+  ],
+  "exit_code": 1,
+  "server_listening": false,
+  "explicit_host_refusal": true,
+  "verified": true,
+  "stderr": "10-20 09:50:46.240 18713 186525223 W adb     : network.cpp:149 failed to connect to '127.0.0.1:55714': Connection refused\n* cannot start server on remote host\nadb: failed to check server version: cannot connect to daemon at tcp:127.0.0.1:55714: failed to connect to '127.0.0.1:55714': Connection refused"
+}

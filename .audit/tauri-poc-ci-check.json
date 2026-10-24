@@ -1,0 +1,1 @@
+{"conclusion":"success","headSha":"1f00f56298c3d2379e3db73202cc433801aad70a","jobs":[{"conclusion":"success","name":"fixture-and-build (macos-14, app)","status":"completed"},{"conclusion":"success","name":"fixture-and-build (windows-latest, nsis)","status":"completed"}],"status":"completed","url":"https://github.com/raymondctc/mobile-capture/actions/runs/39468978227"}

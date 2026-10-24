@@ -1,0 +1,4 @@
+[workspace]
+members = ["capture-core", "src-tauri"]
+default-members = ["capture-core"]
+resolver = "2"
