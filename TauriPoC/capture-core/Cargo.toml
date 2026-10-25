@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 base64 = "0.22"
+minisign-verify = "=0.3.0"
 flate2 = "1"
 getrandom = "0.3"
 chrono = { version = "0.4", features = ["serde"] }

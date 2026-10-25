@@ -3,8 +3,9 @@ import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { api, type Preferences } from "./api";
+import { type Preferences } from "./api";
 import { product } from "./product";
+import { UpdateSettings, type UpdateController } from "./Updates";
 import { Policies } from "./Policies";
 import type { RunAction } from "./state";
 export function Settings({
@@ -16,6 +17,7 @@ export function Settings({
   pending,
   setup,
   doctor,
+  updates,
 }: {
   preferences: Preferences | undefined;
   save: (preferences: Preferences) => Promise<void>;
@@ -25,6 +27,7 @@ export function Settings({
   pending: string;
   setup: () => void;
   doctor: () => void;
+  updates: UpdateController;
 }) {
   const [draft, setDraft] = useState(preferences);
   const [version, setVersion] = useState("");
@@ -181,16 +184,7 @@ export function Settings({
       <section className="space-y-3 border-t border-border pt-4">
         <h3>Mobile Capture Android</h3>
         <p>Version {version || "…"}</p>
-        <p>
-          Updates use manual installation. Finish capture, save, setup, and
-          recovery before opening the Android release page.
-        </p>
-        <Button
-          disabled={!idle || !!pending}
-          onClick={() => void run("Opening Android releases", api.updates)}
-        >
-          Check for updates
-        </Button>
+        <UpdateSettings controller={updates} />
         <p className="text-xs leading-relaxed text-muted-foreground">
           Closing the window keeps a normal recording alive. Reopen the app to
           return. Quitting waits for routing restoration and safe shutdown.

@@ -75,7 +75,7 @@ Use **Stop without archive** if you want to finish capture and inspect before sa
 
 If routing recovery is required, reconnect the original phone and choose **Retry safe recovery**. Export and new recordings remain blocked until restoration and shutdown are verified. Do not change the phone's proxy configuration while recovery owns it. Verified partial evidence can retain coverage gaps, unavailable bodies, interruptions, and source limits. Review those facts and the raw evidence before sharing an archive.
 
-Quitting waits for safe shutdown and routing restoration. Unresolved recovery prevents exit. Updates use manual installation. Finish capture, save, setup, and recovery before choosing **Check for updates** in Settings.
+Quitting waits for safe shutdown and routing restoration. Unresolved recovery prevents exit. The app checks for Android desktop updates quietly at startup. Settings provides an explicit download and **Install and restart** action. Downloads can run during capture. Installation waits until capture has stopped, its archive is saved, and setup or recovery has finished. See [publishing Android updates](../docs/ANDROID_UPDATES.md) for the signed release pipeline and publisher prerequisites.
 
 ## Run the desktop workspace in development
 

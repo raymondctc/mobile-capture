@@ -10,11 +10,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn export(state: &State, destination: &Path) -> Result<PathBuf> {
-    let _admission = state
-        .admission
-        .lock()
-        .map_err(|_| "Operation admission failed")?;
+pub fn export(
+    state: &State,
+    _admission: &std::sync::MutexGuard<'_, crate::desktop::Admission>,
+    destination: &Path,
+) -> Result<PathBuf> {
     if state.operations.busy()? {
         return Err("Finish device setup or saving before exporting readiness facts".into());
     }

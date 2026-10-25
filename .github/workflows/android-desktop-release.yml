@@ -2,13 +2,33 @@ name: Prepare signed Android desktop release
 
 on:
   workflow_dispatch:
+  push:
+    tags: ["android-v*"]
+
+concurrency:
+  group: android-desktop-release-stable
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  validate-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python TauriPoC/scripts/android_release.py
+
   signed-package:
+    needs: validate-version
     environment: android-release
+    env:
+      MOBILE_CAPTURE_UPDATER_PUBLIC_KEY: ${{ vars.ANDROID_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.ANDROID_UPDATER_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_UPDATER_PRIVATE_KEY_PASSWORD }}
     strategy:
       fail-fast: false
       matrix:
@@ -92,3 +112,29 @@ jobs:
           name: MobileCaptureAndroid-${{ matrix.architecture }}-release
           path: ${{ runner.temp }}/android-package/
           if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/android-v')
+    needs: signed-package
+    runs-on: ubuntu-latest
+    environment: android-release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MOBILE_CAPTURE_UPDATER_PUBLIC_KEY: ${{ vars.ANDROID_UPDATER_PUBLIC_KEY }}
+    defaults:
+      run:
+        working-directory: TauriPoC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: MobileCaptureAndroid-*-release
+          path: ${{ runner.temp }}/android-packages
+      - name: Verify both final packages and promote Android feed
+        run: python scripts/android_release.py --packages "$RUNNER_TEMP/android-packages" --publish

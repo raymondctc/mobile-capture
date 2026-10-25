@@ -34,6 +34,9 @@ run("cargo", [
   "--",
   "--test-threads=1",
 ]);
+run(process.execPath, ["scripts/test-reading.mjs"], {
+  env: { ...process.env, ANDROID_UI_CHECK: "titlebar" },
+});
 const targetDirectory = path.resolve(root, process.env.CARGO_TARGET_DIR ?? "target");
 const directory = mkdtempSync(
   path.join(tmpdir(), "mobile-capture-poc-verify-"),

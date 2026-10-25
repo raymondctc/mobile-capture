@@ -53,6 +53,7 @@
     }
   },
   "plugins": {
+    "updater": { "pubkey": "", "requireSignedVersion": true },
     "deep-link": {
       "desktop": {
         "schemes": [

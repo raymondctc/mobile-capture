@@ -19,6 +19,7 @@ import { Timeline } from "./Timeline";
 import { Library } from "./Library";
 import { Setup } from "./Setup";
 import { Diagnostics } from "./Diagnostics";
+import { useUpdates, UpdateNotice } from "./Updates";
 import { Settings } from "./Settings";
 import { OperationStatus } from "./Operation";
 import {
@@ -41,6 +42,7 @@ import {
 type MainView = "capture" | "settings";
 type Panel = "setup" | "doctor" | null;
 export function App() {
+  const updates = useUpdates();
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [operation, setOperation] = useState<Operation>({ state: "idle" });
   const [preferences, setPreferences] = useState<Preferences>();
@@ -413,10 +415,13 @@ export function App() {
   );
   return (
     <TooltipProvider>
-      <div className="flex h-dvh min-h-0 min-w-0 overflow-hidden bg-background text-foreground">
+      <div
+        data-platform={/Mac/.test(navigator.platform) ? "macos" : "other"}
+        className="app-shell flex h-dvh min-h-0 min-w-0 overflow-hidden bg-background text-foreground"
+      >
         <nav
           aria-label="Workspace"
-          className="flex w-12 shrink-0 flex-col items-center gap-2 border-r border-border py-3"
+          className="workspace-rail flex w-12 shrink-0 flex-col items-center gap-2 border-r border-border py-3"
         >
           <Tooltip>
             <TooltipTrigger asChild>
@@ -448,7 +453,7 @@ export function App() {
             <TooltipContent side="right">Settings</TooltipContent>
           </Tooltip>
         </nav>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+        <div className="workspace-content flex min-h-0 min-w-0 flex-1 flex-col gap-2">
           <Capture
             snapshot={snapshot}
             operation={operation}
@@ -462,6 +467,10 @@ export function App() {
             pending={pending}
             onSnapshot={setSnapshot}
             onOperation={setOperation}
+          />
+          <UpdateNotice
+            controller={updates}
+            openSettings={() => setView("settings")}
           />
           {snapshot?.session.fixture && (
             <div
@@ -549,6 +558,7 @@ export function App() {
             >
               <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
               <Settings
+                updates={updates}
                 preferences={preferences}
                 save={savePreferences}
                 idle={idle}

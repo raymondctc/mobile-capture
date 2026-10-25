@@ -1,0 +1,11 @@
+{
+  "app": {
+    "windows": [{
+      "title": "Mobile Capture Android",
+      "width": 1200, "height": 790, "minWidth": 900, "minHeight": 620,
+      "theme": "Dark", "backgroundColor": "#09090b",
+      "decorations": true, "titleBarStyle": "Overlay", "hiddenTitle": true,
+      "trafficLightPosition": { "x": 16, "y": 16 }
+    }]
+  }
+}

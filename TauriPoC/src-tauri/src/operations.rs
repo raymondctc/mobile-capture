@@ -99,7 +99,7 @@ pub enum View {
 }
 
 impl View {
-    fn busy(&self) -> bool {
+    pub fn busy(&self) -> bool {
         matches!(
             self,
             Self::Saving { .. }
@@ -335,10 +335,23 @@ impl Operations {
 }
 
 pub fn begin_save(desktop: DesktopState, directory: Option<PathBuf>) -> Result<View> {
-    let _admission = desktop
+    begin_save_admitted(desktop, directory, crate::desktop::Admission::Running)
+}
+pub fn begin_quit_save(desktop: DesktopState) -> Result<View> {
+    begin_save_admitted(desktop, None, crate::desktop::Admission::Quitting)
+}
+fn begin_save_admitted(
+    desktop: DesktopState,
+    directory: Option<PathBuf>,
+    expected: crate::desktop::Admission,
+) -> Result<View> {
+    let admission = desktop
         .admission
         .lock()
         .map_err(|_| "Operation admission failed")?;
+    if *admission != expected {
+        return Err("Application lifecycle no longer accepts saving".into());
+    }
     if desktop.operations.busy()? {
         return Err("Finish or recover the current operation first".into());
     }
@@ -423,10 +436,7 @@ fn save_worker(desktop: DesktopState, id: String, cancelled: Arc<AtomicBool>) {
 }
 
 pub fn begin_setup(desktop: DesktopState, serial: String, kind: Kind) -> Result<View> {
-    let _admission = desktop
-        .admission
-        .lock()
-        .map_err(|_| "Operation admission failed")?;
+    let _admission = desktop.accept()?;
     desktop.ensure_idle()?;
     desktop.with_owner(|owner| owner.release_completed_control())?;
     let paths = CapturePaths {
@@ -594,10 +604,7 @@ fn setup_worker(
 }
 
 pub fn retry_setup(desktop: DesktopState, id: String) -> Result<View> {
-    let _admission = desktop
-        .admission
-        .lock()
-        .map_err(|_| "Operation admission failed")?;
+    let _admission = desktop.accept()?;
     let (setup, kind) = {
         let mut job = desktop
             .operations

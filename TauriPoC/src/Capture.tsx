@@ -191,7 +191,10 @@ export function Capture({
       className="shrink-0 border-b border-border bg-background"
       aria-label="Capture scope"
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-3 py-2">
+      <div
+        data-tauri-drag-region="deep"
+        className="capture-toolbar grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-3 py-2"
+      >
         <div className="flex min-w-0 flex-wrap items-end gap-2">
           <Badge
             variant="secondary"
@@ -205,6 +208,7 @@ export function Capture({
           </Badge>
           <div className="min-w-0 w-44">
             <Label
+              data-tauri-drag-region
               htmlFor="capture-device"
               className="mb-1 text-xs text-muted-foreground"
             >
@@ -248,7 +252,10 @@ export function Capture({
               </Button>
             </div>
           </div>
-          <Label className="w-36 min-w-0 text-xs text-muted-foreground">
+          <Label
+            data-tauri-drag-region
+            className="w-36 min-w-0 text-xs text-muted-foreground"
+          >
             Sources
             <NativeSelect
               value={scopeMode}
@@ -273,6 +280,7 @@ export function Capture({
           {scopeMode !== "network" && (
             <div className="w-56 min-w-0">
               <Label
+                data-tauri-drag-region
                 htmlFor="app-search"
                 className="mb-1 text-xs text-muted-foreground"
               >

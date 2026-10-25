@@ -247,6 +247,40 @@ export const setupIdentitySchema = z.object({
   certificate_path: z.string().nullable(),
   checked_at: z.string(),
 });
+const releaseSchema = z.object({ version: z.string(), notes: z.string() });
+export const updateSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("unconfigured") }),
+  z.object({ state: z.literal("idle") }),
+  z.object({ state: z.literal("checking") }),
+  z.object({ state: z.literal("current") }),
+  z.object({
+    state: z.literal("available"),
+    release: releaseSchema,
+    error: z.string().nullable(),
+  }),
+  z.object({
+    state: z.literal("downloading"),
+    release: releaseSchema,
+    received: z.number().nonnegative(),
+    total: z.number().nonnegative().nullable(),
+  }),
+  z.object({
+    state: z.literal("ready"),
+    release: releaseSchema,
+    error: z.string().nullable(),
+  }),
+  z.object({ state: z.literal("installing"), release: releaseSchema }),
+  z.object({
+    state: z.literal("repair_required"),
+    release: releaseSchema,
+    message: z.string(),
+  }),
+  z.object({ state: z.literal("error"), message: z.string() }),
+]);
+export type Update = z.infer<typeof updateSchema>;
+export type UpdateAction =
+  | { kind: "check" }
+  | { kind: "download" | "install"; version: string };
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Session = z.infer<typeof sessionSchema>;
 export type Device = z.infer<typeof deviceSchema>;
@@ -260,7 +294,8 @@ export const api = {
   discover: async () =>
     z.array(deviceSchema).parse(await invoke<unknown>("discover")),
   snapshot: async () => snapshotSchema.parse(await invoke<unknown>("snapshot")),
-  reconnect: async () => snapshotSchema.parse(await invoke<unknown>("reconnect")),
+  reconnect: async () =>
+    snapshotSchema.parse(await invoke<unknown>("reconnect")),
   start: async (request: StartRequest) =>
     snapshotSchema.parse(
       await invoke<unknown>("start", {
@@ -320,9 +355,14 @@ export const api = {
       .string()
       .nullable()
       .parse(await invoke<unknown>("export_readiness_report")),
-  updates: async () => {
-    await invoke<unknown>("open_updates");
-  },
+  updateStatus: async () => updateSchema.parse(await invoke<unknown>("status")),
+  updateAction: async (action: UpdateAction) =>
+    updateSchema.parse(
+      await invoke<unknown>(
+        action.kind,
+        action.kind === "check" ? {} : { version: action.version },
+      ),
+    ),
 };
 export function operationBusy(operation: Operation): boolean {
   return (

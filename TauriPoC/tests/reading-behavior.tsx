@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { useState } from "react";
 import {
   act,
@@ -15,6 +18,7 @@ import { Details } from "../src/Details";
 import { Timeline } from "../src/Timeline";
 import { OperationStatus } from "../src/Operation";
 import { Dialog } from "../src/ui";
+import { UpdateSettings, UpdateNotice } from "../src/Updates";
 import { Settings } from "../src/Settings";
 import { HandoffNotices } from "../src/Handoff";
 import { Library } from "../src/Library";
@@ -23,6 +27,8 @@ import { App } from "../src/main";
 import { api } from "../src/api";
 import { product } from "../src/product";
 import { initialDraft } from "../src/state";
+
+api.updateStatus = async () => ({ state: "unconfigured" });
 
 const limits = { bytes: 32000000, records: 100000, duration_ms: 120000 };
 const policy = {
@@ -135,6 +141,160 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const user = userEvent.setup();
+async function checkTitlebarDragging() {
+  const lockedVersion = readFileSync("Cargo.lock", "utf8").match(
+    /\[\[package\]\]\r?\nname = "tauri"\r?\nversion = "([^"]+)"/,
+  )?.[1];
+  assert.ok(lockedVersion, "Cargo.lock identifies the Tauri runtime version");
+  const registry = join(
+    process.env.CARGO_HOME ?? join(homedir(), ".cargo"),
+    "registry",
+    "src",
+  );
+  const scriptPath = (existsSync(registry) ? readdirSync(registry) : [])
+    .map((source) =>
+      join(
+        registry,
+        source,
+        `tauri-${lockedVersion}`,
+        "src/window/scripts/drag.js",
+      ),
+    )
+    .find(existsSync);
+  assert.ok(
+    scriptPath,
+    "Run npm run verify to fetch the locked Tauri runtime before the titlebar check",
+  );
+  const commands: string[] = [];
+  const removeListeners: (() => void)[] = [];
+  new Function(
+    "window",
+    "document",
+    "HTMLElement",
+    readFileSync(scriptPath, "utf8").replace(
+      "__TEMPLATE_os_name__",
+      JSON.stringify("macos"),
+    ),
+  )(
+    {
+      __TAURI_INTERNALS__: {
+        invoke: (command: string) => commands.push(command),
+      },
+    },
+    {
+      addEventListener(type: string, listener: EventListener) {
+        document.addEventListener(type, listener);
+        removeListeners.push(() => document.removeEventListener(type, listener));
+      },
+    },
+    HTMLElement,
+  );
+  render(
+    <Capture
+      snapshot={idle}
+      operation={{ state: "idle" }}
+      devices={[device]}
+      draft={{
+        ...initialDraft,
+        serial: device.serial,
+        selection: "logs_and_network",
+      }}
+      change={() => {}}
+      preferences={preferences}
+      savePreferences={async () => {}}
+      refresh={async () => {}}
+      run={run}
+      pending=""
+      onSnapshot={() => {}}
+      onOperation={() => {}}
+    />,
+  );
+  const toolbar = document.querySelector(".capture-toolbar");
+  assert.ok(toolbar instanceof HTMLElement);
+  const blankArea = toolbar.firstElementChild;
+  const status = within(toolbar).getByRole("status");
+  const statusDot = status.firstElementChild;
+  assert.ok(blankArea instanceof HTMLElement);
+  assert.ok(statusDot instanceof HTMLElement);
+  const dragTargets = [
+    { name: "nested blank area", target: blankArea },
+    { name: "status", target: status },
+    { name: "status dot", target: statusDot },
+    ...["Device", "Sources", "Log app"].map((name) => ({
+      name: `${name} label`,
+      target: within(toolbar).getByText(name, { selector: "label" }),
+    })),
+  ];
+  const position = { clientX: 120, clientY: 80 };
+  fireEvent.mouseDown(toolbar, { button: 0, detail: 1, ...position });
+  assert.deepEqual(
+    commands.splice(0),
+    ["plugin:window|start_dragging"],
+    "A direct toolbar hit starts native dragging",
+  );
+  const drags = dragTargets.map(({ name, target }) => {
+    fireEvent.mouseDown(target, { button: 0, detail: 1, ...position });
+    return { target: name, commands: commands.splice(0) };
+  });
+  assert.deepEqual(
+    drags,
+    dragTargets.map(({ name }) => ({
+      target: name,
+      commands: ["plugin:window|start_dragging"],
+    })),
+    "Toolbar blank areas, status, and labels start native dragging",
+  );
+  const refreshIcon = within(toolbar)
+    .getByRole("button", { name: "Refresh devices" })
+    .querySelector("svg");
+  assert.ok(refreshIcon);
+  const blockedTargets = [
+    { name: "button descendant", target: refreshIcon },
+    {
+      name: "input",
+      target: within(toolbar).getByRole("combobox", { name: "Log app" }),
+    },
+    { name: "Device select", target: within(toolbar).getByLabelText("Device") },
+    { name: "Sources select", target: within(toolbar).getByLabelText("Sources") },
+  ];
+  for (const { name, target } of blockedTargets) {
+    fireEvent.mouseDown(target, { button: 0, detail: 1, ...position });
+    fireEvent.mouseDown(target, { button: 0, detail: 2, ...position });
+    fireEvent.mouseUp(target, { button: 0, detail: 2, ...position });
+    assert.deepEqual(
+      commands.splice(0),
+      [],
+      `${name} keeps its normal interaction`,
+    );
+  }
+  for (const { name, target } of dragTargets) {
+    fireEvent.mouseDown(target, { button: 0, detail: 2, ...position });
+    assert.deepEqual(commands.splice(0), [], `${name} waits for macOS mouseup`);
+    fireEvent.mouseUp(target, { button: 0, detail: 2, ...position });
+    assert.deepEqual(
+      commands.splice(0),
+      ["plugin:window|internal_toggle_maximize"],
+      `${name} toggles native maximization on an unmoved double click`,
+    );
+  }
+  for (const moved of [
+    { clientX: position.clientX + 1, clientY: position.clientY },
+    { clientX: position.clientX, clientY: position.clientY + 1 },
+  ]) {
+    fireEvent.mouseDown(blankArea, { button: 0, detail: 2, ...position });
+    fireEvent.mouseUp(blankArea, { button: 0, detail: 2, ...moved });
+    assert.deepEqual(
+      commands.splice(0),
+      [],
+      "Moving either axis cancels maximization",
+    );
+  }
+  for (const remove of removeListeners) remove();
+  cleanup();
+  console.log(
+    `Titlebar DOM checks passed with locked Tauri ${lockedVersion}. Blank areas, status, and all scope labels drag; controls keep their interactions; macOS double click maximizes only on unmoved mouseup.`,
+  );
+}
 async function checkProgress() {
   const props = {
     change: () => {},
@@ -958,10 +1118,117 @@ async function checkModal() {
     "Modal DOM checks passed. Locked Close/Escape/outside dismissal, keyboard containment and focus restoration.",
   );
 }
+async function checkUpdates() {
+  const actions = [];
+  const controller = {
+    status: {
+      state: "available",
+      release: { version: "0.2.0", notes: "Capture fixes" },
+      error: null,
+    },
+    pending: false,
+    error: "",
+    act: async (action) => {
+      actions.push(action);
+    },
+  };
+  const mounted = render(<UpdateSettings controller={controller} />);
+  await user.click(screen.getByRole("button", { name: "Download update" }));
+  assert.deepEqual(actions, [{ kind: "download", version: "0.2.0" }]);
+  mounted.rerender(
+    <UpdateSettings
+      controller={{
+        ...controller,
+        status: {
+          ...controller.status,
+          state: "ready",
+          error: "Finish saving first",
+        },
+      }}
+    />,
+  );
+  assert.match(screen.getByRole("alert").textContent, /Finish saving/);
+  await user.click(screen.getByRole("button", { name: "Install and restart" }));
+  assert.deepEqual(actions[1], { kind: "install", version: "0.2.0" });
+  mounted.rerender(
+    <UpdateSettings
+      controller={{
+        ...controller,
+        status: {
+          ...controller.status,
+          state: "downloading",
+          received: 1024,
+          total: 2048,
+        },
+      }}
+    />,
+  );
+  assert.equal(screen.getByRole("progressbar").value, 1024);
+  assert.equal(screen.queryByRole("button"), null);
+  mounted.rerender(
+    <UpdateSettings
+      controller={{
+        ...controller,
+        status: {
+          ...controller.status,
+          state: "available",
+          error: "Invalid signature",
+        },
+      }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Retry download" }));
+  assert.equal(actions[2].kind, "download");
+  mounted.rerender(
+    <UpdateSettings
+      controller={{
+        ...controller,
+        status: { state: "error", message: "Offline" },
+      }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Retry update check" }));
+  assert.deepEqual(actions[3], { kind: "check" });
+  mounted.rerender(
+    <UpdateNotice controller={controller} openSettings={() => {}} />,
+  );
+  assert.ok(screen.getByLabelText("App update"));
+  await user.click(
+    screen.getByRole("button", { name: "Dismiss update notice" }),
+  );
+  assert.equal(screen.queryByLabelText("App update"), null);
+  const repair = {
+    ...controller,
+    status: {
+      state: "repair_required",
+      release: controller.status.release,
+      message: "Restore the original app from /fixture/backup.app",
+    },
+  };
+  mounted.rerender(
+    <UpdateNotice controller={repair} openSettings={() => {}} />,
+  );
+  assert.ok(screen.getByLabelText("App update"));
+  assert.equal(
+    screen.queryByRole("button", { name: "Dismiss update notice" }),
+    null,
+  );
+  mounted.rerender(<UpdateSettings controller={repair} />);
+  assert.match(screen.getByRole("alert").textContent, /backup.app/);
+  assert.equal(screen.queryByRole("button"), null);
+  cleanup();
+}
+
 async function checkSettingsHandoffs() {
   const saves: unknown[] = [];
   const props = {
     preferences,
+    updates: {
+      status: { state: "idle" },
+      pending: false,
+      error: "",
+      act: async () => {},
+    },
     save: async (value) => {
       saves.push(value);
     },
@@ -979,7 +1246,7 @@ async function checkSettingsHandoffs() {
   );
   assert.equal(
     screen.getByRole("button", { name: "Check for updates" }).disabled,
-    true,
+    false,
   );
   const override = screen.getByLabelText("ADB executable");
   await user.type(override, "relative-adb");
@@ -1068,7 +1335,7 @@ async function checkSettingsHandoffs() {
   assert.deepEqual(dismissed, [2]);
   cleanup();
   console.log(
-    "Settings and handoff DOM checks passed. Preference repair stays available, paths validate before explicit Save, updates stay idle-only, and retained launch links require an available Apply action.",
+    "Settings and handoff DOM checks passed. Preference repair stays available, paths validate before explicit Save, update checks remain available during capture, and retained launch links require an available Apply action.",
   );
 }
 async function checkViewPreservation() {
@@ -1102,6 +1369,8 @@ async function checkViewPreservation() {
   product.detail = async () => detail("one");
   product.detailChunk = async () => emptyChunk;
   render(<App />);
+  assert.equal(document.querySelector(".titlebar-drag"), null);
+
   await waitFor(() =>
     assert.equal(
       screen.getByRole("button", { name: "Start recording" }).disabled,
@@ -1353,13 +1622,15 @@ async function checks() {
       timeline: checkTimeline,
       details: checkDetails,
       modal: checkModal,
+      updates: checkUpdates,
       settings: checkSettingsHandoffs,
       app: checkWholeApp,
+      titlebar: checkTitlebarDragging,
     };
     const requested = process.env.ANDROID_UI_CHECK;
     assert.ok(!requested || requested in checks, "Unknown Android UI check");
     for (const [name, check] of Object.entries(checks)) {
-      if (!requested || requested === name) await check();
+      if (requested ? requested === name : name !== "titlebar") await check();
     }
   } finally {
     cleanup();
