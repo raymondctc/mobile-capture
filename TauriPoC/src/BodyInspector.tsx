@@ -28,12 +28,14 @@ export function BodyInspector({
   id,
   wrap,
   visible,
+  paneVisible,
   onFindOpen,
   onRaw,
 }: {
   id: string;
   wrap: boolean;
   visible: boolean;
+  paneVisible: boolean;
   onFindOpen: () => void;
   onRaw: (side: BodySide) => void;
 }) {
@@ -110,8 +112,9 @@ export function BodyInspector({
     };
   }, [state.kind, side, mode, query, offset, searching]);
   useEffect(() => {
-    if (find.kind !== "closed" && visible) input.current?.focus();
-  }, [findOpen, visible]);
+    if (findOpen && visible && paneVisible && state.kind === "ready")
+      input.current?.focus();
+  }, [findOpen, visible, paneVisible, state.kind]);
   useEffect(() => {
     if (!visible) return;
     function key(event: KeyboardEvent) {
@@ -124,8 +127,12 @@ export function BodyInspector({
             ? previous
             : { kind: "complete", query: "", search: emptySearch },
         );
-        input.current?.focus();
-      } else if (event.key === "Escape" && find.kind !== "closed") {
+        if (paneVisible) input.current?.focus();
+      } else if (
+        event.key === "Escape" &&
+        find.kind !== "closed" &&
+        paneVisible
+      ) {
         event.preventDefault();
         event.stopPropagation();
         findRevision.current += 1;
@@ -135,7 +142,7 @@ export function BodyInspector({
     }
     document.addEventListener("keydown", key, true);
     return () => document.removeEventListener("keydown", key, true);
-  }, [visible, find.kind, onFindOpen]);
+  }, [visible, paneVisible, find.kind, onFindOpen]);
   function showMatch(search: Search) {
     if (search.active) {
       setSide(search.active.side);
@@ -212,6 +219,7 @@ export function BodyInspector({
           <Button
             key={value}
             role="tab"
+            variant={side === value ? "default" : "outline"}
             aria-selected={side === value}
             onClick={() => {
               setSide(value);
@@ -311,6 +319,11 @@ export function BodyInspector({
         <>
           <div className="flex flex-wrap gap-2">
             <Button
+              variant={
+                mode === "original" || body.formatting.kind === "unavailable"
+                  ? "default"
+                  : "outline"
+              }
               aria-pressed={
                 mode === "original" || body.formatting.kind === "unavailable"
               }
@@ -323,6 +336,11 @@ export function BodyInspector({
               Original
             </Button>
             <Button
+              variant={
+                mode === "formatted" && body.formatting.kind === "ready"
+                  ? "default"
+                  : "outline"
+              }
               aria-pressed={
                 mode === "formatted" && body.formatting.kind === "ready"
               }

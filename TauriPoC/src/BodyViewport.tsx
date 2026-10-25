@@ -63,28 +63,30 @@ export function BodyWindow({
       >
         {window.total ? runs : "Empty body"}
       </pre>
-      <nav
-        aria-label="Body window"
-        className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums"
-      >
-        <Button
-          disabled={window.start === 0}
-          onClick={() => onOffset(window.previous)}
+      {(window.start > 0 || window.end < window.total) && (
+        <nav
+          aria-label="Body window"
+          className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums"
         >
-          Previous window
-        </Button>
-        <span>
-          {window.total
-            ? `Characters ${(window.start + 1).toLocaleString()}–${window.end.toLocaleString()} of ${window.total.toLocaleString()}`
-            : "0 characters"}
-        </span>
-        <Button
-          disabled={window.end === window.total}
-          onClick={() => onOffset(window.end)}
-        >
-          Next window
-        </Button>
-      </nav>
+          <Button
+            disabled={window.start === 0}
+            onClick={() => onOffset(window.previous)}
+          >
+            Previous window
+          </Button>
+          <span>
+            {window.total
+              ? `Characters ${(window.start + 1).toLocaleString()}–${window.end.toLocaleString()} of ${window.total.toLocaleString()}`
+              : "0 characters"}
+          </span>
+          <Button
+            disabled={window.end === window.total}
+            onClick={() => onOffset(window.end)}
+          >
+            Next window
+          </Button>
+        </nav>
+      )}
     </div>
   );
 }

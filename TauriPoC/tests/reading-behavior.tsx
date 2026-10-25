@@ -1014,6 +1014,26 @@ async function checkTimeline() {
   await user.keyboard("{Escape}");
   assert.equal(screen.queryByRole("search"), null);
   assert.ok(screen.getByRole("dialog", { name: "Event details" }));
+  const second = screen.getByRole("button", {
+    name: /GET https:\/\/example.invalid\/two/,
+  });
+  for (const pane of [
+    "Full metadata and headers",
+    "Retained bytes · hexadecimal",
+  ]) {
+    await user.keyboard("{Control>}f{/Control}");
+    await user.click(screen.getByRole("button", { name: pane }));
+    await user.keyboard("{Escape}");
+    assert.equal(
+      screen.queryByRole("dialog", { name: "Event details" }) === null,
+      true,
+      `Escape closes the inspector when Find is hidden behind ${pane}`,
+    );
+    assert.equal(document.activeElement, second);
+    await user.click(second);
+    await act(async () => requests.get("two")!.resolve(detail("two")));
+    await screen.findByText("two", { selector: "dd" });
+  }
   await user.click(screen.getByRole("button", { name: "Older page" }));
   await screen.findByText("Selected outside this page");
   await user.click(screen.getByRole("button", { name: "Close event details" }));
@@ -1051,6 +1071,31 @@ async function checkTimeline() {
   );
 }
 async function checkDetails() {
+  const nativeRead = deferred();
+  product.bodyDocuments = () => nativeRead.promise;
+  const loading = render(
+    <Details
+      key="loading-find"
+      detail={detail("loading-find")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await user.keyboard("{Control>}f{/Control}");
+  await act(async () => nativeRead.resolve(bodyPair()));
+  const loadedFind = await screen.findByRole("textbox", {
+    name: "Find in request and response",
+  });
+  await waitFor(() =>
+    assert.equal(
+      document.activeElement === loadedFind,
+      true,
+      "CmdF during body loading focuses Find after readiness",
+    ),
+  );
+  loading.unmount();
+  product.detailChunk = async () => emptyChunk;
+  product.body = async () => ({ body: { available: true }, chunk: emptyChunk });
   const original =
     '{"10":9007199254740993,"2":-0,"e":1e+09,"first":"needle","tail":"' +
     "x".repeat(90000) +
@@ -1084,6 +1129,28 @@ async function checkDetails() {
     name: "Find in request and response",
   });
   assert.equal(document.activeElement, find);
+  const visibleFocus = find.focus.bind(find);
+  Object.defineProperty(find, "focus", {
+    configurable: true,
+    value: () => {
+      if (!find.closest("[hidden],[inert]")) visibleFocus();
+    },
+  });
+  for (const pane of [
+    "Full metadata and headers",
+    "Retained bytes · hexadecimal",
+  ]) {
+    await user.click(screen.getByRole("button", { name: pane }));
+    await user.keyboard("{Meta>}f{/Meta}");
+    assert.equal(find.closest("[hidden]"), null);
+    await waitFor(() =>
+      assert.equal(
+        document.activeElement === find,
+        true,
+        `CmdF focuses visible Find after returning from ${pane}`,
+      ),
+    );
+  }
   await user.type(find, "needle");
   await waitFor(() =>
     assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
@@ -1149,6 +1216,7 @@ async function checkDetails() {
     <Details key="empty" detail={detail("empty")} offPage={false} wrap />,
   );
   await screen.findByText("Empty body");
+  assert.equal(screen.queryByRole("navigation", { name: "Body window" }), null);
   assert.equal(
     screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
     "true",

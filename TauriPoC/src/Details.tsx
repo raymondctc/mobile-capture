@@ -61,12 +61,14 @@ export function Details({
         )}
         <div className="flex flex-wrap gap-2">
           <Button
+            variant={content.kind === "primary" ? "default" : "outline"}
             aria-pressed={content.kind === "primary"}
             onClick={() => setContent({ kind: "primary" })}
           >
             {network ? "Bodies" : logs ? "Log message" : "Event"}
           </Button>
           <Button
+            variant={content.kind === "metadata" ? "default" : "outline"}
             aria-pressed={content.kind === "metadata"}
             onClick={() => setContent({ kind: "metadata" })}
           >
@@ -79,6 +81,7 @@ export function Details({
               id={detail.event.id}
               wrap={wrap}
               visible={visible}
+              paneVisible={content.kind === "primary"}
               onFindOpen={() => setContent({ kind: "primary" })}
               onRaw={(side) => setContent({ kind: "raw", side })}
             />
