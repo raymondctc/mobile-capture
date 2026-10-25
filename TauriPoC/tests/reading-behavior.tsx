@@ -1168,6 +1168,21 @@ async function checkDetails() {
       .getAttribute("aria-selected"),
     "true",
   );
+  for (const representation of ["Original", "Formatted"]) {
+    await user.click(screen.getByRole("button", { name: representation }));
+    await waitFor(() =>
+      assert.equal(
+        screen
+          .getByRole("tab", { name: "Response (2)" })
+          .getAttribute("aria-selected"),
+        "true",
+        "Changing format keeps the selected response while Find is open",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Copy original" }));
+    await waitFor(() => assert.equal(copies.at(-1), original));
+  }
+  await user.click(find);
   await user.keyboard("{Enter}");
   await waitFor(() =>
     assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
@@ -1210,6 +1225,45 @@ async function checkDetails() {
     screen
       .getAllByRole("alert")
       .some((node) => node.textContent!.includes("reveal failed")),
+  );
+  product.bodyDocuments = async () => bodyPair('{"value":1}', 'plain ": " token');
+  mounted.rerender(
+    <Details
+      key="format-scope"
+      detail={detail("format-scope")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByRole("tab", { name: "Response" });
+  await user.keyboard("{Meta>}f{/Meta}");
+  const scopedFind = screen.getByRole("textbox", {
+    name: "Find in request and response",
+  });
+  await user.type(scopedFind, '": ');
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 2 matches/),
+  );
+  await user.click(screen.getByRole("tab", { name: "Response (1)" }));
+  await user.click(screen.getByRole("button", { name: "Original" }));
+  await waitFor(() =>
+    assert.equal(
+      screen
+        .getByRole("tab", { name: "Response (0)" })
+        .getAttribute("aria-selected"),
+      "true",
+    ),
+  );
+  assert.match(screen.getByRole("search").textContent!, /0 of 1 matches/);
+  await user.click(scopedFind);
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    assert.equal(
+      screen
+        .getByRole("tab", { name: "Request (1)" })
+        .getAttribute("aria-selected"),
+      "true",
+    ),
   );
   product.bodyDocuments = async () => bodyPair("", "available request");
   mounted.rerender(

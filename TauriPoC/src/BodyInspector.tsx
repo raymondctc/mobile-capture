@@ -151,9 +151,17 @@ export function BodyInspector({
   }
   async function search(
     query: string,
-    representation = mode,
-    ordinal = 0,
-    debounce = false,
+    {
+      representation = mode,
+      ordinal = 0,
+      debounce = false,
+      preserveSide,
+    }: {
+      representation?: Representation;
+      ordinal?: number;
+      debounce?: boolean;
+      preserveSide?: BodySide;
+    } = {},
   ) {
     if (state.kind !== "ready" || !owner.current) return;
     const request = ++findRevision.current;
@@ -161,14 +169,29 @@ export function BodyInspector({
     try {
       if (debounce) await new Promise((resolve) => setTimeout(resolve, 150));
       if (request !== findRevision.current || !owner.current) return;
-      const reply = await owner.current.read({
+      let reply = await owner.current.read({
         kind: "find",
         mode: representation,
         query,
         ordinal,
       });
-      if (request !== findRevision.current) return;
+      if (request !== findRevision.current || !owner.current) return;
       if (reply.kind !== "found") throw new Error("Unexpected body Find reply");
+      if (preserveSide && reply.search.active?.side !== preserveSide) {
+        if (reply.search[preserveSide]) {
+          reply = await owner.current.read({
+            kind: "find",
+            mode: representation,
+            query,
+            ordinal: preserveSide === "response" ? reply.search.request : 0,
+          });
+          if (request !== findRevision.current) return;
+          if (reply.kind !== "found")
+            throw new Error("Unexpected body Find reply");
+        } else {
+          reply = { ...reply, search: { ...reply.search, active: null } };
+        }
+      }
       setFind({ kind: "complete", query, search: reply.search });
       showMatch(reply.search);
     } catch (cause) {
@@ -179,10 +202,9 @@ export function BodyInspector({
   }
   function navigate(direction: 1 | -1) {
     if (find.kind !== "complete" || !find.search.total) return;
-    const ordinal =
-      ((find.search.active?.ordinal ?? 0) + direction + find.search.total) %
-      find.search.total;
-    void search(find.query, mode, ordinal);
+    const current = find.search.active?.ordinal ?? (direction === 1 ? -1 : 0);
+    const ordinal = (current + direction + find.search.total) % find.search.total;
+    void search(find.query, { ordinal });
   }
   async function copyBody(representation: Representation) {
     if (state.kind !== "ready" || !owner.current) return;
@@ -273,7 +295,9 @@ export function BodyInspector({
             value={find.query}
             maxLength={256}
             placeholder="Literal text, case insensitive"
-            onChange={(event) => void search(event.target.value, mode, 0, true)}
+            onChange={(event) =>
+              void search(event.target.value, { debounce: true })
+            }
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
@@ -330,7 +354,11 @@ export function BodyInspector({
               onClick={() => {
                 setMode("original");
                 setOffset(0);
-                if (find.kind !== "closed") void search(find.query, "original");
+                if (find.kind !== "closed")
+                  void search(find.query, {
+                    representation: "original",
+                    preserveSide: side,
+                  });
               }}
             >
               Original
@@ -349,7 +377,10 @@ export function BodyInspector({
                 setMode("formatted");
                 setOffset(0);
                 if (find.kind !== "closed")
-                  void search(find.query, "formatted");
+                  void search(find.query, {
+                    representation: "formatted",
+                    preserveSide: side,
+                  });
               }}
             >
               Formatted
