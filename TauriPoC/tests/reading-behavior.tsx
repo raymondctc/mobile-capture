@@ -31,6 +31,19 @@ import { initialDraft } from "../src/state";
 
 api.updateStatus = async () => ({ state: "unconfigured" });
 
+const revealedMatches: {
+  element: HTMLElement;
+  options: boolean | ScrollIntoViewOptions | undefined;
+  focused: Element | null;
+}[] = [];
+HTMLElement.prototype.scrollIntoView = function (options) {
+  revealedMatches.push({
+    element: this,
+    options,
+    focused: document.activeElement,
+  });
+};
+
 const limits = { bytes: 32000000, records: 100000, duration_ms: 120000 };
 const policy = {
   max_flows: 10000,
@@ -1488,9 +1501,9 @@ async function checkQueryAndBinaryDetails() {
   const rawQuery =
     "q=a+b&encoded=a%2Bb&dup=one&dup=two&flag&empty=&bad=%C3%28+&" +
     Array.from(
-      { length: 80 },
+      { length: 93 },
       (_, index) =>
-        `k${index}=${index === 79 ? "x".repeat(80000) + "needle" : "value"}`,
+        `k${index}=${index === 92 ? "x".repeat(80000) + "needle" : "value"}`,
     ).join("&");
   const copies: string[] = [];
   product.copyText = async (text) => {
@@ -1526,6 +1539,7 @@ async function checkQueryAndBinaryDetails() {
   const input = screen.getByRole("textbox", {
     name: "Find in query, request and response",
   });
+  revealedMatches.length = 0;
   await user.type(input, "needle");
   await waitFor(() =>
     assert.match(
@@ -1543,7 +1557,48 @@ async function checkQueryAndBinaryDetails() {
   await waitFor(() => assert.ok(tail.textContent!.endsWith("needle")));
   assert.ok(tail.textContent!.length <= 16384);
   assert.ok(tail.querySelector("mark"));
-  assert.ok(screen.getByText(/of 87/));
+  assert.ok(screen.getByText(/of 100/));
+  assert.equal(within(table).getAllByRole("row").length, 51);
+  await waitFor(() => {
+    assert.equal(
+      revealedMatches.at(-1)?.element === tail.querySelector("mark"),
+      true,
+      "Find reveals the loaded query tail",
+    );
+    assert.deepEqual(revealedMatches.at(-1)?.options, { block: "nearest" });
+    assert.equal(revealedMatches.at(-1)?.focused, input);
+    assert.equal(document.activeElement, input);
+  });
+  for (const [ordinal, body] of [
+    [2, "request needle"],
+    [3, "response needle"],
+  ] as const) {
+    revealedMatches.length = 0;
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      assert.match(
+        screen.getByRole("search").textContent!,
+        new RegExp(`${ordinal} of 3 matches`),
+      ),
+    );
+    await waitFor(() => {
+      const content = screen.getByLabelText("Body content");
+      assert.ok(content.textContent!.includes(body));
+      assert.equal(
+        revealedMatches.at(-1)?.element === content.querySelector("mark"),
+        true,
+        `Find reveals the ${body} match`,
+      );
+      assert.deepEqual(revealedMatches.at(-1)?.options, { block: "nearest" });
+      assert.equal(revealedMatches.at(-1)?.focused, input);
+      assert.equal(document.activeElement, input);
+    });
+  }
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await screen.findByRole("button", { name: "Copy complete value" });
   await user.click(screen.getByRole("button", { name: "Copy complete value" }));
   await waitFor(() =>
     assert.equal(copies.at(-1), "x".repeat(80000) + "needle"),
@@ -1748,7 +1803,7 @@ async function checkQueryAndBinaryDetails() {
 
   product.bodyDocuments = async () => bodyPair();
   console.log(
-    "Query and retained-export DOM checks passed. Form rows, bounded tail highlights and full copies, three-source wrap, format selection, raw fidelity, Base64 alignment, cancellation/errors and disposed exports.",
+    "Query and retained-export DOM checks passed. Form rows, bounded tail highlights and full copies, active query/body reveal with Find focus, three-source wrap, format selection, raw fidelity, Base64 alignment, cancellation/errors and disposed exports.",
   );
 }
 async function checkModal() {

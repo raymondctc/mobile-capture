@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "./components/ui/button";
 import { bodyWindow, type Match } from "./body-document";
 import type { Window } from "./body-session";
@@ -35,17 +35,24 @@ export function BodyWindow({
   active?: Match | null;
   label?: string;
 }) {
+  const activeMark = useRef<HTMLElement>(null);
+  useEffect(() => {
+    activeMark.current?.scrollIntoView({ block: "nearest" });
+  }, [active, window]);
   const runs: ReactNode[] = [];
   let position = window.start;
   const slice = (start: number, end: number) =>
     window.text.slice(start - window.start, end - window.start);
   for (const match of window.matches) {
+    const selected =
+      active && active.start < match.end && active.end > match.start;
     if (match.start > position) runs.push(slice(position, match.start));
     runs.push(
       <mark
         key={match.start}
+        ref={selected ? activeMark : null}
         className={
-          active && active.start < match.end && active.end > match.start
+          selected
             ? "bg-primary text-primary-foreground"
             : "bg-amber-200 text-black dark:bg-amber-700 dark:text-white"
         }
