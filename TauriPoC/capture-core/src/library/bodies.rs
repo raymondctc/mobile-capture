@@ -25,7 +25,7 @@ pub(super) fn document(event: &Event, side: BodySide) -> BodyDocument {
     BodyDocument::Text {
         original: String::from_utf8(bytes).expect("text body was validated"),
         bytes: body.bytes,
-        basis: if decoded {
+        basis: if body.byte_basis == "content" {
             BodyTextBasis::Decoded
         } else {
             BodyTextBasis::Retained
@@ -83,7 +83,12 @@ pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescrip
         reason: raw.as_ref().err().cloned(),
         bytes: raw.as_ref().map_or(0, |v| v.len() as u64),
         text: raw.as_ref().is_ok_and(|b| is_text(b)),
-        byte_basis: if decoded { "content" } else { "raw_content" }.into(),
+        byte_basis: if decoded && raw.as_ref().is_ok_and(|bytes| !bytes.is_empty()) {
+            "content"
+        } else {
+            "raw_content"
+        }
+        .into(),
         content_encoding: encoding.clone(),
         decoded_available: false,
         decoded_reason: None,
@@ -92,6 +97,10 @@ pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescrip
         descriptor.decoded_reason = descriptor.reason.clone();
         return (bounded(descriptor), vec![]);
     };
+    if raw.is_empty() {
+        descriptor.decoded_available = true;
+        return (bounded(descriptor), raw);
+    }
     if encoding.is_none() {
         descriptor.decoded_available = raw.len() <= DECODED_BOUND;
         if !descriptor.decoded_available {

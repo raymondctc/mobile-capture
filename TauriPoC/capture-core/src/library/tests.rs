@@ -908,3 +908,41 @@ fn preview_keeps_compact_presentation_when_generic_metadata_is_pruned() {
         assert!(serde_json::to_vec(&row.event).unwrap().len() < 6 * 1024 - 96);
     }
 }
+
+#[test]
+fn escape_heavy_compact_fields_stay_within_the_serialized_row_budget() {
+    let mut event = Event {
+        id: "\0".repeat(128),
+        timestamp: STARTED.into(),
+        original_timestamp: Some("\0".repeat(64)),
+        received_at: Some("\0".repeat(64)),
+        source: "network".into(),
+        kind: "\0".repeat(128),
+        summary: "\0".repeat(1024),
+        raw_ref: "\0".repeat(512),
+        clock_uncertainty_ms: None,
+        detail: json!({"level":"\0".repeat(16), "tag":"\0".repeat(96), "message":"\0".repeat(256),
+            "method":"\0".repeat(16), "url":"\0".repeat(256), "status":503, "duration_ms":123.5,
+            "extra":vec!["x".repeat(500);100]}),
+    };
+    timeline::preview(&mut event);
+    assert!(serde_json::to_vec(&event).unwrap().len() <= 6 * 1024 - 96);
+    assert!(event.detail["message"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert_eq!(event.detail["status"], 503);
+    assert_eq!(event.detail["duration_ms"], 123.5);
+}
+
+#[test]
+fn empty_encoded_response_remains_an_available_empty_text_document() {
+    let fixture = Fixture::new(false);
+    fixture.write("network/events.jsonl", format!("{}\n", json!({"detail":{"method":"HEAD", "status":204,
+        "response_headers":[{"name":"Content-Encoding", "value":"gzip"}], "response_body":{"text":""}}})));
+    let mut library = fixture.open(false);
+    let rows = all(&mut library);
+    let pair = library.body_documents(&rows[0].event.id).unwrap();
+    assert!(
+        matches!(pair.response, BodyDocument::Text { original, bytes: 0, basis: BodyTextBasis::Retained } if original.is_empty())
+    );
+}

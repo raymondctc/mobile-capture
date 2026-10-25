@@ -368,6 +368,24 @@ fn truncate(text: &mut String, max: usize) {
         text.truncate(end);
     }
 }
+fn truncate_json(text: &mut String, budget: usize) {
+    let mut used = 2;
+    let mut end = 0;
+    for character in text.chars() {
+        let bytes = match character {
+            '"' | '\\' => 2,
+            '\n' | '\r' | '\t' | '\u{08}' | '\u{0c}' => 2,
+            c if c <= '\u{1f}' => 6,
+            c => c.len_utf8(),
+        };
+        if used + bytes > budget {
+            break;
+        }
+        used += bytes;
+        end += character.len_utf8();
+    }
+    text.truncate(end);
+}
 pub(crate) fn preview(event: &mut Event) {
     const EVENT_BOUND: usize = 6 * 1024 - 96;
     use base64::{engine::general_purpose::STANDARD, Engine};
@@ -401,7 +419,7 @@ pub(crate) fn preview(event: &mut Event) {
         ] {
             if let Some(text) = detail[key].as_str() {
                 let mut text = text.to_owned();
-                truncate(&mut text, bound);
+                truncate_json(&mut text, bound);
                 fields.insert(key.into(), json!(text));
             }
         }
@@ -489,9 +507,22 @@ pub(crate) fn preview(event: &mut Event) {
         event.detail = serde_json::Value::Object(presentation);
         event.detail["snapshot_preview"] = json!(true);
         event.detail["detail_preview_omitted"] = json!(true);
-        truncate(&mut event.summary, 256);
-        truncate(&mut event.raw_ref, 128);
-        truncate(&mut event.kind, 32);
+        for (text, budget) in [
+            (&mut event.summary, 512),
+            (&mut event.raw_ref, 256),
+            (&mut event.kind, 64),
+            (&mut event.id, 128),
+            (&mut event.source, 32),
+            (&mut event.timestamp, 64),
+        ] {
+            truncate_json(text, budget);
+        }
+        for text in [&mut event.original_timestamp, &mut event.received_at]
+            .into_iter()
+            .flatten()
+        {
+            truncate_json(text, 64);
+        }
     }
 }
 

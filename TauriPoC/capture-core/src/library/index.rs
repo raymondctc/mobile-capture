@@ -70,7 +70,6 @@ impl Index {
             .optional()
             .map_err(|e| e.to_string())?;
         if version.as_deref() != Some("3") {
-            // The cache is disposable. Recreate its schema and normalized rows together.
             db.execute_batch(
                 "BEGIN; DROP TABLE IF EXISTS events; DELETE FROM meta;
                 INSERT INTO meta VALUES ('version','3'); COMMIT;",
