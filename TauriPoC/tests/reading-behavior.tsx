@@ -1226,7 +1226,8 @@ async function checkDetails() {
       .getAllByRole("alert")
       .some((node) => node.textContent!.includes("reveal failed")),
   );
-  product.bodyDocuments = async () => bodyPair('{"value":1}', 'plain ": " token');
+  product.bodyDocuments = async () =>
+    bodyPair('{"value":1}', 'plain ": " and another ": " token');
   mounted.rerender(
     <Details
       key="format-scope"
@@ -1242,7 +1243,7 @@ async function checkDetails() {
   });
   await user.type(scopedFind, '": ');
   await waitFor(() =>
-    assert.match(screen.getByRole("search").textContent!, /1 of 2 matches/),
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
   );
   await user.click(screen.getByRole("tab", { name: "Response (1)" }));
   await user.click(screen.getByRole("button", { name: "Original" }));
@@ -1254,17 +1255,18 @@ async function checkDetails() {
       "true",
     ),
   );
-  assert.match(screen.getByRole("search").textContent!, /0 of 1 matches/);
+  assert.match(screen.getByRole("search").textContent!, /0 of 2 matches/);
   await user.click(scopedFind);
   await user.keyboard("{Enter}");
   await waitFor(() =>
     assert.equal(
       screen
-        .getByRole("tab", { name: "Request (1)" })
+        .getByRole("tab", { name: "Request (2)" })
         .getAttribute("aria-selected"),
       "true",
     ),
   );
+  assert.match(screen.getByRole("search").textContent!, /1 of 2 matches/);
   product.bodyDocuments = async () => bodyPair("", "available request");
   mounted.rerender(
     <Details key="empty" detail={detail("empty")} offPage={false} wrap />,
