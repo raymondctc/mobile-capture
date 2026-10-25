@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { product, type EventDetail, type BodySide } from "./product";
 import { errorMessage } from "./api";
 import { timeLabel } from "./ui";
@@ -55,22 +56,20 @@ export function Details({
         {offPage && (
           <Badge variant="secondary">Selected outside this page</Badge>
         )}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant={content.kind === "primary" ? "default" : "outline"}
-            aria-pressed={content.kind === "primary"}
-            onClick={() => setContent({ kind: "primary" })}
-          >
+        <ToggleGroup
+          type="single"
+          aria-label="Detail view"
+          value={content.kind === "raw" ? "" : content.kind}
+          onValueChange={(value) => {
+            if (value === "primary" || value === "metadata")
+              setContent({ kind: value });
+          }}
+        >
+          <ToggleGroupItem value="primary">
             {network ? "Bodies" : logs ? "Log message" : "Event"}
-          </Button>
-          <Button
-            variant={content.kind === "metadata" ? "default" : "outline"}
-            aria-pressed={content.kind === "metadata"}
-            onClick={() => setContent({ kind: "metadata" })}
-          >
-            Full metadata and headers
-          </Button>
-        </div>
+          </ToggleGroupItem>
+          <ToggleGroupItem value="metadata">Full metadata</ToggleGroupItem>
+        </ToggleGroup>
         {network && (
           <div hidden={content.kind !== "primary"}>
             <BodyInspector

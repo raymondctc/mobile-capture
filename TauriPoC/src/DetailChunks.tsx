@@ -114,7 +114,7 @@ export function DetailChunks({
       <p className="text-xs text-muted-foreground">
         {side
           ? "Original retained body bytes, before content decoding."
-          : "Full metadata and headers. UTF-8 chunk boundaries may split a character."}
+          : "Full metadata. UTF-8 chunk boundaries may split a character."}
       </p>
       {side && (
         <div className="flex flex-wrap gap-2">

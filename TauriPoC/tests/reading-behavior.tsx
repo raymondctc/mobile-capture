@@ -190,6 +190,12 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const user = userEvent.setup();
+async function chooseBodyCopy(name: "Copy original" | "Copy formatted") {
+  await user.click(
+    screen.getByRole("button", { name: "Choose body copy format" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name }));
+}
 async function checkTitlebarDragging() {
   const lockedVersion = readFileSync("Cargo.lock", "utf8").match(
     /\[\[package\]\]\r?\nname = "tauri"\r?\nversion = "([^"]+)"/,
@@ -1040,6 +1046,19 @@ async function checkTimeline() {
   await screen.findByText("two", { selector: "dd" });
   await act(async () => old.resolve(detail("one")));
   assert.equal(screen.queryByText("one", { selector: "dd" }), null);
+  for (const findOpen of [false, true]) {
+    if (findOpen) await user.click(screen.getByRole("button", { name: "Find" }));
+    const copyTrigger = screen.getByRole("button", {
+      name: "Choose body copy format",
+    });
+    await user.click(copyTrigger);
+    await screen.findByRole("menu");
+    await user.keyboard("{Escape}");
+    await waitFor(() => assert.equal(screen.queryByRole("menu"), null));
+    assert.ok(screen.getByRole("dialog", { name: "Event details" }));
+    assert.equal(screen.queryByRole("search") !== null, findOpen);
+    await waitFor(() => assert.equal(document.activeElement, copyTrigger));
+  }
   await user.keyboard("{Control>}f{/Control}");
   await screen.findByRole("search", { name: "Find in query and both bodies" });
   await user.keyboard("{Escape}");
@@ -1049,11 +1068,15 @@ async function checkTimeline() {
     name: /GET https:\/\/example.invalid\/two/,
   });
   for (const pane of [
-    "Full metadata and headers",
+    "Full metadata",
     "Retained bytes · hexadecimal",
   ]) {
     await user.keyboard("{Control>}f{/Control}");
-    await user.click(screen.getByRole("button", { name: pane }));
+    await user.click(
+      screen.getByRole(pane === "Full metadata" ? "radio" : "button", {
+        name: pane,
+      }),
+    );
     await user.keyboard("{Escape}");
     assert.equal(
       screen.queryByRole("dialog", { name: "Event details" }) === null,
@@ -1102,6 +1125,7 @@ async function checkTimeline() {
   );
 }
 async function checkDetails() {
+  await checkInspectorControls();
   const nativeRead = deferred();
   product.bodyDocuments = () => nativeRead.promise;
   const loading = render(
@@ -1140,9 +1164,9 @@ async function checkDetails() {
   const mounted = render(
     <Details key="one" detail={detail("one")} offPage={false} wrap />,
   );
-  await screen.findByRole("tab", { name: "Response" });
+  await screen.findByRole("radio", { name: "Response" });
   assert.equal(
-    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    screen.getByRole("radio", { name: "Response" }).getAttribute("aria-checked"),
     "true",
   );
   assert.match(
@@ -1150,11 +1174,16 @@ async function checkDetails() {
     /9007199254740993/,
   );
   assert.ok(screen.getByLabelText("Body content").textContent!.length < 20000);
-  await user.click(screen.getByRole("button", { name: "Copy original" }));
-  await waitFor(() => assert.equal(copies.at(-1), original));
-  await user.click(screen.getByRole("button", { name: "Copy formatted" }));
+  await user.click(screen.getByRole("radio", { name: "Original" }));
+  await user.click(screen.getByRole("button", { name: "Copy", exact: true }));
   await waitFor(() => assert.match(copies.at(-1)!, /"10": 9007199254740993/));
   assert.ok(copies.at(-1)!.endsWith('NEEDLE"\n}'));
+  await chooseBodyCopy("Copy original");
+  await waitFor(() => assert.equal(copies.at(-1), original));
+  await chooseBodyCopy("Copy formatted");
+  await waitFor(() => assert.match(copies.at(-1)!, /"10": 9007199254740993/));
+  assert.ok(copies.at(-1)!.endsWith('NEEDLE"\n}'));
+  await user.click(screen.getByRole("radio", { name: "Formatted" }));
   await user.keyboard("{Meta>}f{/Meta}");
   const find = screen.getByRole("textbox", {
     name: "Find in query, request and response",
@@ -1168,10 +1197,14 @@ async function checkDetails() {
     },
   });
   for (const pane of [
-    "Full metadata and headers",
+    "Full metadata",
     "Retained bytes · hexadecimal",
   ]) {
-    await user.click(screen.getByRole("button", { name: pane }));
+    await user.click(
+      screen.getByRole(pane === "Full metadata" ? "radio" : "button", {
+        name: pane,
+      }),
+    );
     await user.keyboard("{Meta>}f{/Meta}");
     assert.equal(find.closest("[hidden]"), null);
     await waitFor(() =>
@@ -1188,29 +1221,29 @@ async function checkDetails() {
   );
   assert.equal(
     screen
-      .getByRole("tab", { name: "Request (1)" })
-      .getAttribute("aria-selected"),
+      .getByRole("radio", { name: "Request (1)" })
+      .getAttribute("aria-checked"),
     "true",
   );
   await user.keyboard("{Enter}");
   assert.equal(
     screen
-      .getByRole("tab", { name: "Response (2)" })
-      .getAttribute("aria-selected"),
+      .getByRole("radio", { name: "Response (2)" })
+      .getAttribute("aria-checked"),
     "true",
   );
   for (const representation of ["Original", "Formatted"]) {
-    await user.click(screen.getByRole("button", { name: representation }));
+    await user.click(screen.getByRole("radio", { name: representation }));
     await waitFor(() =>
       assert.equal(
         screen
-          .getByRole("tab", { name: "Response (2)" })
-          .getAttribute("aria-selected"),
+          .getByRole("radio", { name: "Response (2)" })
+          .getAttribute("aria-checked"),
         "true",
         "Changing format keeps the selected response while Find is open",
       ),
     );
-    await user.click(screen.getByRole("button", { name: "Copy original" }));
+    await chooseBodyCopy("Copy original");
     await waitFor(() => assert.equal(copies.at(-1), original));
   }
   await user.click(find);
@@ -1239,7 +1272,7 @@ async function checkDetails() {
   product.copyText = async () => {
     throw new Error("clipboard unavailable");
   };
-  await user.click(screen.getByRole("button", { name: "Copy original" }));
+  await chooseBodyCopy("Copy original");
   assert.match(
     (await screen.findByRole("alert")).textContent!,
     /clipboard unavailable/,
@@ -1267,7 +1300,7 @@ async function checkDetails() {
       wrap
     />,
   );
-  await screen.findByRole("tab", { name: "Response" });
+  await screen.findByRole("radio", { name: "Response" });
   await user.keyboard("{Meta>}f{/Meta}");
   const scopedFind = screen.getByRole("textbox", {
     name: "Find in query, request and response",
@@ -1276,13 +1309,13 @@ async function checkDetails() {
   await waitFor(() =>
     assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
   );
-  await user.click(screen.getByRole("tab", { name: "Response (1)" }));
-  await user.click(screen.getByRole("button", { name: "Original" }));
+  await user.click(screen.getByRole("radio", { name: "Response (1)" }));
+  await user.click(screen.getByRole("radio", { name: "Original" }));
   await waitFor(() =>
     assert.equal(
       screen
-        .getByRole("tab", { name: "Response (0)" })
-        .getAttribute("aria-selected"),
+        .getByRole("radio", { name: "Response (0)" })
+        .getAttribute("aria-checked"),
       "true",
     ),
   );
@@ -1292,8 +1325,8 @@ async function checkDetails() {
   await waitFor(() =>
     assert.equal(
       screen
-        .getByRole("tab", { name: "Request (2)" })
-        .getAttribute("aria-selected"),
+        .getByRole("radio", { name: "Request (2)" })
+        .getAttribute("aria-checked"),
       "true",
     ),
   );
@@ -1305,7 +1338,7 @@ async function checkDetails() {
   await screen.findByText("Empty body");
   assert.equal(screen.queryByRole("navigation", { name: "Body window" }), null);
   assert.equal(
-    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    screen.getByRole("radio", { name: "Response" }).getAttribute("aria-checked"),
     "true",
   );
   product.bodyDocuments = async () => ({
@@ -1323,7 +1356,7 @@ async function checkDetails() {
   );
   await screen.findByText(/Response unavailable/);
   assert.equal(
-    screen.getByRole("tab", { name: "Request" }).getAttribute("aria-selected"),
+    screen.getByRole("radio", { name: "Request" }).getAttribute("aria-checked"),
     "true",
   );
   const bodyCalls: unknown[] = [];
@@ -1484,8 +1517,8 @@ async function checkDetails() {
   assert.match(screen.getByRole("search").textContent!, /1 of 1 matches/);
   assert.equal(
     screen
-      .getByRole("tab", { name: "Response (1)" })
-      .getAttribute("aria-selected"),
+      .getByRole("radio", { name: "Response (1)" })
+      .getAttribute("aria-checked"),
     "true",
   );
   mounted.unmount();
@@ -1495,6 +1528,184 @@ async function checkDetails() {
   product.bodyDocuments = async () => bodyPair();
   console.log(
     "Detail DOM checks passed. Response-first text and empty bodies, complete Find and copy, lexical JSON fidelity, cross-tab reverse/wrap, tail highlights, binary byte paging, copy errors, full log reads, and disposed body reads.",
+  );
+}
+async function checkInspectorControls() {
+  const original = '{"value":"needle"}';
+  const formatted = '{\n  "value": "needle"\n}';
+  const copies: string[] = [];
+  product.bodyDocuments = async () => bodyPair(original, "plain request");
+  product.detailChunk = async () => emptyChunk;
+  product.body = async () => ({ body: { available: true }, chunk: emptyChunk });
+  product.copyText = async (text) => {
+    copies.push(text);
+  };
+  const mounted = render(
+    <Details key="controls" detail={detail("controls")} offPage={false} wrap />,
+  );
+  await screen.findByRole("radio", { name: "Response", checked: true });
+  for (const [name, selected] of [
+    ["Detail view", "Bodies"],
+    ["Network bodies", "Response"],
+    ["Body representation", "Formatted"],
+  ]) {
+    const group = screen.getByRole("radiogroup", { name });
+    const checked = within(group).getByRole("radio", {
+      name: selected,
+      checked: true,
+    });
+    assert.equal(within(group).getAllByRole("radio", { checked: true }).length, 1);
+    assert.equal(checked.hasAttribute("aria-pressed"), false);
+    await user.click(checked);
+    assert.equal(checked.getAttribute("aria-checked"), "true");
+  }
+  assert.equal(
+    screen.getByRole("radiogroup", { name: "Network bodies" }).contains(
+      screen.getByRole("button", { name: "Find" }),
+    ),
+    false,
+  );
+  await user.click(screen.getByRole("radio", { name: "Formatted" }));
+  await user.keyboard("{ArrowLeft}");
+  await waitFor(() =>
+    assert.equal(
+      document.activeElement,
+      screen.getByRole("radio", { name: "Original" }),
+    ),
+  );
+  await user.keyboard(" ");
+  assert.ok(screen.getByRole("radio", { name: "Original", checked: true }));
+  await user.click(screen.getByRole("button", { name: "Copy", exact: true }));
+  await waitFor(() => assert.equal(copies.at(-1), formatted));
+  assert.ok(screen.getByRole("radio", { name: "Original", checked: true }));
+  await chooseBodyCopy("Copy original");
+  await waitFor(() => assert.equal(copies.at(-1), original));
+  await user.click(screen.getByRole("button", { name: "Copy", exact: true }));
+  await waitFor(() => assert.equal(copies.at(-1), formatted));
+
+  const trigger = screen.getByRole("button", {
+    name: "Choose body copy format",
+  });
+  await user.click(trigger);
+  await screen.findByRole("menu");
+  await user.keyboard("{Escape}");
+  await waitFor(() => assert.equal(screen.queryByRole("menu"), null));
+  await waitFor(() => assert.equal(document.activeElement, trigger));
+  const copyCount = copies.length;
+  await user.keyboard("{ArrowDown}{Enter}");
+  await waitFor(() => assert.equal(copies.length, copyCount + 1));
+  await waitFor(() => assert.equal(copies.at(-1), formatted));
+  await waitFor(() => assert.equal(screen.queryByRole("menu"), null));
+
+  await user.click(screen.getByRole("radio", { name: "Response" }));
+  await user.keyboard("{ArrowLeft}");
+  await waitFor(() =>
+    assert.equal(
+      document.activeElement,
+      screen.getByRole("radio", { name: "Request" }),
+    ),
+  );
+  await user.keyboard(" ");
+  assert.ok(screen.getByRole("radio", { name: "Request", checked: true }));
+  assert.ok(screen.getByRole("radio", { name: "Original", checked: true }));
+  assert.equal(screen.getByRole("radio", { name: "Formatted" }).disabled, true);
+  await user.click(screen.getByRole("button", { name: "Copy", exact: true }));
+  await waitFor(() => assert.equal(copies.at(-1), "plain request"));
+  await user.click(trigger);
+  assert.equal(
+    screen
+      .getByRole("menuitem", { name: "Copy formatted" })
+      .getAttribute("aria-disabled"),
+    "true",
+  );
+  await user.click(screen.getByRole("menuitem", { name: "Copy original" }));
+  await waitFor(() => assert.equal(copies.at(-1), "plain request"));
+
+  await user.click(screen.getByRole("radio", { name: "Response" }));
+  await user.click(screen.getByRole("radio", { name: "Formatted" }));
+  await user.click(screen.getByRole("radio", { name: "Request" }));
+  await user.click(screen.getByRole("radio", { name: "Response" }));
+  assert.ok(screen.getByRole("radio", { name: "Formatted", checked: true }));
+  const pending = deferred<void>();
+  product.copyText = () => pending.promise;
+  await chooseBodyCopy("Copy original");
+  assert.equal(
+    screen.getByRole("button", { name: "Copy", exact: true }).disabled,
+    true,
+  );
+  assert.equal(trigger.disabled, true);
+  await act(async () => pending.resolve());
+  await screen.findByText("Copied complete original body.");
+  assert.equal(trigger.disabled, false);
+
+  await user.click(screen.getByRole("button", { name: "Find" }));
+  const find = screen.getByRole("textbox", {
+    name: "Find in query, request and response",
+  });
+  await user.type(find, "needle");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 1 matches/),
+  );
+  await waitFor(() =>
+    assert.ok(screen.getByLabelText("Body content").querySelector("mark")),
+  );
+  await user.click(trigger);
+  await user.keyboard("{Escape}");
+  assert.ok(screen.getByRole("search"));
+  await waitFor(() => assert.equal(document.activeElement, trigger));
+  await user.click(trigger);
+  await screen.findByRole("menu");
+  await user.click(screen.getByRole("radio", { name: "Full metadata" }));
+  await waitFor(() =>
+    assert.equal(document.querySelector('[role="menu"]'), null),
+  );
+  assert.equal(document.activeElement?.closest("[hidden],[inert]"), null);
+  const metadata = screen.getByRole("radio", {
+    name: "Full metadata",
+    checked: true,
+  });
+  await user.click(metadata);
+  assert.equal(metadata.getAttribute("aria-checked"), "true");
+  await user.keyboard("{ArrowLeft}");
+  await waitFor(() =>
+    assert.equal(
+      document.activeElement,
+      screen.getByRole("radio", { name: "Bodies" }),
+    ),
+  );
+  await user.keyboard(" ");
+  await waitFor(() => assert.equal(document.activeElement, find));
+  assert.equal(find.value, "needle");
+  assert.ok(screen.getByRole("radio", { name: "Response (1)", checked: true }));
+  assert.ok(screen.getByRole("radio", { name: "Formatted", checked: true }));
+  await user.click(
+    screen.getByRole("button", { name: "Retained bytes · hexadecimal" }),
+  );
+  assert.equal(
+    within(screen.getByRole("radiogroup", { name: "Detail view" })).queryByRole(
+      "radio",
+      { checked: true },
+    ),
+    null,
+  );
+  await user.click(screen.getByRole("radio", { name: "Bodies" }));
+  await waitFor(() => assert.equal(document.activeElement, find));
+  assert.equal(find.value, "needle");
+
+  product.bodyDocuments = async () => bodyPair('""');
+  product.copyText = async (text) => {
+    copies.push(text);
+  };
+  mounted.rerender(
+    <Details key="empty-json" detail={detail("empty-json")} offPage={false} wrap />,
+  );
+  await screen.findByRole("radio", { name: "Formatted", checked: true });
+  assert.equal(screen.getByRole("radio", { name: "Formatted" }).disabled, false);
+  await user.click(screen.getByRole("button", { name: "Copy", exact: true }));
+  await waitFor(() => assert.equal(copies.at(-1), '""'));
+  mounted.unmount();
+  console.log(
+    "Inspector control DOM checks passed. Radio exclusivity, repeated presses, keyboard focus and selection, formatted-default copy, explicit original, plain-text fallback, pending copy, raw return and menu cleanup preserve Find and body selection.",
   );
 }
 async function checkQueryAndBinaryDetails() {
@@ -1519,12 +1730,12 @@ async function checkQueryAndBinaryDetails() {
   const mounted = render(
     <Details key="query" detail={detail("query")} offPage={false} wrap />,
   );
-  await screen.findByRole("tab", { name: "Response" });
+  await screen.findByRole("radio", { name: "Response" });
   assert.equal(
-    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    screen.getByRole("radio", { name: "Response" }).getAttribute("aria-checked"),
     "true",
   );
-  await user.click(screen.getByRole("tab", { name: "Request" }));
+  await user.click(screen.getByRole("radio", { name: "Request" }));
   const table = await screen.findByRole("table", {
     name: "Decoded query parameters",
   });
@@ -1549,8 +1760,8 @@ async function checkQueryAndBinaryDetails() {
   );
   assert.equal(
     screen
-      .getByRole("tab", { name: "Request (2)" })
-      .getAttribute("aria-selected"),
+      .getByRole("radio", { name: "Request (2)" })
+      .getAttribute("aria-checked"),
     "true",
   );
   const tail = await screen.findByLabelText("Query field content");
@@ -1607,45 +1818,45 @@ async function checkQueryAndBinaryDetails() {
   await waitFor(() =>
     assert.equal(
       screen
-        .getByRole("tab", { name: "Response (1)" })
-        .getAttribute("aria-selected"),
+        .getByRole("radio", { name: "Response (1)" })
+        .getAttribute("aria-checked"),
       "true",
     ),
   );
   assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/);
-  await user.click(screen.getByRole("button", { name: "Original" }));
+  await user.click(screen.getByRole("radio", { name: "Original" }));
   await waitFor(() =>
     assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
   );
   assert.equal(
     screen
-      .getByRole("tab", { name: "Response (1)" })
-      .getAttribute("aria-selected"),
+      .getByRole("radio", { name: "Response (1)" })
+      .getAttribute("aria-checked"),
     "true",
   );
   await user.click(screen.getByRole("button", { name: "Next match" }));
   await waitFor(() =>
     assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
   );
-  await user.click(screen.getByRole("button", { name: "Formatted" }));
+  await user.click(screen.getByRole("radio", { name: "Formatted" }));
   await waitFor(() =>
     assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
   );
   assert.equal(
     screen
-      .getByRole("tab", { name: "Request (2)" })
-      .getAttribute("aria-selected"),
+      .getByRole("radio", { name: "Request (2)" })
+      .getAttribute("aria-checked"),
     "true",
   );
-  await user.click(screen.getByRole("tab", { name: "Response (1)" }));
-  await user.click(screen.getByRole("button", { name: "Original" }));
+  await user.click(screen.getByRole("radio", { name: "Response (1)" }));
+  await user.click(screen.getByRole("radio", { name: "Original" }));
   await waitFor(() =>
     assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
   );
   assert.equal(
     screen
-      .getByRole("tab", { name: "Response (1)" })
-      .getAttribute("aria-selected"),
+      .getByRole("radio", { name: "Response (1)" })
+      .getAttribute("aria-checked"),
     "true",
   );
   await user.click(screen.getByRole("button", { name: "Next match" }));
@@ -1668,12 +1879,12 @@ async function checkQueryAndBinaryDetails() {
       wrap
     />,
   );
-  await screen.findByRole("tab", { name: "Request" });
-  await user.click(screen.getByRole("tab", { name: "Request" }));
+  await screen.findByRole("radio", { name: "Request" });
+  await user.click(screen.getByRole("radio", { name: "Request" }));
   await screen.findByRole("table", { name: "Decoded query parameters" });
   assert.equal(screen.queryByText("Empty body"), null);
   assert.equal(
-    screen.queryByRole("button", { name: "Copy original", exact: true }),
+    screen.queryByRole("button", { name: "Copy", exact: true }),
     null,
   );
   assert.equal(screen.queryByLabelText("Body content"), null);
@@ -1760,7 +1971,7 @@ async function checkQueryAndBinaryDetails() {
       wrap
     />,
   );
-  await screen.findByRole("tab", { name: "Response" });
+  await screen.findByRole("radio", { name: "Response" });
   await act(async () =>
     held.resolve({
       kind: "saved",
@@ -1794,8 +2005,8 @@ async function checkQueryAndBinaryDetails() {
       wrap
     />,
   );
-  await screen.findByRole("tab", { name: "Request" });
-  await user.click(screen.getByRole("tab", { name: "Request" }));
+  await screen.findByRole("radio", { name: "Request" });
+  await user.click(screen.getByRole("radio", { name: "Request" }));
   await screen.findByRole("alert", { name: "" });
   assert.ok(screen.getByText("Query worker failed"));
   failed.unmount();
@@ -2137,7 +2348,14 @@ async function checkViewPreservation() {
   });
   const evidence = screen.getByRole("region", { name: "Capture evidence" });
   const filter = screen.getByLabelText("Source filter");
+  await user.click(
+    await screen.findByRole("button", { name: "Choose body copy format" }),
+  );
+  await screen.findByRole("menu");
   await user.click(screen.getByRole("button", { name: "Settings" }));
+  await waitFor(() =>
+    assert.equal(document.querySelector('[role="menu"]'), null),
+  );
   assert.equal(
     screen
       .getByRole("button", { name: "Settings" })
@@ -2148,6 +2366,8 @@ async function checkViewPreservation() {
   assert.equal(evidence.hasAttribute("inert"), true);
   assert.equal(getComputedStyle(evidence).display, "none");
   assert.equal(screen.queryByRole("dialog", { name: "Event details" }), null);
+  assert.equal(evidence.contains(document.activeElement), false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(evidence.contains(document.activeElement), false);
   const hiddenFind = new KeyboardEvent("keydown", {
     key: "f",
@@ -2181,6 +2401,7 @@ async function checkViewPreservation() {
     screen.getByRole("dialog", { name: "Event details" }),
     inspector,
   );
+  assert.equal(document.querySelector('[role="menu"]'), null);
   assert.equal(screen.queryByRole("textbox", { name: "Session folder" }), null);
   await user.click(screen.getByRole("button", { name: "Settings" }));
   assert.equal(screen.getByLabelText("Session folder"), folder);
@@ -2309,8 +2530,8 @@ async function checkWholeApp() {
     );
     if (read === "metadata")
       await user.click(
-        await screen.findByRole("button", {
-          name: "Full metadata and headers",
+        await screen.findByRole("radio", {
+          name: "Full metadata",
         }),
       );
     if (read === "raw")

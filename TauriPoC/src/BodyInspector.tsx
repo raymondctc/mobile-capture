@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+import { ChevronDown } from "lucide-react";
 import { Input } from "./components/ui/input";
 import { DetailChunks } from "./DetailChunks";
 import { QueryParameters } from "./QueryParameters";
@@ -150,6 +158,10 @@ export function BodyInspector({
         if (paneVisible) input.current?.focus();
       } else if (
         event.key === "Escape" &&
+        !(
+          event.target instanceof Element &&
+          event.target.closest('[role="menu"]')
+        ) &&
         find.kind !== "closed" &&
         paneVisible
       ) {
@@ -270,6 +282,10 @@ export function BodyInspector({
     return <p role="status">Reading complete request and response bodies…</p>;
   if (state.kind === "error") return <p role="alert">{state.message}</p>;
   const body = state.documents[side];
+  const formattedAvailable =
+    body.kind === "text" && body.formatting.kind === "ready";
+  const displayMode = formattedAvailable ? mode : "original";
+  const defaultCopyMode = formattedAvailable ? "formatted" : "original";
   const queryOnly =
     side === "request" &&
     state.query === "present" &&
@@ -277,39 +293,37 @@ export function BodyInspector({
     body.bytes === 0;
   return (
     <div className="space-y-3">
-      <div
-        role="tablist"
-        aria-label="Network bodies"
-        className="flex flex-wrap gap-2"
-      >
-        {sides.map((value) => {
-          const searchable =
-            state.documents[value].kind === "text" ||
-            (value === "request" && state.query === "present");
-          const count =
-            find.kind === "complete"
-              ? find.search[value] +
-                (value === "request" ? find.search.queryParameters : 0)
-              : "…";
-          return (
-            <Button
-              key={value}
-              role="tab"
-              variant={side === value ? "default" : "outline"}
-              aria-selected={side === value}
-              onClick={() => {
-                setSide(value);
-                setOffset(0);
-                setCopy({ kind: "idle" });
-              }}
-            >
-              {value === "request" ? "Request" : "Response"}
-              {find.kind !== "closed" && find.query
-                ? ` (${searchable ? count : "not searchable"})`
-                : ""}
-            </Button>
-          );
-        })}
+      <div className="flex flex-wrap items-center gap-2">
+        <ToggleGroup
+          type="single"
+          aria-label="Network bodies"
+          value={side}
+          onValueChange={(value) => {
+            if (value !== "request" && value !== "response") return;
+            setSide(value);
+            setOffset(0);
+            setCopy({ kind: "idle" });
+          }}
+        >
+          {sides.map((value) => {
+            const searchable =
+              state.documents[value].kind === "text" ||
+              (value === "request" && state.query === "present");
+            const count =
+              find.kind === "complete"
+                ? find.search[value] +
+                  (value === "request" ? find.search.queryParameters : 0)
+                : "…";
+            return (
+              <ToggleGroupItem key={value} value={value}>
+                {value === "request" ? "Request" : "Response"}
+                {find.kind !== "closed" && find.query
+                  ? ` (${searchable ? count : "not searchable"})`
+                  : ""}
+              </ToggleGroupItem>
+            );
+          })}
+        </ToggleGroup>
         <Button
           ref={findButton}
           onClick={() => {
@@ -423,64 +437,79 @@ export function BodyInspector({
       </p>
       {body.kind === "text" && !queryOnly && (
         <>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant={
-                mode === "original" || body.formatting.kind === "unavailable"
-                  ? "default"
-                  : "outline"
-              }
-              aria-pressed={
-                mode === "original" || body.formatting.kind === "unavailable"
-              }
-              onClick={() => {
-                setMode("original");
+          <div className="flex flex-wrap items-center gap-2">
+            <ToggleGroup
+              type="single"
+              aria-label="Body representation"
+              value={displayMode}
+              onValueChange={(value) => {
+                if (value !== "original" && value !== "formatted") return;
+                setMode(value);
                 setOffset(0);
                 if (find.kind !== "closed")
                   void search(find.query, {
-                    representation: "original",
+                    representation: value,
                     preserveSide: side,
                   });
               }}
             >
-              Original
-            </Button>
-            <Button
-              variant={
-                mode === "formatted" && body.formatting.kind === "ready"
-                  ? "default"
-                  : "outline"
-              }
-              aria-pressed={
-                mode === "formatted" && body.formatting.kind === "ready"
-              }
-              disabled={body.formatting.kind !== "ready"}
-              onClick={() => {
-                setMode("formatted");
-                setOffset(0);
-                if (find.kind !== "closed")
-                  void search(find.query, {
-                    representation: "formatted",
-                    preserveSide: side,
-                  });
-              }}
+              <ToggleGroupItem value="original">Original</ToggleGroupItem>
+              <ToggleGroupItem value="formatted" disabled={!formattedAvailable}>
+                Formatted
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <div
+              role="group"
+              aria-label="Copy body"
+              className="flex items-center"
             >
-              Formatted
-            </Button>
-            <Button
-              disabled={copy.kind === "pending"}
-              onClick={() => void copyBody("original")}
-            >
-              Copy original
-            </Button>
-            <Button
-              disabled={
-                copy.kind === "pending" || body.formatting.kind !== "ready"
-              }
-              onClick={() => void copyBody("formatted")}
-            >
-              Copy formatted
-            </Button>
+              <Button
+                className="rounded-r-none focus-visible:z-10"
+                disabled={copy.kind === "pending"}
+                onClick={() => void copyBody(defaultCopyMode)}
+              >
+                Copy
+              </Button>
+              {visible && paneVisible && (
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      className="-ml-px rounded-l-none focus-visible:z-10"
+                      size="icon"
+                      aria-label="Choose body copy format"
+                      disabled={copy.kind === "pending"}
+                    >
+                      <ChevronDown aria-hidden="true" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-40"
+                    onEscapeKeyDown={(event) => event.stopPropagation()}
+                    onCloseAutoFocus={(event) => {
+                      if (
+                        !findButton.current ||
+                        findButton.current.closest("[hidden],[inert]")
+                      )
+                        event.preventDefault();
+                    }}
+                  >
+                    <DropdownMenuItem
+                      disabled={copy.kind === "pending" || !formattedAvailable}
+                      onSelect={() => void copyBody("formatted")}
+                    >
+                      Copy formatted
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={copy.kind === "pending"}
+                      onSelect={() => void copyBody("original")}
+                    >
+                      Copy original
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
           </div>
           <p className="text-xs text-muted-foreground">
             {body.basis === "decoded"
