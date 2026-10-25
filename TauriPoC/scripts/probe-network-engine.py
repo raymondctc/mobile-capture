@@ -135,7 +135,7 @@ from mitmproxy import io, ctx
 class Reader:
     def running(self):
         with open(os.environ['CAPTURE_REPLAY_FILE'], 'rb') as source:
-            flows=[{'id':f.id, 'request':None if f.request.raw_content is None else base64.b64encode(f.request.raw_content).decode(), 'response':None if f.response is None or f.response.raw_content is None else base64.b64encode(f.response.raw_content).decode()} for f in io.FlowReader(source).stream()]
+            flows=[{'id':f.id, 'request_start':f.request.timestamp_start, 'response_end':None if f.response is None else f.response.timestamp_end, 'request':None if f.request.raw_content is None else base64.b64encode(f.request.raw_content).decode(), 'response':None if f.response is None or f.response.raw_content is None else base64.b64encode(f.response.raw_content).decode()} for f in io.FlowReader(source).stream()]
         Path(os.environ['CAPTURE_REPLAY_RESULT']).write_text(json.dumps(flows))
         ctx.master.shutdown()
 addons=[Reader()]
@@ -149,6 +149,12 @@ addons=[Reader()]
     for entry in har:
         native_flow = by_id[entry["_flow_id"]]
         matching = [e for e in events if e["detail"]["flow_id"] == entry["_flow_id"]]
+        response_event = next((e for e in matching if e["kind"] == "response"), None)
+        if response_event is not None:
+            expected_duration = (native_flow["response_end"] - native_flow["request_start"]) * 1000
+            assert expected_duration >= 0
+            assert abs(response_event["detail"]["duration_ms"] - expected_duration) < 0.000001
+        assert all("duration_ms" not in e["detail"] for e in matching if e["kind"] == "request")
         for kind, message, field in [("request", entry["request"], "postData"), ("response", entry["response"], "content")]:
             body = message[field]
             expected = native_flow[kind]

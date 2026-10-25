@@ -732,3 +732,179 @@ fn preview_bounds_escaped_outer_fields_and_body_metadata() {
     };
     assert!(serde_json::to_vec(&row).unwrap().len() <= 6144);
 }
+
+#[test]
+fn body_documents_preserve_complete_text_and_distinguish_empty_binary_missing_and_decoding() {
+    use flate2::{write::GzEncoder, Compression};
+    let fixture = Fixture::new(false);
+    let original = format!("{}9007199254740993, -0, 1e+09", "tail ".repeat(20_000));
+    let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+    gzip.write_all(original.as_bytes()).unwrap();
+    let compressed = gzip.finish().unwrap();
+    let records = [
+        json!({"summary":"compressed", "detail":{"request_body":{"text":""}, "response_headers":[{"name":"content-encoding","value":"gzip"}], "response_body":{"text":STANDARD.encode(&compressed)}}}),
+        json!({"summary":"binary", "detail":{"response_body":{"text":STANDARD.encode([0,255])}}}),
+        json!({"summary":"unsupported", "detail":{"response_headers":[{"name":"content-encoding","value":"br"}], "response_body":{"text":"YQ=="}}}),
+    ];
+    fixture.write(
+        "network/events.jsonl",
+        records.iter().map(|r| format!("{r}\n")).collect::<String>(),
+    );
+    let before = evidence_bytes(&fixture.evidence);
+    let mut library = fixture.open(false);
+    finish(&mut library);
+    let rows = all(&mut library);
+    let pair = library.body_documents(&rows[0].event.id).unwrap();
+    assert!(
+        matches!(pair.request, BodyDocument::Text { ref original, bytes: 0, .. } if original.is_empty())
+    );
+    assert!(
+        matches!(pair.response, BodyDocument::Text { original: ref text, ref basis, .. } if text == &original && matches!(basis, BodyTextBasis::Decoded))
+    );
+    let raw = library
+        .body_chunk(&rows[0].event.id, BodySide::Response, 0, 65536)
+        .unwrap();
+    assert_eq!(STANDARD.decode(raw.chunk.data_base64).unwrap(), compressed);
+    let pair = library.body_documents(&rows[1].event.id).unwrap();
+    assert!(matches!(
+        pair.request,
+        BodyDocument::Unavailable {
+            retained_available: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        pair.response,
+        BodyDocument::Binary { bytes: 2, .. }
+    ));
+    let pair = library.body_documents(&rows[2].event.id).unwrap();
+    assert!(
+        matches!(pair.response, BodyDocument::Unavailable { retained_available: true, ref reason } if reason.contains("Unsupported"))
+    );
+    assert_eq!(before, evidence_bytes(&fixture.evidence));
+}
+
+#[test]
+fn exact_log_level_filters_counts_pages_and_cursors_but_preserves_other_sources() {
+    let fixture = Fixture::new(false);
+    fixture.write("logs/device.log", "1700000000.0 1 2 I Tag: info\n1700000000.0 1 2 E Tag: error one\n1700000000.0 1 2 W Tag: warning\n1700000000.0 1 2 E Tag: error two\nunparsed\n");
+    fixture.write(
+        "network/events.jsonl",
+        format!("{}\n", json!({"timestamp":STARTED,"summary":"network"})),
+    );
+    fixture.write(
+        "timeline/markers.jsonl",
+        format!("{}\n", json!({"timestamp":STARTED,"text":"marker"})),
+    );
+    let mut library = fixture.open(false);
+    finish(&mut library);
+    let query = TimelineQuery {
+        log_level: Some(LogLevel::E),
+        limit: 1,
+        order: TimelineOrder::OldestFirst,
+        ..Default::default()
+    };
+    let first = library.query(query.clone()).unwrap();
+    assert_eq!(first.total, 7);
+    assert_eq!(first.matching, 4);
+    assert_eq!(first.rows[0].event.detail["level"], "E");
+    let cursor = first.next_cursor.clone();
+    let mut ids = vec![first.rows[0].event.id.clone()];
+    let mut next = cursor.clone();
+    while let Some(cursor) = next {
+        let page = library
+            .query(TimelineQuery {
+                cursor: Some(cursor),
+                ..query.clone()
+            })
+            .unwrap();
+        assert_eq!(page.matching, 4);
+        ids.extend(page.rows.iter().map(|r| r.event.id.clone()));
+        next = page.next_cursor;
+    }
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 4);
+    assert!(library
+        .query(TimelineQuery {
+            log_level: Some(LogLevel::W),
+            cursor,
+            ..query
+        })
+        .is_err());
+    let unknown = library
+        .query(TimelineQuery {
+            source: Some("logs".into()),
+            log_level: Some(LogLevel::Unknown),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(unknown.matching, 1);
+    assert_eq!(unknown.rows[0].event.detail["level"], "unknown");
+    assert!(serde_json::from_value::<TimelineQuery>(json!({"log_level":"bogus"})).is_err());
+}
+
+#[test]
+fn version_two_cache_is_recreated_with_levels_and_a_fresh_generation() {
+    let fixture = Fixture::new(false);
+    fixture.write("logs/device.log", "1700000000.0 1 2 W Tag: warning\n");
+    let library = fixture.open(false);
+    let old_generation = library.index.generation.clone();
+    library
+        .index
+        .db
+        .execute("UPDATE meta SET value='2' WHERE key='version'", [])
+        .unwrap();
+    library
+        .index
+        .db
+        .execute_batch("DROP INDEX timeline_log_level; ALTER TABLE events DROP COLUMN log_level;")
+        .unwrap();
+    drop(library);
+    let mut reopened = fixture.open(false);
+    finish(&mut reopened);
+    assert_ne!(reopened.index.generation, old_generation);
+    let page = reopened
+        .query(TimelineQuery {
+            log_level: Some(LogLevel::W),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.matching, 1);
+    assert_eq!(page.rows[0].event.detail["level"], "W");
+}
+
+#[test]
+fn preview_keeps_compact_presentation_when_generic_metadata_is_pruned() {
+    let fixture = Fixture::new(false);
+    fixture.write(
+        "logs/device.log",
+        format!(
+            "1700000000.0 123 456 E {}: {}\n",
+            "tag".repeat(5000),
+            "message".repeat(5000)
+        ),
+    );
+    fixture.write("network/events.jsonl", format!("{}\n", json!({"detail":{"method":"PATCH","status":503,"duration_ms":123.25,"url":"https://example.test", "aaa":vec!["x".repeat(9999); 100]}})));
+    let mut library = fixture.open(false);
+    finish(&mut library);
+    let rows = all(&mut library);
+    assert_eq!(rows[0].event.detail["level"], "E");
+    assert_eq!(rows[0].event.detail["pid"], 123);
+    assert_eq!(rows[0].event.detail["tid"], 456);
+    assert!(rows[0].event.detail["tag"]
+        .as_str()
+        .unwrap()
+        .starts_with("tag"));
+    assert!(rows[0].event.detail["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("message"));
+    let detail = &rows[1].event.detail;
+    assert_eq!(detail["method"], "PATCH");
+    assert_eq!(detail["status"], 503);
+    assert_eq!(detail["duration_ms"], 123.25);
+    for row in rows {
+        assert!(serde_json::to_vec(&row.event).unwrap().len() < 6 * 1024 - 96);
+    }
+}

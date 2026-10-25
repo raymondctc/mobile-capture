@@ -34,6 +34,7 @@ pub enum TimelineOrder {
 #[serde(default)]
 pub struct TimelineQuery {
     pub source: Option<String>,
+    pub log_level: Option<LogLevel>,
     pub search: String,
     pub order: TimelineOrder,
     pub limit: u32,
@@ -46,12 +47,43 @@ impl Default for TimelineQuery {
     fn default() -> Self {
         Self {
             source: None,
+            log_level: None,
             search: String::new(),
             order: TimelineOrder::NewestFirst,
             limit: 200,
             cursor: None,
             after_sequence: None,
             through_sequence: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub enum LogLevel {
+    V,
+    D,
+    I,
+    W,
+    E,
+    F,
+    A,
+    S,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+impl LogLevel {
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::V => "V",
+            Self::D => "D",
+            Self::I => "I",
+            Self::W => "W",
+            Self::E => "E",
+            Self::F => "F",
+            Self::A => "A",
+            Self::S => "S",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -132,6 +164,37 @@ pub struct BodyDescriptor {
 pub struct BodyChunk {
     pub body: BodyDescriptor,
     pub chunk: DataChunk,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BodyDocument {
+    Text {
+        original: String,
+        bytes: u64,
+        basis: BodyTextBasis,
+    },
+    Binary {
+        bytes: u64,
+        reason: String,
+    },
+    Unavailable {
+        reason: String,
+        retained_available: bool,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyTextBasis {
+    Retained,
+    Decoded,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BodyDocuments {
+    pub request: BodyDocument,
+    pub response: BodyDocument,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

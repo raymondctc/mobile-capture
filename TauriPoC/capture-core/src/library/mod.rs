@@ -181,13 +181,14 @@ impl EvidenceLibrary {
         let search = normalize::fold(&query.search);
         let after = query.after_sequence.unwrap_or(0);
         let through = query.through_sequence.unwrap_or(i64::MAX as u64);
-        let filter = "(?1 IS NULL OR source=?1) AND (?2='' OR instr(search,?2)>0) AND sequence>?3 AND sequence<=?4";
+        let level = query.log_level.map(LogLevel::key);
+        let filter = "(?1 IS NULL OR source=?1) AND (?2='' OR instr(search,?2)>0) AND sequence>?3 AND sequence<=?4 AND (?5 IS NULL OR source!='logs' OR log_level=?5)";
         let matching: u64 = self
             .index
             .db
             .query_row(
                 &format!("SELECT count(*) FROM events WHERE {filter}"),
-                params![query.source, search, after as i64, through as i64],
+                params![query.source, search, after as i64, through as i64, level],
                 |r| sql_u64(r, 0),
             )
             .map_err(|e| e.to_string())?;
@@ -195,8 +196,8 @@ impl EvidenceLibrary {
         let direction = if ascending { "ASC" } else { "DESC" };
         let comparison = if ascending { ">" } else { "<" };
         let sql = format!("SELECT sequence,preview,timestamp,source_rank,line,id FROM events WHERE {filter}
-            AND (?5=0 OR (timestamp,source_rank,line,id) {comparison} (?6,?7,?8,?9))
-            ORDER BY timestamp {direction},source_rank {direction},line {direction},id {direction} LIMIT ?10");
+            AND (?6=0 OR (timestamp,source_rank,line,id) {comparison} (?7,?8,?9,?10))
+            ORDER BY timestamp {direction},source_rank {direction},line {direction},id {direction} LIMIT ?11");
         let mut statement = self.index.db.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = statement
             .query_map(
@@ -205,6 +206,7 @@ impl EvidenceLibrary {
                     search,
                     after as i64,
                     through as i64,
+                    level,
                     u8::from(cursor.is_some()),
                     cursor.as_ref().map(|c| c.timestamp.as_str()).unwrap_or(""),
                     cursor.as_ref().map(|c| c.rank).unwrap_or(0),
@@ -305,6 +307,16 @@ impl EvidenceLibrary {
             .ok_or("Timeline event is no longer indexed")?;
         let bytes = serde_json::to_vec(&event.detail).map_err(|e| e.to_string())?;
         chunk(&bytes, offset, limit)
+    }
+
+    pub fn body_documents(&mut self, id: &str) -> Result<BodyDocuments> {
+        let (_, event) = self
+            .full_event(id)?
+            .ok_or("Timeline event is no longer indexed")?;
+        Ok(BodyDocuments {
+            request: bodies::document(&event, BodySide::Request),
+            response: bodies::document(&event, BodySide::Response),
+        })
     }
 
     pub fn body_chunk(

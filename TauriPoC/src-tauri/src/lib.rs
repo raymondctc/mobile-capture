@@ -2,8 +2,8 @@ use capture_poc_core::{
     android::AndroidApplication,
     doctor::{self as host_doctor, DoctorReport, DoctorRequest, DoctorSources},
     library::{
-        BodyChunk, BodySide, DataChunk, EventDetail, SessionCatalog, SessionDescriptor,
-        TimelinePage, TimelineQuery,
+        BodyChunk, BodyDocuments, BodySide, DataChunk, EventDetail, SessionCatalog,
+        SessionDescriptor, TimelinePage, TimelineQuery,
     },
     model::*,
     preferences::Preferences,
@@ -15,6 +15,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Manager,
 };
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
 
@@ -216,6 +217,27 @@ async fn body_chunk(
         })
     })
     .await
+}
+#[tauri::command]
+async fn body_documents(
+    state: tauri::State<'_, DesktopState>,
+    id: String,
+) -> Result<BodyDocuments> {
+    execute(state.inner().clone(), move |s| {
+        s.with_reader(|reader| reader.body_documents(&id))
+    })
+    .await
+}
+#[tauri::command]
+async fn copy_text(app: tauri::AppHandle, text: String) -> Result<()> {
+    if text.len() > 128 * 1024 * 1024 {
+        return Err("Clipboard text exceeds 128 MiB".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        app.clipboard().write_text(text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn preferences(state: tauri::State<'_, DesktopState>) -> Result<Preferences> {
@@ -543,6 +565,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state = Desktop::open(app.handle()).map_err(std::io::Error::other)?;
@@ -600,6 +623,8 @@ pub fn run() {
             event_detail,
             detail_chunk,
             body_chunk,
+            body_documents,
+            copy_text,
             preferences,
             save_preferences,
             doctor,

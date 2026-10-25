@@ -1,10 +1,37 @@
-use super::{BodyDescriptor, BodySide};
+use super::{BodyDescriptor, BodyDocument, BodySide, BodyTextBasis};
 use crate::model::Event;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::read::{DeflateDecoder, MultiGzDecoder, ZlibDecoder};
 use std::io::Read;
 
 const DECODED_BOUND: usize = 32 * 1024 * 1024;
+
+pub(super) fn document(event: &Event, side: BodySide) -> BodyDocument {
+    let decoded = encoding(event, side).is_some();
+    let (body, bytes) = view(event, side, decoded);
+    if !body.available {
+        return BodyDocument::Unavailable {
+            reason: body.reason.unwrap_or_else(|| "Body unavailable".into()),
+            retained_available: decoded && event.detail[side.key()]["text"].is_string(),
+        };
+    }
+    if !body.text {
+        return BodyDocument::Binary {
+            bytes: body.bytes,
+            reason: "Body is binary or is not valid UTF-8. Use retained bytes to inspect it."
+                .into(),
+        };
+    }
+    BodyDocument::Text {
+        original: String::from_utf8(bytes).expect("text body was validated"),
+        bytes: body.bytes,
+        basis: if decoded {
+            BodyTextBasis::Decoded
+        } else {
+            BodyTextBasis::Retained
+        },
+    }
+}
 
 pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescriptor, Vec<u8>) {
     let bounded = |mut descriptor: BodyDescriptor| {
