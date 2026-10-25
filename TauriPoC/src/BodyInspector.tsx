@@ -1,16 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
+import { DetailChunks } from "./DetailChunks";
+import { QueryParameters } from "./QueryParameters";
 import { BodyWindow } from "./BodyViewport";
 import { type Representation, type Search } from "./body-document";
 import { bodyDocuments, type DocumentOwner } from "./body-owner";
 import { type DocumentInfo, type Window } from "./body-session";
 import { errorMessage } from "./api";
-import { product, type BodySide } from "./product";
+import { product, type BodySide, type EventRef } from "./product";
 
 type State =
   | { kind: "loading" }
-  | { kind: "ready"; documents: DocumentInfo }
+  | {
+      kind: "ready";
+      documents: DocumentInfo;
+      query: "present" | "absent" | "unavailable";
+    }
   | { kind: "error"; message: string };
 type Find =
   | { kind: "closed" }
@@ -22,17 +28,23 @@ type Copy =
   | { kind: "pending" }
   | { kind: "done"; mode: Representation }
   | { kind: "error"; message: string };
-const emptySearch: Search = { request: 0, response: 0, total: 0, active: null };
+const emptySearch: Search = {
+  queryParameters: 0,
+  request: 0,
+  response: 0,
+  total: 0,
+  active: null,
+};
 const sides: BodySide[] = ["request", "response"];
 export function BodyInspector({
-  id,
+  reference,
   wrap,
   visible,
   paneVisible,
   onFindOpen,
   onRaw,
 }: {
-  id: string;
+  reference: EventRef;
   wrap: boolean;
   visible: boolean;
   paneVisible: boolean;
@@ -58,6 +70,10 @@ export function BodyInspector({
   useEffect(() => {
     const request = ++revision.current;
     setState({ kind: "loading" });
+    setFind({ kind: "closed" });
+    setCopy({ kind: "idle" });
+    setMode("formatted");
+    setOffset(0);
     let document: DocumentOwner;
     try {
       document = bodyDocuments.create();
@@ -67,14 +83,18 @@ export function BodyInspector({
     }
     owner.current = document;
     void product
-      .bodyDocuments(id)
+      .bodyDocuments(reference)
       .then((pair) => document.read({ kind: "load", pair }))
       .then((reply) => {
         if (request !== revision.current) return;
         if (reply.kind !== "loaded")
           throw new Error("Unexpected body document reply");
         setSide(reply.side);
-        setState({ kind: "ready", documents: reply.documents });
+        setState({
+          kind: "ready",
+          documents: reply.documents,
+          query: reply.query,
+        });
       })
       .catch((cause: unknown) => {
         if (request === revision.current)
@@ -86,7 +106,7 @@ export function BodyInspector({
       document.dispose();
       owner.current = null;
     };
-  }, [id]);
+  }, [reference.session_key, reference.event_id]);
   const query = find.kind !== "closed" ? find.query : "";
   const searching = find.kind === "searching";
   const findOpen = find.kind !== "closed";
@@ -145,8 +165,13 @@ export function BodyInspector({
   }, [visible, paneVisible, find.kind, onFindOpen]);
   function showMatch(search: Search) {
     if (search.active) {
-      setSide(search.active.side);
-      setOffset(Math.max(0, search.active.start - 200));
+      setSide(
+        search.active.region.kind === "query"
+          ? "request"
+          : search.active.region.side,
+      );
+      if (search.active.region.kind === "body")
+        setOffset(Math.max(0, search.active.start - 200));
     }
   }
   async function search(
@@ -164,6 +189,10 @@ export function BodyInspector({
     } = {},
   ) {
     if (state.kind !== "ready" || !owner.current) return;
+    const preserveQuery =
+      preserveSide === "request" &&
+      find.kind === "complete" &&
+      find.search.active?.region.kind === "query";
     const request = ++findRevision.current;
     setFind({ kind: "searching", query });
     try {
@@ -173,17 +202,27 @@ export function BodyInspector({
         kind: "find",
         mode: representation,
         query,
-        ordinal,
+        ordinal:
+          preserveQuery && find.kind === "complete" && find.search.active
+            ? find.search.active.ordinal
+            : ordinal,
       });
       if (request !== findRevision.current || !owner.current) return;
       if (reply.kind !== "found") throw new Error("Unexpected body Find reply");
-      if (preserveSide && reply.search.active?.side !== preserveSide) {
+      if (
+        preserveSide &&
+        !preserveQuery &&
+        (reply.search.active?.region.kind !== "body" ||
+          reply.search.active.region.side !== preserveSide)
+      ) {
         if (reply.search[preserveSide]) {
           reply = await owner.current.read({
             kind: "find",
             mode: representation,
             query,
-            ordinal: preserveSide === "response" ? reply.search.request : 0,
+            ordinal:
+              reply.search.queryParameters +
+              (preserveSide === "response" ? reply.search.request : 0),
           });
           if (request !== findRevision.current) return;
           if (reply.kind !== "found")
@@ -203,7 +242,8 @@ export function BodyInspector({
   function navigate(direction: 1 | -1) {
     if (find.kind !== "complete" || !find.search.total) return;
     const current = find.search.active?.ordinal ?? (direction === 1 ? -1 : 0);
-    const ordinal = (current + direction + find.search.total) % find.search.total;
+    const ordinal =
+      (current + direction + find.search.total) % find.search.total;
     void search(find.query, { ordinal });
   }
   async function copyBody(representation: Representation) {
@@ -230,6 +270,11 @@ export function BodyInspector({
     return <p role="status">Reading complete request and response bodies…</p>;
   if (state.kind === "error") return <p role="alert">{state.message}</p>;
   const body = state.documents[side];
+  const queryOnly =
+    side === "request" &&
+    state.query === "present" &&
+    body.kind === "text" &&
+    body.bytes === 0;
   return (
     <div className="space-y-3">
       <div
@@ -237,24 +282,34 @@ export function BodyInspector({
         aria-label="Network bodies"
         className="flex flex-wrap gap-2"
       >
-        {sides.map((value) => (
-          <Button
-            key={value}
-            role="tab"
-            variant={side === value ? "default" : "outline"}
-            aria-selected={side === value}
-            onClick={() => {
-              setSide(value);
-              setOffset(0);
-              setCopy({ kind: "idle" });
-            }}
-          >
-            {value === "request" ? "Request" : "Response"}
-            {find.kind !== "closed" && find.query
-              ? ` (${state.documents[value].kind === "text" ? (find.kind === "complete" ? find.search[value] : "…") : "not searchable"})`
-              : ""}
-          </Button>
-        ))}
+        {sides.map((value) => {
+          const searchable =
+            state.documents[value].kind === "text" ||
+            (value === "request" && state.query === "present");
+          const count =
+            find.kind === "complete"
+              ? find.search[value] +
+                (value === "request" ? find.search.queryParameters : 0)
+              : "…";
+          return (
+            <Button
+              key={value}
+              role="tab"
+              variant={side === value ? "default" : "outline"}
+              aria-selected={side === value}
+              onClick={() => {
+                setSide(value);
+                setOffset(0);
+                setCopy({ kind: "idle" });
+              }}
+            >
+              {value === "request" ? "Request" : "Response"}
+              {find.kind !== "closed" && find.query
+                ? ` (${searchable ? count : "not searchable"})`
+                : ""}
+            </Button>
+          );
+        })}
         <Button
           ref={findButton}
           onClick={() => {
@@ -287,11 +342,11 @@ export function BodyInspector({
         <div
           className="space-y-2 rounded-md border border-border p-2"
           role="search"
-          aria-label="Find in both bodies"
+          aria-label="Find in query and both bodies"
         >
           <Input
             ref={input}
-            aria-label="Find in request and response"
+            aria-label="Find in query, request and response"
             value={find.query}
             maxLength={256}
             placeholder="Literal text, case insensitive"
@@ -308,9 +363,9 @@ export function BodyInspector({
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span role="status">
               {find.kind === "complete"
-                ? `${find.search.active ? find.search.active.ordinal + 1 : 0} of ${find.search.total} matches · Request ${state.documents.request.kind === "text" ? find.search.request : "not searchable"} · Response ${state.documents.response.kind === "text" ? find.search.response : "not searchable"}`
+                ? `${find.search.active ? find.search.active.ordinal + 1 : 0} of ${find.search.total} matches · Query parameters ${find.search.queryParameters} · Request body ${state.documents.request.kind === "text" ? find.search.request : "not searchable"} · Response body ${state.documents.response.kind === "text" ? find.search.response : "not searchable"}`
                 : find.kind === "searching"
-                  ? "Searching complete bodies…"
+                  ? "Searching complete query and bodies…"
                   : "Find failed"}
             </span>
             {find.kind === "error" && <p role="alert">{find.message}</p>}
@@ -339,7 +394,34 @@ export function BodyInspector({
           </div>
         </div>
       )}
-      {body.kind === "text" && (
+      {side === "request" && state.query === "present" && owner.current && (
+        <QueryParameters
+          owner={owner.current}
+          query={query}
+          active={find.kind === "complete" ? find.search.active : null}
+          wrap={wrap}
+        />
+      )}
+      {side === "request" && state.query === "unavailable" && (
+        <p>
+          Query parameters unavailable. The complete request URL was not
+          recorded.
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {body.media.label}
+        {body.media.content_type ? ` · ${body.media.content_type}` : ""} ·{" "}
+        {body.retained.kind === "available"
+          ? `${body.retained.bytes.toLocaleString()} retained bytes`
+          : "Retained bytes unavailable"}
+        {body.kind !== "unavailable" && body.basis === "decoded"
+          ? ` · ${body.bytes.toLocaleString()} decoded bytes`
+          : ""}
+        {body.media.content_encoding
+          ? ` · Content encoding ${body.media.content_encoding}`
+          : ""}
+      </p>
+      {body.kind === "text" && !queryOnly && (
         <>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -413,35 +495,42 @@ export function BodyInspector({
           )}
         </>
       )}
-      {body.kind !== "text" && (
-        <p role="status">
-          {body.reason} Text Find and copy are unavailable for this body.
-        </p>
+      {body.kind !== "text" && <p role="status">{body.reason}</p>}
+      {body.kind !== "text" && body.retained.kind === "available" && (
+        <DetailChunks reference={reference} side={side} wrap={wrap} />
       )}
       {copy.kind === "error" && <p role="alert">Copy failed. {copy.message}</p>}
       {copy.kind === "done" && (
         <p role="status">Copied complete {copy.mode} body.</p>
       )}
-      {window.kind === "loading" && body.kind === "text" && (
+      {window.kind === "loading" && body.kind === "text" && !queryOnly && (
         <p role="status">Reading body window…</p>
       )}
       {window.kind === "error" && <p role="alert">{window.message}</p>}
-      {window.kind === "ready" && window.value && (
+      {window.kind === "ready" && window.value && !queryOnly && (
         <BodyWindow
           window={window.value}
           onOffset={setOffset}
           wrap={wrap}
           active={
-            find.kind === "complete" && find.search.active?.side === side
+            find.kind === "complete" &&
+            find.search.active?.region.kind === "body" &&
+            find.search.active.region.side === side
               ? find.search.active
               : null
           }
         />
       )}
 
-      <Button variant="ghost" onClick={() => onRaw(side)}>
-        Retained bytes · hexadecimal
-      </Button>
+      {body.kind === "text" && (
+        <Button
+          variant="ghost"
+          disabled={body.retained.kind !== "available"}
+          onClick={() => onRaw(side)}
+        >
+          Retained bytes · hexadecimal
+        </Button>
+      )}
     </div>
   );
 }

@@ -2,20 +2,34 @@ import type { BodyDocument, BodyDocuments, BodySide } from "./product";
 
 export type Representation = "original" | "formatted";
 type Formatting =
-  | { kind: "ready"; text: string }
-  | { kind: "unavailable"; reason: string };
+  { kind: "ready"; text: string } | { kind: "unavailable"; reason: string };
 export type TextDocument = Extract<BodyDocument, { kind: "text" }> & {
   formatting: Formatting;
 };
 export type Document = TextDocument | Exclude<BodyDocument, { kind: "text" }>;
-export type Documents = Record<BodySide, Document>;
+export type QueryCell = {
+  text: string;
+  decoding: "decoded" | "literal-invalid-encoding";
+};
+export type QueryRow = { key: QueryCell; value: QueryCell; hasEquals: boolean };
+export type QueryDocument =
+  | { kind: "present"; raw: string; rows: QueryRow[] }
+  | { kind: "absent" }
+  | { kind: "unavailable" };
+export type Documents = Record<BodySide, Document> & { query: QueryDocument };
+export type QueryTarget =
+  { kind: "raw" } | { kind: "cell"; row: number; field: "key" | "value" };
+export type Region =
+  | { kind: "query"; row: number; field: "key" | "value" }
+  | { kind: "body"; side: BodySide };
 export type Match = {
-  side: BodySide;
+  region: Region;
   start: number;
   end: number;
   ordinal: number;
 };
 export type Search = {
+  queryParameters: number;
   request: number;
   response: number;
   total: number;
@@ -109,11 +123,15 @@ export function prepareDocuments(pair: BodyDocuments): Documents {
     body.kind === "text"
       ? { ...body, formatting: formatJson(body.original, body.bytes) }
       : body;
-  return { request: prepare(pair.request), response: prepare(pair.response) };
+  return {
+    request: prepare(pair.request),
+    response: prepare(pair.response),
+    query: parseQuery(pair.request_info.url),
+  };
 }
 export function initialSide(pair: Documents): BodySide {
   return pair.response.kind !== "unavailable" ||
-    pair.response.retained_available
+    pair.response.retained.kind === "available"
     ? "response"
     : "request";
 }
@@ -128,35 +146,114 @@ function matcher(query: string): RegExp | null {
     ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu")
     : null;
 }
+export function parseQuery(url: string | null): QueryDocument {
+  if (url === null) return { kind: "unavailable" };
+  const fragment = url.indexOf("#");
+  const beforeFragment = fragment === -1 ? url : url.slice(0, fragment);
+  const question = beforeFragment.indexOf("?");
+  if (question === -1) return { kind: "absent" };
+  const raw = beforeFragment.slice(question + 1);
+  const decode = (text: string): QueryCell => {
+    try {
+      return {
+        text: decodeURIComponent(text.replace(/\+/g, " ")),
+        decoding: "decoded",
+      };
+    } catch {
+      return { text, decoding: "literal-invalid-encoding" };
+    }
+  };
+  return {
+    kind: "present",
+    raw,
+    rows:
+      raw === ""
+        ? []
+        : raw.split("&").map((segment) => {
+            const equals = segment.indexOf("=");
+            return {
+              key: decode(equals === -1 ? segment : segment.slice(0, equals)),
+              value: decode(equals === -1 ? "" : segment.slice(equals + 1)),
+              hasEquals: equals !== -1,
+            };
+          }),
+  };
+}
 export function searchBodies(
   pair: Documents,
   mode: Representation,
   query: string,
   ordinal = 0,
 ): Search {
-  const counts = { request: 0, response: 0 };
+  const counts = { queryParameters: 0, request: 0, response: 0 };
   let total = 0;
   let active: Match | null = null;
   const pattern = matcher(query);
   if (!pattern) return { ...counts, total, active };
-  for (const side of sides) {
-    const text = bodyText(pair[side], mode);
-    if (text === null) continue;
+  const scan = (text: string, region: Region, source: keyof typeof counts) => {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(text))) {
       if (total === ordinal)
         active = {
-          side,
+          region,
           start: match.index,
           end: match.index + match[0].length,
           ordinal,
         };
       total += 1;
-      counts[side] += 1;
+      counts[source] += 1;
     }
+  };
+  if (pair.query.kind === "present")
+    pair.query.rows.forEach((row, index) => {
+      scan(
+        row.key.text,
+        { kind: "query", row: index, field: "key" },
+        "queryParameters",
+      );
+      scan(
+        row.value.text,
+        { kind: "query", row: index, field: "value" },
+        "queryParameters",
+      );
+    });
+  for (const side of sides) {
+    const text = bodyText(pair[side], mode);
+    if (text !== null) scan(text, { kind: "body", side }, side);
   }
   return { ...counts, total, active };
+}
+export function queryWindow(
+  query: QueryDocument,
+  firstRow: number,
+  search = "",
+) {
+  if (query.kind !== "present") return null;
+  const start = Math.max(
+    0,
+    Math.min(firstRow, Math.max(0, query.rows.length - 1)),
+  );
+  const preview = (cell: QueryCell) => {
+    const end = /[\uDC00-\uDFFF]/.test(cell.text[256] ?? "") ? 255 : 256;
+    const text = cell.text.slice(0, end);
+    return {
+      ...cell,
+      text,
+      total: cell.text.length,
+      matches: visibleMatches(cell.text, search, 0, text.length),
+    };
+  };
+  return {
+    start,
+    total: query.rows.length,
+    rawCharacters: query.raw.length,
+    rows: query.rows.slice(start, start + 50).map((row) => ({
+      key: preview(row.key),
+      value: preview(row.value),
+      hasEquals: row.hasEquals,
+    })),
+  };
 }
 export function bodyWindow(text: string, offset: number) {
   let start = Math.max(0, Math.min(offset, Math.max(0, text.length - 1)));

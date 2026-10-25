@@ -10,13 +10,9 @@ import { LogDetails } from "./LogDetails";
 export { hexChunk } from "./DetailChunks";
 
 type Content =
-  | { kind: "primary" }
-  | { kind: "metadata" }
-  | { kind: "raw"; side: BodySide };
+  { kind: "primary" } | { kind: "metadata" } | { kind: "raw"; side: BodySide };
 type Reveal =
-  | { kind: "idle" }
-  | { kind: "pending" }
-  | { kind: "error"; message: string };
+  { kind: "idle" } | { kind: "pending" } | { kind: "error"; message: string };
 export function Details({
   detail,
   offPage,
@@ -78,7 +74,10 @@ export function Details({
         {network && (
           <div hidden={content.kind !== "primary"}>
             <BodyInspector
-              id={detail.event.id}
+              reference={{
+                session_key: detail.session_key,
+                event_id: detail.event.id,
+              }}
               wrap={wrap}
               visible={visible}
               paneVisible={content.kind === "primary"}
@@ -94,12 +93,21 @@ export function Details({
           <p className="break-words text-sm">{detail.event.summary}</p>
         )}
         {content.kind === "metadata" && (
-          <DetailChunks id={detail.event.id} wrap={wrap} />
+          <DetailChunks
+            reference={{
+              session_key: detail.session_key,
+              event_id: detail.event.id,
+            }}
+            wrap={wrap}
+          />
         )}
         {content.kind === "raw" && (
           <DetailChunks
             key={content.side}
-            id={detail.event.id}
+            reference={{
+              session_key: detail.session_key,
+              event_id: detail.event.id,
+            }}
             side={content.side}
             wrap={wrap}
           />

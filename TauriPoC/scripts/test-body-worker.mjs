@@ -42,14 +42,26 @@ try {
     });
   const text = '{"10":9007199254740993,"2":-0,"a":1e+09,"a":"needle"}';
   const body = (original) => ({
+    retained: { kind: "available", bytes: Buffer.byteLength(original) },
+    media: {
+      content_type: null,
+      content_encoding: null,
+      label: "Unspecified media type",
+    },
     kind: "text",
     original,
     bytes: Buffer.byteLength(original),
     basis: "retained",
   });
+  const pair = (request, response, url = null) => ({
+    reference: { session_key: "/synthetic", event_id: "one" },
+    request_info: { method: "POST", url },
+    request,
+    response,
+  });
   const loaded = await read({
     kind: "load",
-    pair: { request: body("request needle"), response: body(text) },
+    pair: pair(body("request needle"), body(text)),
   });
   assert.equal(loaded.side, "response");
   assert.equal(loaded.documents.response.formatting.kind, "ready");
@@ -60,7 +72,7 @@ try {
     ordinal: 1,
   });
   assert.equal(found.search.total, 2);
-  assert.equal(found.search.active.side, "response");
+  assert.equal(found.search.active.region.side, "response");
   const window = await read({
     kind: "window",
     side: "response",
@@ -74,10 +86,79 @@ try {
     (await read({ kind: "copy", side: "response", mode: "original" })).text,
     text,
   );
+  const rawQuery =
+    "q=needle&duplicate=one&duplicate=two&flag&empty=&bad=%C3%28+&long=" +
+    "x".repeat(100000) +
+    "needle";
+  const queryLoaded = await read({
+    kind: "load",
+    pair: pair(
+      body("request needle"),
+      body(text),
+      `https://example.invalid/?${rawQuery}#ignored=needle`,
+    ),
+  });
+  assert.equal(queryLoaded.query, "present");
+  assert.equal(queryLoaded.side, "response");
+  const queryFound = await read({
+    kind: "find",
+    mode: "original",
+    query: "needle",
+    ordinal: 1,
+  });
+  assert.deepEqual(
+    [
+      queryFound.search.queryParameters,
+      queryFound.search.request,
+      queryFound.search.response,
+      queryFound.search.total,
+    ],
+    [2, 1, 1, 4],
+  );
+  assert.deepEqual(queryFound.search.active.region, {
+    kind: "query",
+    row: 6,
+    field: "value",
+  });
+  const queryTail = await read({
+    kind: "query-text",
+    target: { kind: "cell", row: 6, field: "value" },
+    query: "needle",
+    offset: 99800,
+  });
+  assert.ok(queryTail.window.text.endsWith("needle"));
+  assert.ok(queryTail.window.text.length <= 16384);
+  assert.equal(queryTail.window.total, 100006);
+  assert.equal(queryTail.window.matches.length, 1);
+  assert.equal(
+    (await read({ kind: "query-copy", target: { kind: "raw" } })).text,
+    rawQuery,
+  );
+  assert.equal(
+    (
+      await read({
+        kind: "query-copy",
+        target: { kind: "cell", row: 6, field: "value" },
+      })
+    ).text,
+    "x".repeat(100000) + "needle",
+  );
+  const queryPage = await read({
+    kind: "query-window",
+    firstRow: 0,
+    query: "needle",
+  });
+  assert.equal(queryPage.window.rows[5].value.text, "%C3%28+");
+  assert.equal(
+    queryPage.window.rows[5].value.decoding,
+    "literal-invalid-encoding",
+  );
+  assert.equal(queryPage.window.rows[6].value.total, 100006);
+  assert.equal(queryPage.window.rows[6].value.text.length, 256);
   const flood = "x".repeat(32 * 1024 * 1024);
   await read({
     kind: "load",
-    pair: { request: body(flood), response: body(flood) },
+    pair: pair(body(flood), body(flood)),
   });
   let timerRan = false;
   const pending = read({

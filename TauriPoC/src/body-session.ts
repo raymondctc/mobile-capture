@@ -4,9 +4,11 @@ import {
   bodyWindow,
   initialSide,
   prepareDocuments,
+  queryWindow,
   searchBodies,
   visibleMatches,
   type Documents,
+  type QueryTarget,
   type Representation,
 } from "./body-document";
 
@@ -28,22 +30,40 @@ export type Operation =
       query: string;
       offset: number;
     }
-  | { kind: "copy"; side: BodySide; mode: Representation };
+  | { kind: "copy"; side: BodySide; mode: Representation }
+  | { kind: "query-window"; firstRow: number; query: string }
+  | {
+      kind: "query-text";
+      target: QueryTarget;
+      offset: number;
+      query: string;
+    }
+  | {
+      kind: "query-copy";
+      target: QueryTarget;
+    };
 export type Reply =
-  | { kind: "loaded"; documents: DocumentInfo; side: BodySide }
+  | {
+      kind: "loaded";
+      documents: DocumentInfo;
+      side: BodySide;
+      query: Documents["query"]["kind"];
+    }
   | { kind: "found"; search: ReturnType<typeof searchBodies> }
   | { kind: "window"; window: Window | null }
-  | { kind: "copy"; text: string };
+  | { kind: "copy"; text: string }
+  | { kind: "query-window"; window: ReturnType<typeof queryWindow> };
 export type Request = { id: number; operation: Operation };
 export type Response = { id: number } & (
-  | { kind: "result"; reply: Reply }
-  | { kind: "error"; message: string }
+  { kind: "result"; reply: Reply } | { kind: "error"; message: string }
 );
 
 function info(document: Documents[BodySide]): BodyInfo {
   if (document.kind !== "text") return document;
   return {
     kind: "text",
+    retained: document.retained,
+    media: document.media,
     bytes: document.bytes,
     basis: document.basis,
     formatting:
@@ -64,10 +84,47 @@ export function createSession() {
           response: info(documents.response),
         },
         side: initialSide(documents),
+        query: documents.query.kind,
       };
     }
     if (!documents) throw new Error("Body documents are not loaded");
     switch (operation.kind) {
+      case "query-window":
+        return {
+          kind: "query-window",
+          window: queryWindow(
+            documents.query,
+            operation.firstRow,
+            operation.query,
+          ),
+        };
+      case "query-text":
+      case "query-copy": {
+        if (documents.query.kind !== "present")
+          throw new Error("Query parameters are unavailable");
+        const target = operation.target;
+        const text =
+          target.kind === "raw"
+            ? documents.query.raw
+            : documents.query.rows[target.row][target.field].text;
+        if (operation.kind === "query-copy") return { kind: "copy", text };
+        const window = bodyWindow(text, operation.offset);
+        return {
+          kind: "window",
+          window: {
+            ...window,
+            matches:
+              target.kind === "raw"
+                ? []
+                : visibleMatches(
+                    text,
+                    operation.query,
+                    window.start,
+                    window.end,
+                  ),
+          },
+        };
+      }
       case "find":
         return {
           kind: "found",

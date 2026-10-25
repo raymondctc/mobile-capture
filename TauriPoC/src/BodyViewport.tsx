@@ -27,11 +27,13 @@ export function BodyWindow({
   onOffset,
   wrap,
   active = null,
+  label = "Body content",
 }: {
   window: Window;
   onOffset: (offset: number) => void;
   wrap: boolean;
   active?: Match | null;
+  label?: string;
 }) {
   const runs: ReactNode[] = [];
   let position = window.start;
@@ -57,7 +59,7 @@ export function BodyWindow({
   return (
     <div className="space-y-2">
       <pre
-        aria-label="Body content"
+        aria-label={label}
         tabIndex={0}
         className={`min-h-32 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 select-text ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}
       >

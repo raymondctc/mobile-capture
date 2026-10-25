@@ -100,15 +100,32 @@ const event = (id: string) => ({
   original_timestamp: null,
   received_at: null,
 });
+const media = {
+  content_type: null,
+  label: "Unspecified media type",
+  content_encoding: null,
+};
 const bodyPair = (response = "body", request = "request") => ({
+  reference: { session_key: "/evidence/A", event_id: "one" },
+  request_info: { method: "GET", url: "https://example.invalid/" },
   request: {
     kind: "text",
+    retained: {
+      kind: "available",
+      bytes: new TextEncoder().encode(request).length,
+    },
+    media,
     original: request,
     bytes: new TextEncoder().encode(request).length,
     basis: "retained",
   },
   response: {
     kind: "text",
+    retained: {
+      kind: "available",
+      bytes: new TextEncoder().encode(response).length,
+    },
+    media,
     original: response,
     bytes: new TextEncoder().encode(response).length,
     basis: "decoded",
@@ -116,6 +133,7 @@ const bodyPair = (response = "body", request = "request") => ({
 });
 product.bodyDocuments = async () => bodyPair();
 const detail = (id: string) => ({
+  session_key: "/evidence/A",
   event: event(id),
   detail_bytes: 10,
   detail_complete: true,
@@ -1010,7 +1028,7 @@ async function checkTimeline() {
   await act(async () => old.resolve(detail("one")));
   assert.equal(screen.queryByText("one", { selector: "dd" }), null);
   await user.keyboard("{Control>}f{/Control}");
-  await screen.findByRole("search", { name: "Find in both bodies" });
+  await screen.findByRole("search", { name: "Find in query and both bodies" });
   await user.keyboard("{Escape}");
   assert.equal(screen.queryByRole("search"), null);
   assert.ok(screen.getByRole("dialog", { name: "Event details" }));
@@ -1084,7 +1102,7 @@ async function checkDetails() {
   await user.keyboard("{Control>}f{/Control}");
   await act(async () => nativeRead.resolve(bodyPair()));
   const loadedFind = await screen.findByRole("textbox", {
-    name: "Find in request and response",
+    name: "Find in query, request and response",
   });
   await waitFor(() =>
     assert.equal(
@@ -1126,7 +1144,7 @@ async function checkDetails() {
   assert.ok(copies.at(-1)!.endsWith('NEEDLE"\n}'));
   await user.keyboard("{Meta>}f{/Meta}");
   const find = screen.getByRole("textbox", {
-    name: "Find in request and response",
+    name: "Find in query, request and response",
   });
   assert.equal(document.activeElement, find);
   const visibleFocus = find.focus.bind(find);
@@ -1239,7 +1257,7 @@ async function checkDetails() {
   await screen.findByRole("tab", { name: "Response" });
   await user.keyboard("{Meta>}f{/Meta}");
   const scopedFind = screen.getByRole("textbox", {
-    name: "Find in request and response",
+    name: "Find in query, request and response",
   });
   await user.type(scopedFind, '": ');
   await waitFor(() =>
@@ -1278,11 +1296,13 @@ async function checkDetails() {
     "true",
   );
   product.bodyDocuments = async () => ({
+    ...bodyPair(),
     request: bodyPair().request,
     response: {
       kind: "unavailable",
       reason: "Not recorded",
-      retained_available: false,
+      retained: { kind: "unavailable", reason: "Not recorded" },
+      media,
     },
   });
   mounted.rerender(
@@ -1295,12 +1315,21 @@ async function checkDetails() {
   );
   const bodyCalls: unknown[] = [];
   product.bodyDocuments = async () => ({
+    ...bodyPair(),
     request: {
       kind: "unavailable",
       reason: "Missing request",
-      retained_available: false,
+      retained: { kind: "unavailable", reason: "Not recorded" },
+      media,
     },
-    response: { kind: "binary", reason: "Binary body", bytes: 65539 },
+    response: {
+      kind: "binary",
+      reason: "Binary body",
+      bytes: 65539,
+      basis: "retained",
+      retained: { kind: "available", bytes: 65539 },
+      media,
+    },
   });
   product.body = async (...args) => {
     bodyCalls.push(args);
@@ -1318,13 +1347,15 @@ async function checkDetails() {
     <Details key="binary" detail={detail("binary")} offPage={false} wrap />,
   );
   await screen.findByText(/Binary body/);
-  await user.click(
-    screen.getByRole("button", { name: "Retained bytes · hexadecimal" }),
-  );
   await screen.findByText(/00 ff 41/, { selector: "pre" });
   await user.click(screen.getByRole("button", { name: "Next 64 KiB" }));
   await waitFor(() =>
-    assert.deepEqual(bodyCalls.at(-1), ["binary", "response", 65536]),
+    assert.deepEqual(bodyCalls.at(-1), [
+      { session_key: "/evidence/A", event_id: "binary" },
+      "response",
+      65536,
+      65536,
+    ]),
   );
   const abandoned = deferred();
   product.bodyDocuments = () => abandoned.promise;
@@ -1411,7 +1442,7 @@ async function checkDetails() {
   );
   await user.click(await screen.findByRole("button", { name: "Find" }));
   const raceInput = screen.getByRole("textbox", {
-    name: "Find in request and response",
+    name: "Find in query, request and response",
   });
   await user.type(raceInput, "old");
   await waitFor(() => assert.equal(staleReadStarted, true));
@@ -1427,7 +1458,13 @@ async function checkDetails() {
         total: 99,
         request: 99,
         response: 0,
-        active: { side: "request", start: 0, end: 3, ordinal: 98 },
+        queryParameters: 0,
+        active: {
+          region: { kind: "body", side: "request" },
+          start: 0,
+          end: 3,
+          ordinal: 98,
+        },
       },
     }),
   );
@@ -1441,9 +1478,277 @@ async function checkDetails() {
   mounted.unmount();
   assert.equal(disposed, true);
   bodyDocuments.create = createOwner;
+  await checkQueryAndBinaryDetails();
   product.bodyDocuments = async () => bodyPair();
   console.log(
     "Detail DOM checks passed. Response-first text and empty bodies, complete Find and copy, lexical JSON fidelity, cross-tab reverse/wrap, tail highlights, binary byte paging, copy errors, full log reads, and disposed body reads.",
+  );
+}
+async function checkQueryAndBinaryDetails() {
+  const rawQuery =
+    "q=a+b&encoded=a%2Bb&dup=one&dup=two&flag&empty=&bad=%C3%28+&" +
+    Array.from(
+      { length: 80 },
+      (_, index) =>
+        `k${index}=${index === 79 ? "x".repeat(80000) + "needle" : "value"}`,
+    ).join("&");
+  const copies: string[] = [];
+  product.copyText = async (text) => {
+    copies.push(text);
+  };
+  product.bodyDocuments = async () => ({
+    ...bodyPair('{"value":"response needle"}', '{"value":"request needle"}'),
+    request_info: {
+      method: "POST",
+      url: `https://example.invalid/?${rawQuery}#ignored=needle`,
+    },
+  });
+  const mounted = render(
+    <Details key="query" detail={detail("query")} offPage={false} wrap />,
+  );
+  await screen.findByRole("tab", { name: "Response" });
+  assert.equal(
+    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    "true",
+  );
+  await user.click(screen.getByRole("tab", { name: "Request" }));
+  const table = await screen.findByRole("table", {
+    name: "Decoded query parameters",
+  });
+  assert.ok(within(table).getAllByRole("row").length <= 51);
+  assert.ok(within(table).getByText("a b"));
+  assert.ok(within(table).getByText("a+b"));
+  assert.ok(screen.getByText(/Invalid percent or UTF-8 encoding/));
+  assert.ok(screen.getByText("(no equals sign)"));
+  await user.click(screen.getByRole("button", { name: "Copy original query" }));
+  await waitFor(() => assert.equal(copies.at(-1), rawQuery));
+  await user.keyboard("{Control>}f{/Control}");
+  const input = screen.getByRole("textbox", {
+    name: "Find in query, request and response",
+  });
+  await user.type(input, "needle");
+  await waitFor(() =>
+    assert.match(
+      screen.getByRole("search").textContent!,
+      /1 of 3 matches · Query parameters 1 · Request body 1 · Response body 1/,
+    ),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Request (2)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  const tail = await screen.findByLabelText("Query field content");
+  await waitFor(() => assert.ok(tail.textContent!.endsWith("needle")));
+  assert.ok(tail.textContent!.length <= 16384);
+  assert.ok(tail.querySelector("mark"));
+  assert.ok(screen.getByText(/of 87/));
+  await user.click(screen.getByRole("button", { name: "Copy complete value" }));
+  await waitFor(() =>
+    assert.equal(copies.at(-1), "x".repeat(80000) + "needle"),
+  );
+  await user.click(screen.getByRole("button", { name: "Previous match" }));
+  await waitFor(() =>
+    assert.equal(
+      screen
+        .getByRole("tab", { name: "Response (1)" })
+        .getAttribute("aria-selected"),
+      "true",
+    ),
+  );
+  assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/);
+  await user.click(screen.getByRole("button", { name: "Original" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Response (1)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.click(screen.getByRole("button", { name: "Next match" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await user.click(screen.getByRole("button", { name: "Formatted" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Request (2)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.click(screen.getByRole("tab", { name: "Response (1)" }));
+  await user.click(screen.getByRole("button", { name: "Original" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Response (1)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.click(screen.getByRole("button", { name: "Next match" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await user.click(screen.getByRole("button", { name: "Original query" }));
+  const raw = await screen.findByLabelText("Original query");
+  assert.ok(raw.textContent!.length <= 16384);
+  assert.ok(raw.textContent!.startsWith("q=a+b&encoded=a%2Bb"));
+  product.bodyDocuments = async () => ({
+    ...bodyPair("response", ""),
+    request_info: { method: "GET", url: "https://example.invalid/?q=value" },
+  });
+  mounted.rerender(
+    <Details
+      key="get-query-only"
+      detail={detail("get-query-only")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByRole("tab", { name: "Request" });
+  await user.click(screen.getByRole("tab", { name: "Request" }));
+  await screen.findByRole("table", { name: "Decoded query parameters" });
+  assert.equal(screen.queryByText("Empty body"), null);
+  assert.equal(
+    screen.queryByRole("button", { name: "Copy original", exact: true }),
+    null,
+  );
+  assert.equal(screen.queryByLabelText("Body content"), null);
+  mounted.unmount();
+
+  product.bodyDocuments = async () => ({
+    ...bodyPair(),
+    response: {
+      kind: "unavailable",
+      reason: "Unsupported content encoding: br",
+      retained: { kind: "available", bytes: 65539 },
+      media: {
+        content_type: "application/x-protobuf",
+        label: "Protobuf",
+        content_encoding: "br",
+      },
+    },
+  });
+  const calls: unknown[] = [];
+  product.body = async (...args) => {
+    calls.push(args);
+    return {
+      body: { available: true },
+      chunk: {
+        offset: args[2],
+        total_bytes: 65539,
+        data_base64: args[2] === 0 ? "AP9B" : "AA==",
+        next_offset: args[2] === 0 ? args[3] : null,
+      },
+    };
+  };
+  const actions: unknown[] = [];
+  product.retainedBody = async (...args) => {
+    actions.push(args);
+    return { kind: "copied", bytes: 65539 };
+  };
+  const binary = render(
+    <Details
+      key="retained-export"
+      detail={detail("retained-export")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByText(
+    /Protobuf · application\/x-protobuf · 65,539 retained bytes · Content encoding br/,
+  );
+  await screen.findByText(/00 ff 41/, { selector: "pre" });
+  await user.click(screen.getByRole("button", { name: "Base64", exact: true }));
+  await screen.findByText("AP9B", { selector: "pre" });
+  assert.equal((calls.at(-1) as unknown[])[3], 65535);
+  await user.click(screen.getByRole("button", { name: "Next 65,535 bytes" }));
+  await waitFor(() => assert.equal((calls.at(-1) as unknown[])[2], 65535));
+  await user.click(screen.getByRole("button", { name: "Hex", exact: true }));
+  await waitFor(() =>
+    assert.deepEqual((calls.at(-1) as unknown[]).slice(2), [0, 65536]),
+  );
+  await user.click(screen.getByRole("button", { name: "Copy Base64" }));
+  await screen.findByText(/Copied complete Base64/);
+  assert.deepEqual(actions.at(-1), [
+    { session_key: "/evidence/A", event_id: "retained-export" },
+    "response",
+    "copy-base64",
+  ]);
+  product.retainedBody = async () => ({ kind: "cancelled" });
+  await user.click(screen.getByRole("button", { name: "Save original body" }));
+  await screen.findByText("Save cancelled.");
+  product.retainedBody = async () => {
+    throw new Error("Destination refused");
+  };
+  await user.click(screen.getByRole("button", { name: "Save original body" }));
+  await screen.findByText(/Save failed. Destination refused/);
+  const held = deferred();
+  product.retainedBody = () => held.promise;
+  await user.click(screen.getByRole("button", { name: "Save original body" }));
+  await screen.findByText("Preparing retained body…");
+  binary.unmount();
+  product.bodyDocuments = async () => bodyPair("fresh response");
+  const fresh = render(
+    <Details
+      key="new-session"
+      detail={{ ...detail("retained-export"), session_key: "/evidence/B" }}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByRole("tab", { name: "Response" });
+  await act(async () =>
+    held.resolve({
+      kind: "saved",
+      path: "/exports/response-body.bin",
+      bytes: 65539,
+    }),
+  );
+  assert.equal(screen.queryByText(/Saved original body/), null);
+  fresh.unmount();
+  const createOwner = bodyDocuments.create;
+  bodyDocuments.create = () => {
+    const owner = createOwner();
+    return {
+      ...owner,
+      read: async (operation: Parameters<typeof owner.read>[0]) => {
+        if (operation.kind === "query-window")
+          throw new Error("Query worker failed");
+        return owner.read(operation);
+      },
+    };
+  };
+  product.bodyDocuments = async () => ({
+    ...bodyPair(),
+    request_info: { method: "GET", url: "https://example.invalid/?q=value" },
+  });
+  const failed = render(
+    <Details
+      key="query-error"
+      detail={detail("query-error")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByRole("tab", { name: "Request" });
+  await user.click(screen.getByRole("tab", { name: "Request" }));
+  await screen.findByRole("alert", { name: "" });
+  assert.ok(screen.getByText("Query worker failed"));
+  failed.unmount();
+  bodyDocuments.create = createOwner;
+
+  product.bodyDocuments = async () => bodyPair();
+  console.log(
+    "Query and retained-export DOM checks passed. Form rows, bounded tail highlights and full copies, three-source wrap, format selection, raw fidelity, Base64 alignment, cancellation/errors and disposed exports.",
   );
 }
 async function checkModal() {

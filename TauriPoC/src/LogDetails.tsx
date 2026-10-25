@@ -30,7 +30,10 @@ export function LogDetails({
       const parts: string[] = [];
       let next: number | null = 0;
       while (next !== null && !disposed) {
-        const chunk = await product.detailChunk(detail.event.id, next);
+        const chunk = await product.detailChunk(
+          { session_key: detail.session_key, event_id: detail.event.id },
+          next,
+        );
         parts.push(
           decoder.decode(decodeChunk(chunk.data_base64), {
             stream: chunk.next_offset !== null,
