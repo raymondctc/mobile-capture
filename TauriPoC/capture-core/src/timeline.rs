@@ -58,6 +58,8 @@ pub(crate) fn events_controlled(
                         None,
                     )
                 } else {
+                    detail["level"] = json!("unknown");
+                    detail["message"] = json!(text);
                     detail["format"] = json!("unparsed");
                     detail["parse_error"] = json!("No supported timestamped log format");
                     ("unparsed_log".into(), text.to_string(), None)
@@ -366,6 +368,24 @@ fn truncate(text: &mut String, max: usize) {
         text.truncate(end);
     }
 }
+fn truncate_json(text: &mut String, budget: usize) {
+    let mut used = 2;
+    let mut end = 0;
+    for character in text.chars() {
+        let bytes = match character {
+            '"' | '\\' => 2,
+            '\n' | '\r' | '\t' | '\u{08}' | '\u{0c}' => 2,
+            c if c <= '\u{1f}' => 6,
+            c => c.len_utf8(),
+        };
+        if used + bytes > budget {
+            break;
+        }
+        used += bytes;
+        end += character.len_utf8();
+    }
+    text.truncate(end);
+}
 pub(crate) fn preview(event: &mut Event) {
     const EVENT_BOUND: usize = 6 * 1024 - 96;
     use base64::{engine::general_purpose::STANDARD, Engine};
@@ -388,6 +408,32 @@ pub(crate) fn preview(event: &mut Event) {
             _ => {}
         }
     }
+    let compact = |detail: &serde_json::Value| {
+        let mut fields = serde_json::Map::new();
+        for (key, bound) in [
+            ("level", 16),
+            ("tag", 96),
+            ("message", 256),
+            ("method", 16),
+            ("url", 256),
+        ] {
+            if let Some(text) = detail[key].as_str() {
+                let mut text = text.to_owned();
+                truncate_json(&mut text, bound);
+                fields.insert(key.into(), json!(text));
+            }
+        }
+        for key in ["pid", "tid", "status", "duration_ms"] {
+            if detail[key]
+                .as_f64()
+                .is_some_and(|n| n.is_finite() && n >= 0.)
+            {
+                fields.insert(key.into(), detail[key].clone());
+            }
+        }
+        fields
+    };
+    let presentation = compact(&event.detail);
     let mut bodies = serde_json::Map::new();
     for key in ["request_body", "response_body"] {
         if let Some(body) = event.detail.get(key) {
@@ -447,10 +493,10 @@ pub(crate) fn preview(event: &mut Event) {
     truncate(&mut event.kind, 128);
     event.detail["snapshot_preview"] = json!(true);
     if serde_json::to_vec(event).map_or(true, |v| v.len() > EVENT_BOUND) {
-        let mut retained = serde_json::Map::new();
+        let mut retained = presentation.clone();
         retained.insert("snapshot_preview".into(), json!(true));
         retained.insert("detail_preview_omitted".into(), json!(true));
-        for key in ["request_body", "response_body", "method", "url", "status"] {
+        for key in ["request_body", "response_body"] {
             if let Some(value) = event.detail.get(key) {
                 retained.insert(key.into(), value.clone());
             }
@@ -458,10 +504,25 @@ pub(crate) fn preview(event: &mut Event) {
         event.detail = serde_json::Value::Object(retained);
     }
     if serde_json::to_vec(event).map_or(true, |v| v.len() > EVENT_BOUND) {
-        event.detail = json!({"snapshot_preview":true,"detail_preview_omitted":true});
-        truncate(&mut event.summary, 256);
-        truncate(&mut event.raw_ref, 128);
-        truncate(&mut event.kind, 32);
+        event.detail = serde_json::Value::Object(presentation);
+        event.detail["snapshot_preview"] = json!(true);
+        event.detail["detail_preview_omitted"] = json!(true);
+        for (text, budget) in [
+            (&mut event.summary, 512),
+            (&mut event.raw_ref, 256),
+            (&mut event.kind, 64),
+            (&mut event.id, 128),
+            (&mut event.source, 32),
+            (&mut event.timestamp, 64),
+        ] {
+            truncate_json(text, budget);
+        }
+        for text in [&mut event.original_timestamp, &mut event.received_at]
+            .into_iter()
+            .flatten()
+        {
+            truncate_json(text, 64);
+        }
     }
 }
 

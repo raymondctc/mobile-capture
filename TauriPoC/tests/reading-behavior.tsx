@@ -15,6 +15,7 @@ import {
 import { userEvent } from "@testing-library/user-event";
 import { Capture } from "../src/Capture";
 import { Details } from "../src/Details";
+import { bodyDocuments } from "../src/body-owner";
 import { Timeline } from "../src/Timeline";
 import { OperationStatus } from "../src/Operation";
 import { Dialog } from "../src/ui";
@@ -29,6 +30,19 @@ import { product } from "../src/product";
 import { initialDraft } from "../src/state";
 
 api.updateStatus = async () => ({ state: "unconfigured" });
+
+const revealedMatches: {
+  element: HTMLElement;
+  options: boolean | ScrollIntoViewOptions | undefined;
+  focused: Element | null;
+}[] = [];
+HTMLElement.prototype.scrollIntoView = function (options) {
+  revealedMatches.push({
+    element: this,
+    options,
+    focused: document.activeElement,
+  });
+};
 
 const limits = { bytes: 32000000, records: 100000, duration_ms: 120000 };
 const policy = {
@@ -94,13 +108,48 @@ const event = (id: string) => ({
   kind: "http_request",
   summary: `GET https://example.invalid/${id}`,
   raw_ref: "flows:1",
+  detail: {},
   clock_uncertainty_ms: null,
   original_timestamp: null,
   received_at: null,
 });
+const media = {
+  content_type: null,
+  label: "Unspecified media type",
+  content_encoding: null,
+};
+const bodyPair = (response = "body", request = "request") => ({
+  reference: { session_key: "/evidence/A", event_id: "one" },
+  request_info: { method: "GET", url: "https://example.invalid/" },
+  request: {
+    kind: "text",
+    retained: {
+      kind: "available",
+      bytes: new TextEncoder().encode(request).length,
+    },
+    media,
+    original: request,
+    bytes: new TextEncoder().encode(request).length,
+    basis: "retained",
+  },
+  response: {
+    kind: "text",
+    retained: {
+      kind: "available",
+      bytes: new TextEncoder().encode(response).length,
+    },
+    media,
+    original: response,
+    bytes: new TextEncoder().encode(response).length,
+    basis: "decoded",
+  },
+});
+product.bodyDocuments = async () => bodyPair();
 const detail = (id: string) => ({
+  session_key: "/evidence/A",
   event: event(id),
   detail_bytes: 10,
+  detail_complete: true,
   bodies: [],
 });
 const progress = {
@@ -184,7 +233,9 @@ async function checkTitlebarDragging() {
     {
       addEventListener(type: string, listener: EventListener) {
         document.addEventListener(type, listener);
-        removeListeners.push(() => document.removeEventListener(type, listener));
+        removeListeners.push(() =>
+          document.removeEventListener(type, listener),
+        );
       },
     },
     HTMLElement,
@@ -255,7 +306,10 @@ async function checkTitlebarDragging() {
       target: within(toolbar).getByRole("combobox", { name: "Log app" }),
     },
     { name: "Device select", target: within(toolbar).getByLabelText("Device") },
-    { name: "Sources select", target: within(toolbar).getByLabelText("Sources") },
+    {
+      name: "Sources select",
+      target: within(toolbar).getByLabelText("Sources"),
+    },
   ];
   for (const { name, target } of blockedTargets) {
     fireEvent.mouseDown(target, { button: 0, detail: 1, ...position });
@@ -891,7 +945,39 @@ async function checkTimeline() {
   const requests = new Map<string, ReturnType<typeof deferred>>();
   product.query = async (query) => {
     queries.push(query);
-    return query.cursor ? { ...page, rows: [], next_cursor: null } : page;
+    return query.cursor
+      ? { ...page, rows: [], next_cursor: null }
+      : {
+          ...page,
+          rows: [
+            {
+              ...page.rows[0],
+              event: {
+                ...page.rows[0].event,
+                detail: { method: "GET", status: 201, duration_ms: 125 },
+              },
+            },
+            page.rows[1],
+            {
+              sequence: 3,
+              event: {
+                ...event("log-error"),
+                source: "logs",
+                summary: "Error tag: message",
+                detail: { level: "E", tag: "Error tag", message: "message" },
+              },
+            },
+            {
+              sequence: 4,
+              event: {
+                ...event("log-unknown"),
+                source: "logs",
+                summary: "unparsed message",
+                detail: {},
+              },
+            },
+          ],
+        };
   };
   product.detail = (id) => {
     const pending = deferred();
@@ -903,6 +989,28 @@ async function checkTimeline() {
   await screen.findByRole("button", {
     name: /GET https:\/\/example.invalid\/one/,
   });
+  assert.ok(screen.getByText("Status 201"));
+  assert.ok(screen.getByText("Duration 125 ms"));
+  assert.ok(
+    screen
+      .getByText("Error", { selector: "span" })
+      .className.includes("text-red"),
+  );
+  assert.ok(screen.getByText("Unknown", { selector: "span" }));
+  assert.ok(
+    screen.getByText("Error tag").className.includes("text-muted-foreground"),
+  );
+  await user.click(screen.getByRole("button", { name: "Older page" }));
+  await waitFor(() => assert.equal(queries.at(-1).cursor, "older"));
+  await user.selectOptions(screen.getByLabelText("Log level filter"), "E");
+  await waitFor(() => assert.equal(queries.at(-1).log_level, "E"));
+  assert.equal(queries.at(-1).cursor, null);
+  assert.equal(
+    screen.getByRole("button", { name: "Newer page" }).disabled,
+    true,
+  );
+  await user.selectOptions(screen.getByLabelText("Log level filter"), "");
+  await waitFor(() => assert.equal(queries.at(-1).log_level, null));
   await user.click(screen.getByRole("button", { name: "Older page" }));
   await waitFor(() => assert.equal(queries.at(-1).cursor, "older"));
   await user.click(screen.getByRole("checkbox", { name: "Follow latest" }));
@@ -932,6 +1040,31 @@ async function checkTimeline() {
   await screen.findByText("two", { selector: "dd" });
   await act(async () => old.resolve(detail("one")));
   assert.equal(screen.queryByText("one", { selector: "dd" }), null);
+  await user.keyboard("{Control>}f{/Control}");
+  await screen.findByRole("search", { name: "Find in query and both bodies" });
+  await user.keyboard("{Escape}");
+  assert.equal(screen.queryByRole("search"), null);
+  assert.ok(screen.getByRole("dialog", { name: "Event details" }));
+  const second = screen.getByRole("button", {
+    name: /GET https:\/\/example.invalid\/two/,
+  });
+  for (const pane of [
+    "Full metadata and headers",
+    "Retained bytes · hexadecimal",
+  ]) {
+    await user.keyboard("{Control>}f{/Control}");
+    await user.click(screen.getByRole("button", { name: pane }));
+    await user.keyboard("{Escape}");
+    assert.equal(
+      screen.queryByRole("dialog", { name: "Event details" }) === null,
+      true,
+      `Escape closes the inspector when Find is hidden behind ${pane}`,
+    );
+    assert.equal(document.activeElement, second);
+    await user.click(second);
+    await act(async () => requests.get("two")!.resolve(detail("two")));
+    await screen.findByText("two", { selector: "dd" });
+  }
   await user.click(screen.getByRole("button", { name: "Older page" }));
   await screen.findByText("Selected outside this page");
   await user.click(screen.getByRole("button", { name: "Close event details" }));
@@ -969,78 +1102,276 @@ async function checkTimeline() {
   );
 }
 async function checkDetails() {
-  const bodyCalls: unknown[] = [];
-  const metadataCalls: unknown[] = [];
-  product.detailChunk = async (...args) => {
-    metadataCalls.push(args);
-    return emptyChunk;
-  };
-  product.body = async (...args) => {
-    bodyCalls.push(args);
-    return {
-      chunk: {
-        offset: args[2],
-        total_bytes: 65539,
-        data_base64: args[3] ? "ZGVjb2RlZA==" : "AP9B",
-        next_offset: args[2] === 0 ? 65536 : null,
-      },
-    };
-  };
-  const binary = {
-    ...detail("binary"),
-    bodies: [
-      {
-        side: "response",
-        available: true,
-        bytes: 65539,
-        text: false,
-        content_encoding: "gzip",
-        decoded_available: true,
-        reason: null,
-        decoded_reason: null,
-      },
-    ],
-  };
-  const mounted = render(
-    <Details key="binary" detail={binary} offPage={false} wrap />,
-  );
-  await user.click(screen.getByRole("button", { name: /Response/ }));
-  await waitFor(() =>
-    assert.match(
-      screen.getByText(/00000000/, { selector: "pre" }).textContent!,
-      /00 ff 41/,
-    ),
-  );
-  await user.click(screen.getByRole("button", { name: "Next 64 KiB" }));
-  await waitFor(() =>
-    assert.deepEqual(bodyCalls.at(-1), ["binary", "response", 65536, false]),
-  );
-  await user.click(screen.getByRole("button", { name: "Decode gzip" }));
-  await screen.findByText("decoded", { selector: "pre" });
-  assert.deepEqual(bodyCalls.at(-1), ["binary", "response", 0, true]);
-  const reveal = deferred();
-  product.reveal = async () => reveal.promise;
-  await user.click(screen.getByRole("button", { name: "Reveal raw source" }));
-  assert.equal(
-    screen.getByRole("button", { name: "Revealing raw source…" }).disabled,
-    true,
-  );
-  await act(async () => reveal.reject(new Error("reveal failed")));
-  assert.match(screen.getByRole("alert").textContent!, /reveal failed/);
-  mounted.rerender(
+  const nativeRead = deferred();
+  product.bodyDocuments = () => nativeRead.promise;
+  const loading = render(
     <Details
-      key="replacement"
-      detail={detail("replacement")}
+      key="loading-find"
+      detail={detail("loading-find")}
       offPage={false}
       wrap
     />,
   );
+  await user.keyboard("{Control>}f{/Control}");
+  await act(async () => nativeRead.resolve(bodyPair()));
+  const loadedFind = await screen.findByRole("textbox", {
+    name: "Find in query, request and response",
+  });
   await waitFor(() =>
-    assert.deepEqual(metadataCalls.at(-1), ["replacement", 0]),
+    assert.equal(
+      document.activeElement === loadedFind,
+      true,
+      "CmdF during body loading focuses Find after readiness",
+    ),
   );
-  assert.equal(screen.queryByRole("alert"), null);
+  loading.unmount();
+  product.detailChunk = async () => emptyChunk;
+  product.body = async () => ({ body: { available: true }, chunk: emptyChunk });
+  const original =
+    '{"10":9007199254740993,"2":-0,"e":1e+09,"first":"needle","tail":"' +
+    "x".repeat(90000) +
+    'NEEDLE"}';
+  const pair = bodyPair(original, "request needle");
+  const copies: string[] = [];
+  product.bodyDocuments = async () => pair;
+  product.copyText = async (text) => {
+    copies.push(text);
+  };
+  const mounted = render(
+    <Details key="one" detail={detail("one")} offPage={false} wrap />,
+  );
+  await screen.findByRole("tab", { name: "Response" });
+  assert.equal(
+    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    "true",
+  );
+  assert.match(
+    (await screen.findByLabelText("Body content")).textContent!,
+    /9007199254740993/,
+  );
+  assert.ok(screen.getByLabelText("Body content").textContent!.length < 20000);
+  await user.click(screen.getByRole("button", { name: "Copy original" }));
+  await waitFor(() => assert.equal(copies.at(-1), original));
+  await user.click(screen.getByRole("button", { name: "Copy formatted" }));
+  await waitFor(() => assert.match(copies.at(-1)!, /"10": 9007199254740993/));
+  assert.ok(copies.at(-1)!.endsWith('NEEDLE"\n}'));
+  await user.keyboard("{Meta>}f{/Meta}");
+  const find = screen.getByRole("textbox", {
+    name: "Find in query, request and response",
+  });
+  assert.equal(document.activeElement, find);
+  const visibleFocus = find.focus.bind(find);
+  Object.defineProperty(find, "focus", {
+    configurable: true,
+    value: () => {
+      if (!find.closest("[hidden],[inert]")) visibleFocus();
+    },
+  });
+  for (const pane of [
+    "Full metadata and headers",
+    "Retained bytes · hexadecimal",
+  ]) {
+    await user.click(screen.getByRole("button", { name: pane }));
+    await user.keyboard("{Meta>}f{/Meta}");
+    assert.equal(find.closest("[hidden]"), null);
+    await waitFor(() =>
+      assert.equal(
+        document.activeElement === find,
+        true,
+        `CmdF focuses visible Find after returning from ${pane}`,
+      ),
+    );
+  }
+  await user.type(find, "needle");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Request (1)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.keyboard("{Enter}");
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Response (2)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  for (const representation of ["Original", "Formatted"]) {
+    await user.click(screen.getByRole("button", { name: representation }));
+    await waitFor(() =>
+      assert.equal(
+        screen
+          .getByRole("tab", { name: "Response (2)" })
+          .getAttribute("aria-selected"),
+        "true",
+        "Changing format keeps the selected response while Find is open",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Copy original" }));
+    await waitFor(() => assert.equal(copies.at(-1), original));
+  }
+  await user.click(find);
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
+  );
+  await waitFor(() =>
+    assert.match(screen.getByLabelText("Body content").textContent!, /NEEDLE/),
+  );
+  assert.ok(screen.getByLabelText("Body content").querySelector("mark"));
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await user.keyboard("{Shift>}{Enter}{/Shift}");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
+  );
+  await user.keyboard("{Escape}");
+  assert.equal(screen.queryByRole("search"), null);
+  assert.equal(
+    document.activeElement,
+    screen.getByRole("button", { name: "Find" }),
+  );
+  product.copyText = async () => {
+    throw new Error("clipboard unavailable");
+  };
+  await user.click(screen.getByRole("button", { name: "Copy original" }));
+  assert.match(
+    (await screen.findByRole("alert")).textContent!,
+    /clipboard unavailable/,
+  );
+  const reveal = deferred();
+  product.reveal = async () => reveal.promise;
+  const revealButton = screen.getByRole("button", {
+    name: "Reveal raw source",
+  });
+  assert.equal(revealButton.parentElement!.tagName, "FOOTER");
+  await user.click(revealButton);
+  await act(async () => reveal.reject(new Error("reveal failed")));
+  assert.ok(
+    screen
+      .getAllByRole("alert")
+      .some((node) => node.textContent!.includes("reveal failed")),
+  );
+  product.bodyDocuments = async () =>
+    bodyPair('{"value":1}', 'plain ": " and another ": " token');
+  mounted.rerender(
+    <Details
+      key="format-scope"
+      detail={detail("format-scope")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByRole("tab", { name: "Response" });
+  await user.keyboard("{Meta>}f{/Meta}");
+  const scopedFind = screen.getByRole("textbox", {
+    name: "Find in query, request and response",
+  });
+  await user.type(scopedFind, '": ');
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await user.click(screen.getByRole("tab", { name: "Response (1)" }));
+  await user.click(screen.getByRole("button", { name: "Original" }));
+  await waitFor(() =>
+    assert.equal(
+      screen
+        .getByRole("tab", { name: "Response (0)" })
+        .getAttribute("aria-selected"),
+      "true",
+    ),
+  );
+  assert.match(screen.getByRole("search").textContent!, /0 of 2 matches/);
+  await user.click(scopedFind);
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    assert.equal(
+      screen
+        .getByRole("tab", { name: "Request (2)" })
+        .getAttribute("aria-selected"),
+      "true",
+    ),
+  );
+  assert.match(screen.getByRole("search").textContent!, /1 of 2 matches/);
+  product.bodyDocuments = async () => bodyPair("", "available request");
+  mounted.rerender(
+    <Details key="empty" detail={detail("empty")} offPage={false} wrap />,
+  );
+  await screen.findByText("Empty body");
+  assert.equal(screen.queryByRole("navigation", { name: "Body window" }), null);
+  assert.equal(
+    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    "true",
+  );
+  product.bodyDocuments = async () => ({
+    ...bodyPair(),
+    request: bodyPair().request,
+    response: {
+      kind: "unavailable",
+      reason: "Not recorded",
+      retained: { kind: "unavailable", reason: "Not recorded" },
+      media,
+    },
+  });
+  mounted.rerender(
+    <Details key="missing" detail={detail("missing")} offPage={false} wrap />,
+  );
+  await screen.findByText(/Response unavailable/);
+  assert.equal(
+    screen.getByRole("tab", { name: "Request" }).getAttribute("aria-selected"),
+    "true",
+  );
+  const bodyCalls: unknown[] = [];
+  product.bodyDocuments = async () => ({
+    ...bodyPair(),
+    request: {
+      kind: "unavailable",
+      reason: "Missing request",
+      retained: { kind: "unavailable", reason: "Not recorded" },
+      media,
+    },
+    response: {
+      kind: "binary",
+      reason: "Binary body",
+      bytes: 65539,
+      basis: "retained",
+      retained: { kind: "available", bytes: 65539 },
+      media,
+    },
+  });
+  product.body = async (...args) => {
+    bodyCalls.push(args);
+    return {
+      body: { available: true },
+      chunk: {
+        offset: args[2],
+        total_bytes: 65539,
+        data_base64: "AP9B",
+        next_offset: args[2] === 0 ? 65536 : null,
+      },
+    };
+  };
+  mounted.rerender(
+    <Details key="binary" detail={detail("binary")} offPage={false} wrap />,
+  );
+  await screen.findByText(/Binary body/);
+  await screen.findByText(/00 ff 41/, { selector: "pre" });
+  await user.click(screen.getByRole("button", { name: "Next 64 KiB" }));
+  await waitFor(() =>
+    assert.deepEqual(bodyCalls.at(-1), [
+      { session_key: "/evidence/A", event_id: "binary" },
+      "response",
+      65536,
+      65536,
+    ]),
+  );
   const abandoned = deferred();
-  product.detailChunk = () => abandoned.promise;
+  product.bodyDocuments = () => abandoned.promise;
   mounted.rerender(
     <Details
       key="abandoned"
@@ -1049,13 +1380,430 @@ async function checkDetails() {
       wrap
     />,
   );
-  mounted.unmount();
-  await act(async () =>
-    abandoned.resolve({ ...emptyChunk, data_base64: "YWJj" }),
+  const metadata = new TextEncoder().encode(
+    JSON.stringify({
+      level: "E",
+      tag: "Full tag",
+      pid: 123,
+      tid: 456,
+      message: "full message " + "日".repeat(22000) + " full-tail",
+    }),
   );
-  assert.equal(screen.queryByText("abc"), null);
+  product.detailChunk = async (_id, offset) => ({
+    offset,
+    total_bytes: metadata.length,
+    data_base64: btoa(
+      String.fromCharCode(...metadata.slice(offset, offset + 65536)),
+    ),
+    next_offset: offset + 65536 < metadata.length ? offset + 65536 : null,
+  });
+  mounted.rerender(
+    <Details
+      key="log"
+      detail={{
+        ...detail("log"),
+        detail_complete: false,
+        event: {
+          ...event("log"),
+          source: "logs",
+          detail: { message: "truncated" },
+        },
+      }}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByText("Error", { selector: "span" });
+  assert.match(
+    screen.getByLabelText("Body content").textContent!,
+    /full message/,
+  );
+  assert.equal(screen.queryByText("truncated"), null);
+  await act(async () => abandoned.resolve(bodyPair("stale body")));
+  assert.equal(screen.queryByText("stale body"), null);
+  await user.click(screen.getByRole("button", { name: "Next window" }));
+  await user.click(screen.getByRole("button", { name: "Next window" }));
+  assert.match(screen.getByLabelText("Body content").textContent!, /full-tail/);
+  const createOwner = bodyDocuments.create;
+  const delayedFind = deferred();
+  let staleReadStarted = false;
+  let disposed = false;
+  bodyDocuments.create = () => {
+    const owner = createOwner();
+    return {
+      read: (operation) => {
+        if (operation.kind === "find" && operation.query === "old") {
+          staleReadStarted = true;
+          return delayedFind.promise;
+        }
+        return owner.read(operation);
+      },
+      dispose: () => {
+        disposed = true;
+        owner.dispose();
+      },
+    };
+  };
+  product.bodyDocuments = async () => bodyPair("fresh", "old");
+  mounted.rerender(
+    <Details
+      key="query-race"
+      detail={detail("query-race")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Find" }));
+  const raceInput = screen.getByRole("textbox", {
+    name: "Find in query, request and response",
+  });
+  await user.type(raceInput, "old");
+  await waitFor(() => assert.equal(staleReadStarted, true));
+  await user.clear(raceInput);
+  await user.type(raceInput, "fresh");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 1 matches/),
+  );
+  await act(async () =>
+    delayedFind.resolve({
+      kind: "found",
+      search: {
+        total: 99,
+        request: 99,
+        response: 0,
+        queryParameters: 0,
+        active: {
+          region: { kind: "body", side: "request" },
+          start: 0,
+          end: 3,
+          ordinal: 98,
+        },
+      },
+    }),
+  );
+  assert.match(screen.getByRole("search").textContent!, /1 of 1 matches/);
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Response (1)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  mounted.unmount();
+  assert.equal(disposed, true);
+  bodyDocuments.create = createOwner;
+  await checkQueryAndBinaryDetails();
+  product.bodyDocuments = async () => bodyPair();
   console.log(
-    "Detail DOM checks passed. 64 KiB binary paging, decoded content, local raw errors, mount reset and disposed reads.",
+    "Detail DOM checks passed. Response-first text and empty bodies, complete Find and copy, lexical JSON fidelity, cross-tab reverse/wrap, tail highlights, binary byte paging, copy errors, full log reads, and disposed body reads.",
+  );
+}
+async function checkQueryAndBinaryDetails() {
+  const rawQuery =
+    "q=a+b&encoded=a%2Bb&dup=one&dup=two&flag&empty=&bad=%C3%28+&" +
+    Array.from(
+      { length: 93 },
+      (_, index) =>
+        `k${index}=${index === 92 ? "x".repeat(80000) + "needle" : "value"}`,
+    ).join("&");
+  const copies: string[] = [];
+  product.copyText = async (text) => {
+    copies.push(text);
+  };
+  product.bodyDocuments = async () => ({
+    ...bodyPair('{"value":"response needle"}', '{"value":"request needle"}'),
+    request_info: {
+      method: "POST",
+      url: `https://example.invalid/?${rawQuery}#ignored=needle`,
+    },
+  });
+  const mounted = render(
+    <Details key="query" detail={detail("query")} offPage={false} wrap />,
+  );
+  await screen.findByRole("tab", { name: "Response" });
+  assert.equal(
+    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    "true",
+  );
+  await user.click(screen.getByRole("tab", { name: "Request" }));
+  const table = await screen.findByRole("table", {
+    name: "Decoded query parameters",
+  });
+  assert.ok(within(table).getAllByRole("row").length <= 51);
+  assert.ok(within(table).getByText("a b"));
+  assert.ok(within(table).getByText("a+b"));
+  assert.ok(screen.getByText(/Invalid percent or UTF-8 encoding/));
+  assert.ok(screen.getByText("(no equals sign)"));
+  await user.click(screen.getByRole("button", { name: "Copy original query" }));
+  await waitFor(() => assert.equal(copies.at(-1), rawQuery));
+  await user.keyboard("{Control>}f{/Control}");
+  const input = screen.getByRole("textbox", {
+    name: "Find in query, request and response",
+  });
+  revealedMatches.length = 0;
+  await user.type(input, "needle");
+  await waitFor(() =>
+    assert.match(
+      screen.getByRole("search").textContent!,
+      /1 of 3 matches · Query parameters 1 · Request body 1 · Response body 1/,
+    ),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Request (2)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  const tail = await screen.findByLabelText("Query field content");
+  await waitFor(() => assert.ok(tail.textContent!.endsWith("needle")));
+  assert.ok(tail.textContent!.length <= 16384);
+  assert.ok(tail.querySelector("mark"));
+  assert.ok(screen.getByText(/of 100/));
+  assert.equal(within(table).getAllByRole("row").length, 51);
+  await waitFor(() => {
+    assert.equal(
+      revealedMatches.at(-1)?.element === tail.querySelector("mark"),
+      true,
+      "Find reveals the loaded query tail",
+    );
+    assert.deepEqual(revealedMatches.at(-1)?.options, { block: "nearest" });
+    assert.equal(revealedMatches.at(-1)?.focused, input);
+    assert.equal(document.activeElement, input);
+  });
+  for (const [ordinal, body] of [
+    [2, "request needle"],
+    [3, "response needle"],
+  ] as const) {
+    revealedMatches.length = 0;
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      assert.match(
+        screen.getByRole("search").textContent!,
+        new RegExp(`${ordinal} of 3 matches`),
+      ),
+    );
+    await waitFor(() => {
+      const content = screen.getByLabelText("Body content");
+      assert.ok(content.textContent!.includes(body));
+      assert.equal(
+        revealedMatches.at(-1)?.element === content.querySelector("mark"),
+        true,
+        `Find reveals the ${body} match`,
+      );
+      assert.deepEqual(revealedMatches.at(-1)?.options, { block: "nearest" });
+      assert.equal(revealedMatches.at(-1)?.focused, input);
+      assert.equal(document.activeElement, input);
+    });
+  }
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await screen.findByRole("button", { name: "Copy complete value" });
+  await user.click(screen.getByRole("button", { name: "Copy complete value" }));
+  await waitFor(() =>
+    assert.equal(copies.at(-1), "x".repeat(80000) + "needle"),
+  );
+  await user.click(screen.getByRole("button", { name: "Previous match" }));
+  await waitFor(() =>
+    assert.equal(
+      screen
+        .getByRole("tab", { name: "Response (1)" })
+        .getAttribute("aria-selected"),
+      "true",
+    ),
+  );
+  assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/);
+  await user.click(screen.getByRole("button", { name: "Original" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Response (1)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.click(screen.getByRole("button", { name: "Next match" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await user.click(screen.getByRole("button", { name: "Formatted" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Request (2)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.click(screen.getByRole("tab", { name: "Response (1)" }));
+  await user.click(screen.getByRole("button", { name: "Original" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Response (1)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.click(screen.getByRole("button", { name: "Next match" }));
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await user.click(screen.getByRole("button", { name: "Original query" }));
+  const raw = await screen.findByLabelText("Original query");
+  assert.ok(raw.textContent!.length <= 16384);
+  assert.ok(raw.textContent!.startsWith("q=a+b&encoded=a%2Bb"));
+  product.bodyDocuments = async () => ({
+    ...bodyPair("response", ""),
+    request_info: { method: "GET", url: "https://example.invalid/?q=value" },
+  });
+  mounted.rerender(
+    <Details
+      key="get-query-only"
+      detail={detail("get-query-only")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByRole("tab", { name: "Request" });
+  await user.click(screen.getByRole("tab", { name: "Request" }));
+  await screen.findByRole("table", { name: "Decoded query parameters" });
+  assert.equal(screen.queryByText("Empty body"), null);
+  assert.equal(
+    screen.queryByRole("button", { name: "Copy original", exact: true }),
+    null,
+  );
+  assert.equal(screen.queryByLabelText("Body content"), null);
+  mounted.unmount();
+
+  product.bodyDocuments = async () => ({
+    ...bodyPair(),
+    response: {
+      kind: "unavailable",
+      reason: "Unsupported content encoding: br",
+      retained: { kind: "available", bytes: 65539 },
+      media: {
+        content_type: "application/x-protobuf",
+        label: "Protobuf",
+        content_encoding: "br",
+      },
+    },
+  });
+  const calls: unknown[] = [];
+  product.body = async (...args) => {
+    calls.push(args);
+    return {
+      body: { available: true },
+      chunk: {
+        offset: args[2],
+        total_bytes: 65539,
+        data_base64: args[2] === 0 ? "AP9B" : "AA==",
+        next_offset: args[2] === 0 ? args[3] : null,
+      },
+    };
+  };
+  const actions: unknown[] = [];
+  product.retainedBody = async (...args) => {
+    actions.push(args);
+    return { kind: "copied", bytes: 65539 };
+  };
+  const binary = render(
+    <Details
+      key="retained-export"
+      detail={detail("retained-export")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByText(
+    /Protobuf · application\/x-protobuf · 65,539 retained bytes · Content encoding br/,
+  );
+  await screen.findByText(/00 ff 41/, { selector: "pre" });
+  await user.click(screen.getByRole("button", { name: "Base64", exact: true }));
+  await screen.findByText("AP9B", { selector: "pre" });
+  assert.equal((calls.at(-1) as unknown[])[3], 65535);
+  await user.click(screen.getByRole("button", { name: "Next 65,535 bytes" }));
+  await waitFor(() => assert.equal((calls.at(-1) as unknown[])[2], 65535));
+  await user.click(screen.getByRole("button", { name: "Hex", exact: true }));
+  await waitFor(() =>
+    assert.deepEqual((calls.at(-1) as unknown[]).slice(2), [0, 65536]),
+  );
+  await user.click(screen.getByRole("button", { name: "Copy Base64" }));
+  await screen.findByText(/Copied complete Base64/);
+  assert.deepEqual(actions.at(-1), [
+    { session_key: "/evidence/A", event_id: "retained-export" },
+    "response",
+    "copy-base64",
+  ]);
+  product.retainedBody = async () => ({ kind: "cancelled" });
+  await user.click(screen.getByRole("button", { name: "Save original body" }));
+  await screen.findByText("Save cancelled.");
+  product.retainedBody = async () => {
+    throw new Error("Destination refused");
+  };
+  await user.click(screen.getByRole("button", { name: "Save original body" }));
+  await screen.findByText(/Save failed. Destination refused/);
+  const held = deferred();
+  product.retainedBody = () => held.promise;
+  await user.click(screen.getByRole("button", { name: "Save original body" }));
+  await screen.findByText("Preparing retained body…");
+  binary.unmount();
+  product.bodyDocuments = async () => bodyPair("fresh response");
+  const fresh = render(
+    <Details
+      key="new-session"
+      detail={{ ...detail("retained-export"), session_key: "/evidence/B" }}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByRole("tab", { name: "Response" });
+  await act(async () =>
+    held.resolve({
+      kind: "saved",
+      path: "/exports/response-body.bin",
+      bytes: 65539,
+    }),
+  );
+  assert.equal(screen.queryByText(/Saved original body/), null);
+  fresh.unmount();
+  const createOwner = bodyDocuments.create;
+  bodyDocuments.create = () => {
+    const owner = createOwner();
+    return {
+      ...owner,
+      read: async (operation: Parameters<typeof owner.read>[0]) => {
+        if (operation.kind === "query-window")
+          throw new Error("Query worker failed");
+        return owner.read(operation);
+      },
+    };
+  };
+  product.bodyDocuments = async () => ({
+    ...bodyPair(),
+    request_info: { method: "GET", url: "https://example.invalid/?q=value" },
+  });
+  const failed = render(
+    <Details
+      key="query-error"
+      detail={detail("query-error")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByRole("tab", { name: "Request" });
+  await user.click(screen.getByRole("tab", { name: "Request" }));
+  await screen.findByRole("alert", { name: "" });
+  assert.ok(screen.getByText("Query worker failed"));
+  failed.unmount();
+  bodyDocuments.create = createOwner;
+
+  product.bodyDocuments = async () => bodyPair();
+  console.log(
+    "Query and retained-export DOM checks passed. Form rows, bounded tail highlights and full copies, active query/body reveal with Find focus, three-source wrap, format selection, raw fidelity, Base64 alignment, cancellation/errors and disposed exports.",
   );
 }
 async function checkModal() {
@@ -1401,6 +2149,16 @@ async function checkViewPreservation() {
   assert.equal(getComputedStyle(evidence).display, "none");
   assert.equal(screen.queryByRole("dialog", { name: "Event details" }), null);
   assert.equal(evidence.contains(document.activeElement), false);
+  const hiddenFind = new KeyboardEvent("keydown", {
+    key: "f",
+    metaKey: true,
+    cancelable: true,
+    bubbles: true,
+  });
+  document.dispatchEvent(hiddenFind);
+  assert.equal(hiddenFind.defaultPrevented, false);
+  assert.equal(evidence.querySelector('[role="search"]'), null);
+
   const folder = screen.getByLabelText("Session folder");
   await user.clear(folder);
   await user.type(folder, "/unsaved-evidence");
@@ -1533,8 +2291,8 @@ async function checkWholeApp() {
     product.detail = async () => (read === "detail" ? held.promise : withBody);
     product.detailChunk = async () =>
       read === "metadata" ? held.promise : emptyChunk;
-    product.body = async () =>
-      read === "body" ? held.promise : { chunk: emptyChunk };
+    product.bodyDocuments = async () =>
+      read === "body" ? held.promise : bodyPair();
     product.reveal = async () => (read === "raw" ? held.promise : undefined);
     render(<App />);
     const stop = await screen.findByRole(
@@ -1549,8 +2307,12 @@ async function checkWholeApp() {
         name: /GET https:\/\/example.invalid\/one/,
       }),
     );
-    if (read === "body")
-      await user.click(await screen.findByRole("button", { name: /Response/ }));
+    if (read === "metadata")
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Full metadata and headers",
+        }),
+      );
     if (read === "raw")
       await user.click(
         await screen.findByRole("button", { name: "Reveal raw source" }),
@@ -1574,7 +2336,7 @@ async function checkWholeApp() {
         read === "detail"
           ? withBody
           : read === "body"
-            ? { chunk: emptyChunk }
+            ? bodyPair()
             : read === "raw"
               ? undefined
               : emptyChunk,

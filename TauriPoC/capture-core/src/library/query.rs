@@ -34,6 +34,7 @@ pub enum TimelineOrder {
 #[serde(default)]
 pub struct TimelineQuery {
     pub source: Option<String>,
+    pub log_level: Option<LogLevel>,
     pub search: String,
     pub order: TimelineOrder,
     pub limit: u32,
@@ -46,12 +47,43 @@ impl Default for TimelineQuery {
     fn default() -> Self {
         Self {
             source: None,
+            log_level: None,
             search: String::new(),
             order: TimelineOrder::NewestFirst,
             limit: 200,
             cursor: None,
             after_sequence: None,
             through_sequence: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub enum LogLevel {
+    V,
+    D,
+    I,
+    W,
+    E,
+    F,
+    A,
+    S,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+impl LogLevel {
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::V => "V",
+            Self::D => "D",
+            Self::I => "I",
+            Self::W => "W",
+            Self::E => "E",
+            Self::F => "F",
+            Self::A => "A",
+            Self::S => "S",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -84,6 +116,7 @@ pub struct IndexProgress {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventDetail {
+    pub session_key: String,
     pub sequence: u64,
     pub event: Event,
     pub detail_bytes: u64,
@@ -132,6 +165,78 @@ pub struct BodyDescriptor {
 pub struct BodyChunk {
     pub body: BodyDescriptor,
     pub chunk: DataChunk,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EventRef {
+    pub session_key: String,
+    pub event_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Retained {
+    Available { bytes: u64 },
+    Unavailable { reason: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Media {
+    pub content_type: Option<String>,
+    pub label: String,
+    pub content_encoding: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BodyDocument {
+    pub retained: Retained,
+    pub media: Media,
+    #[serde(flatten)]
+    pub content: BodyContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BodyContent {
+    Text {
+        original: String,
+        bytes: u64,
+        basis: BodyTextBasis,
+    },
+    Binary {
+        bytes: u64,
+        basis: BodyTextBasis,
+        reason: String,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyTextBasis {
+    Retained,
+    Decoded,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestInfo {
+    pub method: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BodyDocuments {
+    pub reference: EventRef,
+    pub request_info: RequestInfo,
+    pub request: BodyDocument,
+    pub response: BodyDocument,
+}
+
+pub struct RetainedBody {
+    pub bytes: Vec<u8>,
+    pub origin: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

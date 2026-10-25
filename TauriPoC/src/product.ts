@@ -81,8 +81,20 @@ export const progressSchema = z.object({
   complete: z.boolean(),
   latest_sequence: z.number(),
 });
+export const logLevelSchema = z.enum([
+  "V",
+  "D",
+  "I",
+  "W",
+  "E",
+  "F",
+  "A",
+  "S",
+  "unknown",
+]);
 export const timelineQuerySchema = z.object({
   source: z.string().nullable(),
+  log_level: logLevelSchema.nullable(),
   search: z.string(),
   order: z.enum(["oldest_first", "newest_first"]),
   limit: z.number(),
@@ -118,13 +130,64 @@ export const dataChunkSchema = z.object({
     .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
   next_offset: z.number().nullable(),
 });
+export const eventRefSchema = z.object({
+  session_key: z.string(),
+  event_id: z.string(),
+});
 export const detailSchema = z.object({
+  session_key: z.string(),
   sequence: z.number(),
   event: eventSchema,
   detail_bytes: z.number(),
   detail_complete: z.boolean(),
   bodies: z.array(bodyDescriptorSchema),
 });
+const bodyMetadata = {
+  retained: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("available"), bytes: z.number() }),
+    z.object({ kind: z.literal("unavailable"), reason: z.string() }),
+  ]),
+  media: z.object({
+    content_type: z.string().nullable(),
+    label: z.string(),
+    content_encoding: z.string().nullable(),
+  }),
+};
+export const bodyDocumentSchema = z.discriminatedUnion("kind", [
+  z.object({
+    ...bodyMetadata,
+    kind: z.literal("text"),
+    original: z.string(),
+    bytes: z.number(),
+    basis: z.enum(["decoded", "retained"]),
+  }),
+  z.object({
+    ...bodyMetadata,
+    kind: z.literal("binary"),
+    bytes: z.number(),
+    basis: z.enum(["decoded", "retained"]),
+    reason: z.string(),
+  }),
+  z.object({
+    ...bodyMetadata,
+    kind: z.literal("unavailable"),
+    reason: z.string(),
+  }),
+]);
+export const bodyDocumentsSchema = z.object({
+  reference: eventRefSchema,
+  request_info: z.object({
+    method: z.string().nullable(),
+    url: z.string().nullable(),
+  }),
+  request: bodyDocumentSchema,
+  response: bodyDocumentSchema,
+});
+const retainedOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("copied"), bytes: z.number() }),
+  z.object({ kind: z.literal("saved"), bytes: z.number(), path: z.string() }),
+  z.object({ kind: z.literal("cancelled") }),
+]);
 export const bodyChunkSchema = z.object({
   body: bodyDescriptorSchema,
   chunk: dataChunkSchema,
@@ -154,8 +217,13 @@ export type StartRequest = z.infer<typeof startRequestSchema>;
 export type Application = z.infer<typeof applicationSchema>;
 export type TimelineQuery = z.infer<typeof timelineQuerySchema>;
 export type TimelinePage = z.infer<typeof pageSchema>;
+export type EventRef = z.infer<typeof eventRefSchema>;
 export type EventDetail = z.infer<typeof detailSchema>;
 export type BodyDescriptor = z.infer<typeof bodyDescriptorSchema>;
+export type DataChunk = z.infer<typeof dataChunkSchema>;
+export type BodyDocument = z.infer<typeof bodyDocumentSchema>;
+export type BodyDocuments = z.infer<typeof bodyDocumentsSchema>;
+export type LogLevel = z.infer<typeof logLevelSchema>;
 export type BodySide = z.infer<typeof bodySideSchema>;
 export type SessionDescriptor = z.infer<typeof descriptorSchema>;
 
@@ -170,24 +238,52 @@ export const product = {
       await invoke<unknown>("open_session", { directory }),
     ),
   query: async (query: TimelineQuery) =>
-    pageSchema.parse(await invoke<unknown>("timeline_query", { query })),
+    pageSchema.parse(
+      await invoke<unknown>("timeline_query", {
+        query: timelineQuerySchema.parse(query),
+      }),
+    ),
   detail: async (id: string) =>
     detailSchema
       .nullable()
       .parse(await invoke<unknown>("event_detail", { id })),
-  body: async (id: string, side: BodySide, offset: number, decoded = false) =>
+  body: async (
+    reference: EventRef,
+    side: BodySide,
+    offset: number,
+    limit = 65536,
+  ) =>
     bodyChunkSchema.parse(
       await invoke<unknown>("body_chunk", {
-        id,
+        reference,
         side,
         offset,
-        limit: 65536,
-        decoded,
+        limit,
+        decoded: false,
       }),
     ),
-  detailChunk: async (id: string, offset: number) =>
+  bodyDocuments: async (reference: EventRef) =>
+    bodyDocumentsSchema.parse(
+      await invoke<unknown>("body_documents", { reference }),
+    ),
+  retainedBody: async (
+    reference: EventRef,
+    side: BodySide,
+    action: "copy-base64" | "save",
+  ) =>
+    retainedOutcomeSchema.parse(
+      await invoke<unknown>("retained_body", { reference, side, action }),
+    ),
+  copyText: async (text: string) => {
+    await invoke<unknown>("copy_text", { text });
+  },
+  detailChunk: async (reference: EventRef, offset: number) =>
     dataChunkSchema.parse(
-      await invoke<unknown>("detail_chunk", { id, offset, limit: 65536 }),
+      await invoke<unknown>("detail_chunk", {
+        reference,
+        offset,
+        limit: 65536,
+      }),
     ),
   chooseFolder: async () =>
     z

@@ -333,7 +333,15 @@ fn complete_body_tail_search_chunks_binary_and_unavailable_are_truthful() {
     );
     let offset = text.len() as u64 - 64;
     let tail = library
-        .body_chunk(id, BodySide::Response, offset, 64)
+        .body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: id.to_string(),
+            },
+            BodySide::Response,
+            offset,
+            64,
+        )
         .unwrap();
     assert!(tail.body.text);
     assert_eq!(
@@ -341,7 +349,17 @@ fn complete_body_tail_search_chunks_binary_and_unavailable_are_truthful() {
         text.as_bytes()[offset as usize..]
     );
     assert!(tail.chunk.next_offset.is_none());
-    let missing = library.body_chunk(id, BodySide::Request, 0, 64).unwrap();
+    let missing = library
+        .body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: id.to_string(),
+            },
+            BodySide::Request,
+            0,
+            64,
+        )
+        .unwrap();
     assert!(!missing.body.available);
     assert_eq!(missing.body.reason.as_deref(), Some("stream incomplete"));
     let raw_detail = library.detail_chunk(id, 0, 65536).unwrap();
@@ -358,7 +376,15 @@ fn complete_body_tail_search_chunks_binary_and_unavailable_are_truthful() {
         .event
         .id;
     let binary = library
-        .body_chunk(binary_id, BodySide::Response, 0, 64)
+        .body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: binary_id.to_string(),
+            },
+            BodySide::Response,
+            0,
+            64,
+        )
         .unwrap();
     assert!(binary.body.available);
     assert!(!binary.body.text);
@@ -374,16 +400,40 @@ fn complete_body_tail_search_chunks_binary_and_unavailable_are_truthful() {
         .id;
     assert!(
         !library
-            .body_chunk(invalid_id, BodySide::Response, 0, 64)
+            .body_chunk(
+                &EventRef {
+                    session_key: library.session_key.clone(),
+                    event_id: invalid_id.to_string()
+                },
+                BodySide::Response,
+                0,
+                64
+            )
             .unwrap()
             .body
             .available
     );
     assert!(library
-        .body_chunk(id, BodySide::Response, 0, 65537)
+        .body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: id.to_string()
+            },
+            BodySide::Response,
+            0,
+            65537
+        )
         .is_err());
     assert!(library
-        .body_chunk(id, BodySide::Response, text.len() as u64 + 1, 64)
+        .body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: id.to_string()
+            },
+            BodySide::Response,
+            text.len() as u64 + 1,
+            64
+        )
         .is_err());
     assert_eq!(before, evidence_bytes(&fixture.evidence));
 }
@@ -422,13 +472,29 @@ fn compressed_body_search_and_decoded_chunks_keep_originals_and_reject_bombs() {
     assert_eq!(found.matching, 1);
     let id = &found.rows[0].event.id;
     let original = library
-        .body_chunk(id, BodySide::Response, 0, 65536)
+        .body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: id.to_string(),
+            },
+            BodySide::Response,
+            0,
+            65536,
+        )
         .unwrap();
     assert_eq!(STANDARD.decode(original.chunk.data_base64).unwrap(), gzip);
     assert_eq!(original.body.byte_basis, "raw_content");
     assert!(original.body.decoded_available);
     let decoded = library
-        .decoded_body_chunk(id, BodySide::Response, text.len() as u64 - 64, 64)
+        .decoded_body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: id.to_string(),
+            },
+            BodySide::Response,
+            text.len() as u64 - 64,
+            64,
+        )
         .unwrap();
     assert_eq!(
         STANDARD.decode(decoded.chunk.data_base64).unwrap(),
@@ -451,7 +517,15 @@ fn compressed_body_search_and_decoded_chunks_keep_originals_and_reject_bombs() {
         .event
         .id;
     let bomb_view = library
-        .decoded_body_chunk(bomb_id, BodySide::Response, 0, 64)
+        .decoded_body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: bomb_id.to_string(),
+            },
+            BodySide::Response,
+            0,
+            64,
+        )
         .unwrap();
     assert!(!bomb_view.body.available);
     assert_eq!(
@@ -460,7 +534,15 @@ fn compressed_body_search_and_decoded_chunks_keep_originals_and_reject_bombs() {
     );
     assert!(bomb_view.chunk.data_base64.is_empty());
     let original_bomb = library
-        .body_chunk(bomb_id, BodySide::Response, 0, 64)
+        .body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: bomb_id.to_string(),
+            },
+            BodySide::Response,
+            0,
+            64,
+        )
         .unwrap();
     assert!(original_bomb.body.available);
     assert!(!original_bomb.body.decoded_available);
@@ -731,4 +813,295 @@ fn preview_bounds_escaped_outer_fields_and_body_metadata() {
         event,
     };
     assert!(serde_json::to_vec(&row).unwrap().len() <= 6144);
+}
+
+#[test]
+fn body_documents_preserve_complete_text_and_distinguish_empty_binary_missing_and_decoding() {
+    use flate2::{write::GzEncoder, Compression};
+    let fixture = Fixture::new(false);
+    let original = format!("{}9007199254740993, -0, 1e+09", "tail ".repeat(20_000));
+    let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+    gzip.write_all(original.as_bytes()).unwrap();
+    let compressed = gzip.finish().unwrap();
+    let records = [
+        json!({"summary":"compressed", "detail":{"request_body":{"text":""}, "response_headers":[{"name":"content-encoding","value":"gzip"}], "response_body":{"text":STANDARD.encode(&compressed)}}}),
+        json!({"summary":"binary", "detail":{"response_body":{"text":STANDARD.encode([0,255])}}}),
+        json!({"summary":"unsupported", "detail":{"response_headers":[{"name":"content-encoding","value":"br"}], "response_body":{"text":"YQ=="}}}),
+    ];
+    fixture.write(
+        "network/events.jsonl",
+        records.iter().map(|r| format!("{r}\n")).collect::<String>(),
+    );
+    let before = evidence_bytes(&fixture.evidence);
+    let mut library = fixture.open(false);
+    finish(&mut library);
+    let rows = all(&mut library);
+    let pair = library
+        .body_documents(&EventRef {
+            session_key: library.session_key.clone(),
+            event_id: rows[0].event.id.clone(),
+        })
+        .unwrap();
+    assert!(
+        matches!(pair.request.content, BodyContent::Text { ref original, bytes: 0, .. } if original.is_empty())
+    );
+    assert!(
+        matches!(pair.response.content, BodyContent::Text { original: ref text, ref basis, .. } if text == &original && matches!(basis, BodyTextBasis::Decoded))
+    );
+    let raw = library
+        .body_chunk(
+            &EventRef {
+                session_key: library.session_key.clone(),
+                event_id: rows[0].event.id.clone(),
+            },
+            BodySide::Response,
+            0,
+            65536,
+        )
+        .unwrap();
+    assert_eq!(STANDARD.decode(raw.chunk.data_base64).unwrap(), compressed);
+    let pair = library
+        .body_documents(&EventRef {
+            session_key: library.session_key.clone(),
+            event_id: rows[1].event.id.clone(),
+        })
+        .unwrap();
+    assert!(matches!(
+        pair.request.retained,
+        Retained::Unavailable { .. }
+    ));
+    assert!(matches!(
+        pair.response.content,
+        BodyContent::Binary { bytes: 2, .. }
+    ));
+    let pair = library
+        .body_documents(&EventRef {
+            session_key: library.session_key.clone(),
+            event_id: rows[2].event.id.clone(),
+        })
+        .unwrap();
+    assert!(
+        matches!(pair.response.content, BodyContent::Unavailable { ref reason } if reason.contains("Unsupported"))
+    );
+    assert_eq!(before, evidence_bytes(&fixture.evidence));
+}
+
+#[test]
+fn exact_log_level_filters_counts_pages_and_cursors_but_preserves_other_sources() {
+    let fixture = Fixture::new(false);
+    fixture.write("logs/device.log", "1700000000.0 1 2 I Tag: info\n1700000000.0 1 2 E Tag: error one\n1700000000.0 1 2 W Tag: warning\n1700000000.0 1 2 E Tag: error two\nunparsed\n");
+    fixture.write(
+        "network/events.jsonl",
+        format!("{}\n", json!({"timestamp":STARTED,"summary":"network"})),
+    );
+    fixture.write(
+        "timeline/markers.jsonl",
+        format!("{}\n", json!({"timestamp":STARTED,"text":"marker"})),
+    );
+    let mut library = fixture.open(false);
+    finish(&mut library);
+    let query = TimelineQuery {
+        log_level: Some(LogLevel::E),
+        limit: 1,
+        order: TimelineOrder::OldestFirst,
+        ..Default::default()
+    };
+    let first = library.query(query.clone()).unwrap();
+    assert_eq!(first.total, 7);
+    assert_eq!(first.matching, 4);
+    assert_eq!(first.rows[0].event.detail["level"], "E");
+    let cursor = first.next_cursor.clone();
+    let mut ids = vec![first.rows[0].event.id.clone()];
+    let mut next = cursor.clone();
+    while let Some(cursor) = next {
+        let page = library
+            .query(TimelineQuery {
+                cursor: Some(cursor),
+                ..query.clone()
+            })
+            .unwrap();
+        assert_eq!(page.matching, 4);
+        ids.extend(page.rows.iter().map(|r| r.event.id.clone()));
+        next = page.next_cursor;
+    }
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 4);
+    assert!(library
+        .query(TimelineQuery {
+            log_level: Some(LogLevel::W),
+            cursor,
+            ..query
+        })
+        .is_err());
+    let unknown = library
+        .query(TimelineQuery {
+            source: Some("logs".into()),
+            log_level: Some(LogLevel::Unknown),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(unknown.matching, 1);
+    assert_eq!(unknown.rows[0].event.detail["level"], "unknown");
+    assert!(serde_json::from_value::<TimelineQuery>(json!({"log_level":"bogus"})).is_err());
+}
+
+#[test]
+fn version_two_cache_is_recreated_with_levels_and_a_fresh_generation() {
+    let fixture = Fixture::new(false);
+    fixture.write("logs/device.log", "1700000000.0 1 2 W Tag: warning\n");
+    let library = fixture.open(false);
+    let old_generation = library.index.generation.clone();
+    library
+        .index
+        .db
+        .execute("UPDATE meta SET value='2' WHERE key='version'", [])
+        .unwrap();
+    library
+        .index
+        .db
+        .execute_batch("DROP INDEX timeline_log_level; ALTER TABLE events DROP COLUMN log_level;")
+        .unwrap();
+    drop(library);
+    let mut reopened = fixture.open(false);
+    finish(&mut reopened);
+    assert_ne!(reopened.index.generation, old_generation);
+    let page = reopened
+        .query(TimelineQuery {
+            log_level: Some(LogLevel::W),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(page.matching, 1);
+    assert_eq!(page.rows[0].event.detail["level"], "W");
+}
+
+#[test]
+fn preview_keeps_compact_presentation_when_generic_metadata_is_pruned() {
+    let fixture = Fixture::new(false);
+    fixture.write(
+        "logs/device.log",
+        format!(
+            "1700000000.0 123 456 E {}: {}\n",
+            "tag".repeat(5000),
+            "message".repeat(5000)
+        ),
+    );
+    fixture.write("network/events.jsonl", format!("{}\n", json!({"detail":{"method":"PATCH","status":503,"duration_ms":123.25,"url":"https://example.test", "aaa":vec!["x".repeat(9999); 100]}})));
+    let mut library = fixture.open(false);
+    finish(&mut library);
+    let rows = all(&mut library);
+    assert_eq!(rows[0].event.detail["level"], "E");
+    assert_eq!(rows[0].event.detail["pid"], 123);
+    assert_eq!(rows[0].event.detail["tid"], 456);
+    assert!(rows[0].event.detail["tag"]
+        .as_str()
+        .unwrap()
+        .starts_with("tag"));
+    assert!(rows[0].event.detail["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("message"));
+    let detail = &rows[1].event.detail;
+    assert_eq!(detail["method"], "PATCH");
+    assert_eq!(detail["status"], 503);
+    assert_eq!(detail["duration_ms"], 123.25);
+    for row in rows {
+        assert!(serde_json::to_vec(&row.event).unwrap().len() < 6 * 1024 - 96);
+    }
+}
+
+#[test]
+fn escape_heavy_compact_fields_stay_within_the_serialized_row_budget() {
+    let mut event = Event {
+        id: "\0".repeat(128),
+        timestamp: STARTED.into(),
+        original_timestamp: Some("\0".repeat(64)),
+        received_at: Some("\0".repeat(64)),
+        source: "network".into(),
+        kind: "\0".repeat(128),
+        summary: "\0".repeat(1024),
+        raw_ref: "\0".repeat(512),
+        clock_uncertainty_ms: None,
+        detail: json!({"level":"\0".repeat(16), "tag":"\0".repeat(96), "message":"\0".repeat(256),
+            "method":"\0".repeat(16), "url":"\0".repeat(256), "status":503, "duration_ms":123.5,
+            "extra":vec!["x".repeat(500);100]}),
+    };
+    timeline::preview(&mut event);
+    assert!(serde_json::to_vec(&event).unwrap().len() <= 6 * 1024 - 96);
+    assert!(event.detail["message"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert_eq!(event.detail["status"], 503);
+    assert_eq!(event.detail["duration_ms"], 123.5);
+}
+
+#[test]
+fn empty_encoded_response_remains_an_available_empty_text_document() {
+    let fixture = Fixture::new(false);
+    fixture.write("network/events.jsonl", format!("{}\n", json!({"detail":{"method":"HEAD", "status":204,
+        "response_headers":[{"name":"Content-Encoding", "value":"gzip"}], "response_body":{"text":""}}})));
+    let mut library = fixture.open(false);
+    let rows = all(&mut library);
+    let pair = library
+        .body_documents(&EventRef {
+            session_key: library.session_key.clone(),
+            event_id: rows[0].event.id.clone(),
+        })
+        .unwrap();
+    assert!(
+        matches!(pair.response.content, BodyContent::Text { original, bytes: 0, basis: BodyTextBasis::Retained } if original.is_empty())
+    );
+}
+
+#[test]
+fn complete_request_metadata_and_retained_snapshots_are_session_bound() {
+    let one = Fixture::new(false);
+    let two = Fixture::new(false);
+    let url = format!(
+        "https://example.invalid/path?start=1&tail={}",
+        "q".repeat(300_000)
+    );
+    let record = json!({"detail":{"method":"PATCH","url":url,"request_headers":[{"name":"Content-Type","value":"application/x-protobuf; charset=binary"},{"name":"Content-Encoding","value":"br"}],"request_body":{"text":"AP9B"},"response_body":{"text":""}}});
+    for fixture in [&one, &two] {
+        fixture.write("network/events.jsonl", format!("{record}\n"));
+    }
+    let mut first = one.open(false);
+    let mut second = two.open(false);
+    finish(&mut first);
+    finish(&mut second);
+    let id = all(&mut first)[0].event.id.clone();
+    assert_eq!(id, all(&mut second)[0].event.id);
+    let preview = first.event(&id).unwrap().unwrap();
+    assert!(!preview.detail_complete);
+    assert!(preview.event.detail["url"].as_str().unwrap().len() < url.len());
+    let reference = EventRef {
+        session_key: preview.session_key,
+        event_id: id,
+    };
+    let pair = first.body_documents(&reference).unwrap();
+    assert_eq!(pair.request_info.url.as_deref(), Some(url.as_str()));
+    assert_eq!(pair.request_info.method.as_deref(), Some("PATCH"));
+    assert_eq!(pair.request.media.label, "Protobuf");
+    assert_eq!(
+        pair.request.media.content_type.as_deref(),
+        Some("application/x-protobuf; charset=binary")
+    );
+    assert_eq!(pair.request.media.content_encoding.as_deref(), Some("br"));
+    assert!(matches!(
+        pair.request.content,
+        BodyContent::Unavailable { .. }
+    ));
+    assert!(matches!(
+        pair.request.retained,
+        Retained::Available { bytes: 3 }
+    ));
+    let snapshot = first.retained_body(&reference, BodySide::Request).unwrap();
+    assert_eq!(snapshot.bytes, [0, 255, 65]);
+    assert!(second.body_documents(&reference).is_err());
+    assert!(second
+        .body_chunk(&reference, BodySide::Request, 0, 64)
+        .is_err());
+    assert!(second.retained_body(&reference, BodySide::Request).is_err());
+    assert_eq!(snapshot.bytes, [0, 255, 65]);
 }

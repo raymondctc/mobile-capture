@@ -30,6 +30,7 @@ pub struct EvidenceLibrary {
     descriptor: SessionDescriptor,
     index: Index,
     live: bool,
+    session_key: String,
     _cache_writer: FileLease,
 }
 
@@ -62,6 +63,10 @@ impl EvidenceLibrary {
         let index = Index::open(&cache_directory.join(format!("{cache_id}.sqlite")))?;
         let mut library = Self {
             descriptor,
+            session_key: evidence
+                .to_str()
+                .ok_or("Evidence path is not valid UTF-8")?
+                .to_owned(),
             index,
             live,
             _cache_writer: writer,
@@ -181,13 +186,14 @@ impl EvidenceLibrary {
         let search = normalize::fold(&query.search);
         let after = query.after_sequence.unwrap_or(0);
         let through = query.through_sequence.unwrap_or(i64::MAX as u64);
-        let filter = "(?1 IS NULL OR source=?1) AND (?2='' OR instr(search,?2)>0) AND sequence>?3 AND sequence<=?4";
+        let level = query.log_level.map(LogLevel::key);
+        let filter = "(?1 IS NULL OR source=?1) AND (?2='' OR instr(search,?2)>0) AND sequence>?3 AND sequence<=?4 AND (?5 IS NULL OR source!='logs' OR log_level=?5)";
         let matching: u64 = self
             .index
             .db
             .query_row(
                 &format!("SELECT count(*) FROM events WHERE {filter}"),
-                params![query.source, search, after as i64, through as i64],
+                params![query.source, search, after as i64, through as i64, level],
                 |r| sql_u64(r, 0),
             )
             .map_err(|e| e.to_string())?;
@@ -195,8 +201,8 @@ impl EvidenceLibrary {
         let direction = if ascending { "ASC" } else { "DESC" };
         let comparison = if ascending { ">" } else { "<" };
         let sql = format!("SELECT sequence,preview,timestamp,source_rank,line,id FROM events WHERE {filter}
-            AND (?5=0 OR (timestamp,source_rank,line,id) {comparison} (?6,?7,?8,?9))
-            ORDER BY timestamp {direction},source_rank {direction},line {direction},id {direction} LIMIT ?10");
+            AND (?6=0 OR (timestamp,source_rank,line,id) {comparison} (?7,?8,?9,?10))
+            ORDER BY timestamp {direction},source_rank {direction},line {direction},id {direction} LIMIT ?11");
         let mut statement = self.index.db.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = statement
             .query_map(
@@ -205,6 +211,7 @@ impl EvidenceLibrary {
                     search,
                     after as i64,
                     through as i64,
+                    level,
                     u8::from(cursor.is_some()),
                     cursor.as_ref().map(|c| c.timestamp.as_str()).unwrap_or(""),
                     cursor.as_ref().map(|c| c.rank).unwrap_or(0),
@@ -291,6 +298,7 @@ impl EvidenceLibrary {
             timeline::preview(&mut event);
         }
         Ok(Some(EventDetail {
+            session_key: self.session_key.clone(),
             sequence,
             event,
             detail_bytes,
@@ -307,15 +315,59 @@ impl EvidenceLibrary {
         chunk(&bytes, offset, limit)
     }
 
+    pub fn body_documents(&mut self, reference: &EventRef) -> Result<BodyDocuments> {
+        self.check_reference(reference)?;
+        let (_, event) = self
+            .full_event(&reference.event_id)?
+            .ok_or("Timeline event is no longer indexed")?;
+        Ok(BodyDocuments {
+            reference: EventRef {
+                session_key: self.session_key.clone(),
+                event_id: reference.event_id.clone(),
+            },
+            request_info: RequestInfo {
+                method: event.detail["method"].as_str().map(str::to_owned),
+                url: event.detail["url"].as_str().map(str::to_owned),
+            },
+            request: bodies::document(&event, BodySide::Request),
+            response: bodies::document(&event, BodySide::Response),
+        })
+    }
+
+    pub fn check_reference(&self, reference: &EventRef) -> Result<()> {
+        if reference.session_key != self.session_key {
+            return Err("The selected event belongs to a different session".into());
+        }
+        Ok(())
+    }
+
+    pub fn retained_body(&mut self, reference: &EventRef, side: BodySide) -> Result<RetainedBody> {
+        self.check_reference(reference)?;
+        let (_, event) = self
+            .full_event(&reference.event_id)?
+            .ok_or("Timeline event is no longer indexed")?;
+        let (body, bytes) = bodies::view(&event, side, false);
+        if !body.available {
+            return Err(body
+                .reason
+                .unwrap_or_else(|| "Retained body unavailable".into()));
+        }
+        Ok(RetainedBody {
+            bytes,
+            origin: PathBuf::from(&self.session_key),
+        })
+    }
+
     pub fn body_chunk(
         &mut self,
-        id: &str,
+        reference: &EventRef,
         side: BodySide,
         offset: u64,
         limit: u32,
     ) -> Result<BodyChunk> {
+        self.check_reference(reference)?;
         let (_, event) = self
-            .full_event(id)?
+            .full_event(&reference.event_id)?
             .ok_or("Timeline event is no longer indexed")?;
         let (body, bytes) = bodies::view(&event, side, false);
         let chunk = chunk(&bytes, offset, limit)?;
@@ -324,13 +376,14 @@ impl EvidenceLibrary {
 
     pub fn decoded_body_chunk(
         &mut self,
-        id: &str,
+        reference: &EventRef,
         side: BodySide,
         offset: u64,
         limit: u32,
     ) -> Result<BodyChunk> {
+        self.check_reference(reference)?;
         let (_, event) = self
-            .full_event(id)?
+            .full_event(&reference.event_id)?
             .ok_or("Timeline event is no longer indexed")?;
         let (body, bytes) = bodies::view(&event, side, true);
         let chunk = chunk(&bytes, offset, limit)?;

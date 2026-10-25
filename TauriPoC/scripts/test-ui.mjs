@@ -13,10 +13,12 @@ try {
     outfile: output,
     bundle: true,
     platform: "node",
+    define: { "import.meta.url": JSON.stringify(import.meta.url) },
     format: "cjs",
     jsx: "automatic",
   });
   await import(pathToFileURL(output).href);
+  await import(new URL("./test-body-worker.mjs", import.meta.url));
   await import(new URL("./test-reading.mjs", import.meta.url));
 } finally {
   await rm(directory, { recursive: true, force: true });

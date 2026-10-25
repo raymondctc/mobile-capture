@@ -3,6 +3,7 @@ import base64
 import datetime as dt
 import io
 import json
+import math
 import os
 import threading
 import time
@@ -262,6 +263,12 @@ class Capture:
                      "cache": {}, "timings": {"send": 0, "wait": -1, "receive": 0}}
             if flow.response:
                 detail = dict(detail, status=flow.response.status_code, response_headers=self.headers(flow.response), response_body=self.body_detail(response))
+                start, end = flow.request.timestamp_start, flow.response.timestamp_end
+                if (isinstance(start, (int, float)) and isinstance(end, (int, float))
+                        and math.isfinite(start) and math.isfinite(end) and end >= start):
+                    duration = (end - start) * 1000
+                    if math.isfinite(duration):
+                        detail["duration_ms"] = duration
                 events.append(self.event(flow, "response", f"{flow.response.status_code} {flow.request.method} {flow.request.pretty_url}", detail, flow.response.timestamp_end or flow.response.timestamp_start))
             elif flow.error:
                 entry["_error"] = str(flow.error)[:2048]

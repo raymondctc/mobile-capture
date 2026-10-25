@@ -60,15 +60,7 @@ impl Index {
             .map_err(|e| e.to_string())?;
         db.execute_batch(
             "PRAGMA journal_mode=DELETE; PRAGMA synchronous=NORMAL;
-             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS events (
-               sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
-               timestamp TEXT NOT NULL, source_rank INTEGER NOT NULL, line INTEGER NOT NULL,
-               source TEXT NOT NULL, path TEXT NOT NULL, offset INTEGER NOT NULL,
-               length INTEGER NOT NULL, raw_hash TEXT NOT NULL, preview TEXT NOT NULL,
-               search TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS timeline_order ON events(timestamp,source_rank,line,id);
-             CREATE INDEX IF NOT EXISTS timeline_source ON events(source,sequence);",
+             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
         )
         .map_err(|e| e.to_string())?;
         let version: Option<String> = db
@@ -77,12 +69,25 @@ impl Index {
             })
             .optional()
             .map_err(|e| e.to_string())?;
-        if version.as_deref() != Some("2") {
-            db.execute_batch("DELETE FROM events; DELETE FROM meta;")
-                .map_err(|e| e.to_string())?;
-            db.execute("INSERT INTO meta VALUES ('version','2')", [])
-                .map_err(|e| e.to_string())?;
+        if version.as_deref() != Some("3") {
+            db.execute_batch(
+                "BEGIN; DROP TABLE IF EXISTS events; DELETE FROM meta;
+                INSERT INTO meta VALUES ('version','3'); COMMIT;",
+            )
+            .map_err(|e| e.to_string())?;
         }
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS events (
+               sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
+               timestamp TEXT NOT NULL, source_rank INTEGER NOT NULL, line INTEGER NOT NULL,
+               source TEXT NOT NULL, path TEXT NOT NULL, offset INTEGER NOT NULL,
+               length INTEGER NOT NULL, raw_hash TEXT NOT NULL, preview TEXT NOT NULL,
+               search TEXT NOT NULL, log_level TEXT);
+             CREATE INDEX IF NOT EXISTS timeline_order ON events(timestamp,source_rank,line,id);
+             CREATE INDEX IF NOT EXISTS timeline_source ON events(source,sequence);
+             CREATE INDEX IF NOT EXISTS timeline_log_level ON events(source,log_level,timestamp,source_rank,line,id);",
+        )
+        .map_err(|e| e.to_string())?;
         let generation = db
             .query_row("SELECT value FROM meta WHERE key='generation'", [], |r| {
                 r.get(0)
@@ -310,13 +315,19 @@ impl Index {
                 &descriptor.started_at,
             );
             let search = normalize::searchable(&event, &record.bytes, &descriptor.metadata);
+            let log_level = (record.source == "logs").then(|| {
+                event.detail["level"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_owned()
+            });
             timeline::preview(&mut event);
             let preview = serde_json::to_string(&event).map_err(|e| e.to_string())?;
             transaction.execute(
-                "INSERT INTO events (id,timestamp,source_rank,line,source,path,offset,length,raw_hash,preview,search)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                "INSERT INTO events (id,timestamp,source_rank,line,source,path,offset,length,raw_hash,preview,search,log_level)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
                 params![event.id, event.timestamp, source_rank(record.source), record.line as i64, record.source,
-                    record.path, record.offset as i64, record.bytes.len() as i64, timeline::hash(&record.bytes), preview, search]
+                    record.path, record.offset as i64, record.bytes.len() as i64, timeline::hash(&record.bytes), preview, search, log_level]
             ).map_err(|e| e.to_string())?;
         }
         let state_json = serde_json::to_string(&sources).map_err(|e| e.to_string())?;

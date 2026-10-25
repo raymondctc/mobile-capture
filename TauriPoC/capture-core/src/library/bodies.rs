@@ -1,10 +1,94 @@
-use super::{BodyDescriptor, BodySide};
+use super::{BodyContent, BodyDescriptor, BodyDocument, BodySide, BodyTextBasis, Media, Retained};
 use crate::model::Event;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::read::{DeflateDecoder, MultiGzDecoder, ZlibDecoder};
 use std::io::Read;
 
 const DECODED_BOUND: usize = 32 * 1024 * 1024;
+
+pub(super) fn document(event: &Event, side: BodySide) -> BodyDocument {
+    let content_type = header(event, side, "content-type");
+    let content_encoding = encoding(event, side);
+    let (raw, _) = view(event, side, false);
+    let retained = if raw.available {
+        Retained::Available { bytes: raw.bytes }
+    } else {
+        Retained::Unavailable {
+            reason: raw.reason.unwrap_or_else(|| "Body unavailable".into()),
+        }
+    };
+    let (body, bytes) = view(event, side, content_encoding.is_some());
+    let basis = if body.byte_basis == "content" {
+        BodyTextBasis::Decoded
+    } else {
+        BodyTextBasis::Retained
+    };
+    let content = if !body.available {
+        BodyContent::Unavailable {
+            reason: body.reason.unwrap_or_else(|| "Body unavailable".into()),
+        }
+    } else if !body.text {
+        BodyContent::Binary {
+            bytes: body.bytes,
+            basis,
+            reason: "Body is binary or is not valid UTF-8.".into(),
+        }
+    } else {
+        BodyContent::Text {
+            original: String::from_utf8(bytes).expect("text body was validated"),
+            bytes: body.bytes,
+            basis,
+        }
+    };
+    let label = match content_type
+        .as_deref()
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "application/x-protobuf" | "application/protobuf" | "application/vnd.google.protobuf" => {
+            "Protobuf"
+        }
+        "application/grpc" | "application/grpc+proto" => "gRPC / Protobuf",
+        "application/json" => "JSON",
+        "application/octet-stream" => "Binary",
+        "" => "Unspecified media type",
+        _ => "Declared content",
+    }
+    .to_owned();
+    BodyDocument {
+        retained,
+        media: Media {
+            content_type,
+            label,
+            content_encoding,
+        },
+        content,
+    }
+}
+
+fn header(event: &Event, side: BodySide, name: &str) -> Option<String> {
+    let key = match side {
+        BodySide::Request => "request_headers",
+        BodySide::Response => "response_headers",
+    };
+    event.detail[key]
+        .as_array()?
+        .iter()
+        .filter(|h| {
+            h["name"]
+                .as_str()
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
+        .filter_map(|h| h["value"].as_str())
+        .map(str::trim)
+        .find(|v| !v.is_empty())
+        .map(str::to_owned)
+}
 
 pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescriptor, Vec<u8>) {
     let bounded = |mut descriptor: BodyDescriptor| {
@@ -56,7 +140,12 @@ pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescrip
         reason: raw.as_ref().err().cloned(),
         bytes: raw.as_ref().map_or(0, |v| v.len() as u64),
         text: raw.as_ref().is_ok_and(|b| is_text(b)),
-        byte_basis: if decoded { "content" } else { "raw_content" }.into(),
+        byte_basis: if decoded && raw.as_ref().is_ok_and(|bytes| !bytes.is_empty()) {
+            "content"
+        } else {
+            "raw_content"
+        }
+        .into(),
         content_encoding: encoding.clone(),
         decoded_available: false,
         decoded_reason: None,
@@ -65,6 +154,10 @@ pub(super) fn view(event: &Event, side: BodySide, decoded: bool) -> (BodyDescrip
         descriptor.decoded_reason = descriptor.reason.clone();
         return (bounded(descriptor), vec![]);
     };
+    if raw.is_empty() {
+        descriptor.decoded_available = true;
+        return (bounded(descriptor), raw);
+    }
     if encoding.is_none() {
         descriptor.decoded_available = raw.len() <= DECODED_BOUND;
         if !descriptor.decoded_available {

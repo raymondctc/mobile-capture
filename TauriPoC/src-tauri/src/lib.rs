@@ -2,8 +2,8 @@ use capture_poc_core::{
     android::AndroidApplication,
     doctor::{self as host_doctor, DoctorReport, DoctorRequest, DoctorSources},
     library::{
-        BodyChunk, BodySide, DataChunk, EventDetail, SessionCatalog, SessionDescriptor,
-        TimelinePage, TimelineQuery,
+        BodyChunk, BodyDocuments, BodySide, DataChunk, EventDetail, EventRef, SessionCatalog,
+        SessionDescriptor, TimelinePage, TimelineQuery,
     },
     model::*,
     preferences::Preferences,
@@ -15,6 +15,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Manager,
 };
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
 
@@ -188,19 +189,22 @@ async fn event_detail(
 #[tauri::command]
 async fn detail_chunk(
     state: tauri::State<'_, DesktopState>,
-    id: String,
+    reference: EventRef,
     offset: u64,
     limit: u32,
 ) -> Result<DataChunk> {
     execute(state.inner().clone(), move |s| {
-        s.with_reader(|reader| reader.detail_chunk(&id, offset, limit))
+        s.with_reader(|reader| {
+            reader.check_reference(&reference)?;
+            reader.detail_chunk(&reference.event_id, offset, limit)
+        })
     })
     .await
 }
 #[tauri::command]
 async fn body_chunk(
     state: tauri::State<'_, DesktopState>,
-    id: String,
+    reference: EventRef,
     side: BodySide,
     offset: u64,
     limit: u32,
@@ -209,13 +213,99 @@ async fn body_chunk(
     execute(state.inner().clone(), move |s| {
         s.with_reader(|reader| {
             if decoded {
-                reader.decoded_body_chunk(&id, side, offset, limit)
+                reader.decoded_body_chunk(&reference, side, offset, limit)
             } else {
-                reader.body_chunk(&id, side, offset, limit)
+                reader.body_chunk(&reference, side, offset, limit)
             }
         })
     })
     .await
+}
+#[tauri::command]
+async fn body_documents(
+    state: tauri::State<'_, DesktopState>,
+    reference: EventRef,
+) -> Result<BodyDocuments> {
+    execute(state.inner().clone(), move |s| {
+        s.with_reader(|reader| reader.body_documents(&reference))
+    })
+    .await
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RetainedAction {
+    CopyBase64,
+    Save,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RetainedOutcome {
+    Copied { bytes: usize },
+    Saved { bytes: usize, path: PathBuf },
+    Cancelled,
+}
+
+#[tauri::command]
+async fn retained_body(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    reference: EventRef,
+    side: BodySide,
+    action: RetainedAction,
+) -> Result<RetainedOutcome> {
+    execute(state.inner().clone(), move |s| {
+        let body = s.with_reader(|reader| reader.retained_body(&reference, side))?;
+        match action {
+            RetainedAction::CopyBase64 => {
+                let text = capture_poc_core::retained::base64_body(&body)?;
+                app.clipboard()
+                    .write_text(text)
+                    .map_err(|e| e.to_string())?;
+                Ok(RetainedOutcome::Copied {
+                    bytes: body.bytes.len(),
+                })
+            }
+            RetainedAction::Save => {
+                let Some(destination) = app
+                    .dialog()
+                    .file()
+                    .set_file_name(match side {
+                        BodySide::Request => "request-body.bin",
+                        BodySide::Response => "response-body.bin",
+                    })
+                    .blocking_save_file()
+                else {
+                    return Ok(RetainedOutcome::Cancelled);
+                };
+                let destination = destination.into_path().map_err(|e| e.to_string())?;
+                let mut protected =
+                    s.with_reader(|reader| Ok(vec![reader.descriptor().directory.clone()]))?;
+                if let Some(directory) =
+                    s.with_owner(|owner| Ok(owner.directory().map(PathBuf::from)))?
+                {
+                    protected.push(directory);
+                }
+                let path = capture_poc_core::retained::save_body(&body, &destination, &protected)?;
+                Ok(RetainedOutcome::Saved {
+                    path,
+                    bytes: body.bytes.len(),
+                })
+            }
+        }
+    })
+    .await
+}
+#[tauri::command]
+async fn copy_text(app: tauri::AppHandle, text: String) -> Result<()> {
+    if text.len() > 128 * 1024 * 1024 {
+        return Err("Clipboard text exceeds 128 MiB".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        app.clipboard().write_text(text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn preferences(state: tauri::State<'_, DesktopState>) -> Result<Preferences> {
@@ -543,6 +633,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state = Desktop::open(app.handle()).map_err(std::io::Error::other)?;
@@ -600,6 +691,9 @@ pub fn run() {
             event_detail,
             detail_chunk,
             body_chunk,
+            body_documents,
+            retained_body,
+            copy_text,
             preferences,
             save_preferences,
             doctor,
