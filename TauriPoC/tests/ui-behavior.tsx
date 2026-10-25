@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import "./body-document-behavior";
 import {
   captureSafe,
   operationBusy,
@@ -9,6 +10,7 @@ import {
 } from "../src/api";
 import {
   contextSchema,
+  timelineQuerySchema,
   dataChunkSchema,
   decodeChunk,
   networkPolicySchema,
@@ -16,6 +18,23 @@ import {
 import { checkFreshness, timelineFence } from "../src/state";
 import { hexChunk } from "../src/Details";
 import { checkHandoffBehavior } from "./handoff-behavior";
+
+const timelineQuery = {
+  source: null,
+  log_level: "E",
+  search: "",
+  order: "newest_first",
+  limit: 200,
+  cursor: null,
+  after_sequence: null,
+  through_sequence: null,
+};
+assert.equal(timelineQuerySchema.safeParse(timelineQuery).success, true);
+assert.equal(
+  timelineQuerySchema.safeParse({ ...timelineQuery, log_level: "ERROR" })
+    .success,
+  false,
+);
 
 const now = Date.parse("2026-10-23T12:00:00Z");
 const check: CheckResult = {

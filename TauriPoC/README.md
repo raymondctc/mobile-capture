@@ -47,7 +47,7 @@ During a recording, add a marker to describe a reproduction step. If adding a ma
 
 Open **Saved sessions** to choose a capture in the configured folder. Use **Open folder** for another saved session. Opening evidence does not replace the active capture controls.
 
-Search covers the complete indexed session, including full details and decoded body text. Select a source to include network events, logs, or markers. The indexing indicator shows any remaining backlog. Results can grow as indexing catches up.
+Search covers the complete indexed session, including full details and decoded body text. Select a source to include network events, logs, or markers. **Log level** filters logs by their exact severity and keeps network events and markers visible. The indexing indicator shows any remaining backlog. Results can grow as indexing catches up.
 
 Use the reading controls as follows.
 
@@ -63,9 +63,15 @@ If a page cursor becomes invalid, the workspace reports the reason and reloads t
 
 Select an event to open the inspector on the right. Choose **Close event details** or press Escape inside the inspector to return to the timeline. The recording controls stay in the upper right.
 
-The inspector shows full metadata, retained request bodies, or retained response bodies. Content loads in bounded 64 KiB chunks. Use the chunk buttons to read the complete retained content. Text uses UTF-8. Binary content has a hexadecimal view. Compressed bodies offer a decoded view when safe decoding is available. Original retained body bytes remain separate from decoded content. Unavailable bodies and decoding limits have explicit reasons.
+Network events open **Response** when retained, including an empty response. **Request** is the fallback when the response was not recorded. Supported content encodings decode automatically. Valid JSON opens formatted. Formatting preserves number spellings, duplicate keys, key order, and string escapes. **Original** shows the exact unformatted decoded UTF-8 text. If formatting would exceed 64 MiB, the inspector shows the complete original with a reason.
 
-Use **Reveal raw source** to locate the admitted source file for the selected event. Read-only inspection never changes raw evidence.
+**Copy original** and **Copy formatted** copy the complete body through the native clipboard. **Find**, Command+F, or Control+F searches both complete retained text bodies, including content outside the visible window. Find is literal and case insensitive. Counts appear for both tabs. Enter and Shift+Enter move between matches and switch tabs, with wraparound. Escape closes Find before the inspector.
+
+The body view shows bounded character windows, including long single lines. Use **Previous window** and **Next window** to read the rest. Full-body Find and copy cover the complete text independently of this window. Binary bodies, unavailable content, decoding failures, and copy failures have visible reasons. **Retained bytes · hexadecimal** keeps original compressed or binary bytes accessible in 64 KiB chunks. **Full metadata and headers** provides the complete chunked metadata view.
+
+Logs show severity and the complete message first. Long messages use the same bounded windows. Expand **Log metadata** for the tag, PID, and TID. Timeline rows label HTTP method, status, and recorded duration, or log severity, tag, and message. Duration is the request-start to response-end interval when valid collector timestamps are available. Older sessions and incomplete timing can have no duration.
+
+The outlined **Reveal raw source** button stays in the inspector footer while content scrolls. Use it to locate the admitted source file for the selected event. Read-only inspection never changes raw evidence.
 
 ## Stop, recover, and save
 

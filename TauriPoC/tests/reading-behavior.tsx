@@ -15,6 +15,7 @@ import {
 import { userEvent } from "@testing-library/user-event";
 import { Capture } from "../src/Capture";
 import { Details } from "../src/Details";
+import { bodyDocuments } from "../src/body-owner";
 import { Timeline } from "../src/Timeline";
 import { OperationStatus } from "../src/Operation";
 import { Dialog } from "../src/ui";
@@ -94,13 +95,30 @@ const event = (id: string) => ({
   kind: "http_request",
   summary: `GET https://example.invalid/${id}`,
   raw_ref: "flows:1",
+  detail: {},
   clock_uncertainty_ms: null,
   original_timestamp: null,
   received_at: null,
 });
+const bodyPair = (response = "body", request = "request") => ({
+  request: {
+    kind: "text",
+    original: request,
+    bytes: new TextEncoder().encode(request).length,
+    basis: "retained",
+  },
+  response: {
+    kind: "text",
+    original: response,
+    bytes: new TextEncoder().encode(response).length,
+    basis: "decoded",
+  },
+});
+product.bodyDocuments = async () => bodyPair();
 const detail = (id: string) => ({
   event: event(id),
   detail_bytes: 10,
+  detail_complete: true,
   bodies: [],
 });
 const progress = {
@@ -184,7 +202,9 @@ async function checkTitlebarDragging() {
     {
       addEventListener(type: string, listener: EventListener) {
         document.addEventListener(type, listener);
-        removeListeners.push(() => document.removeEventListener(type, listener));
+        removeListeners.push(() =>
+          document.removeEventListener(type, listener),
+        );
       },
     },
     HTMLElement,
@@ -255,7 +275,10 @@ async function checkTitlebarDragging() {
       target: within(toolbar).getByRole("combobox", { name: "Log app" }),
     },
     { name: "Device select", target: within(toolbar).getByLabelText("Device") },
-    { name: "Sources select", target: within(toolbar).getByLabelText("Sources") },
+    {
+      name: "Sources select",
+      target: within(toolbar).getByLabelText("Sources"),
+    },
   ];
   for (const { name, target } of blockedTargets) {
     fireEvent.mouseDown(target, { button: 0, detail: 1, ...position });
@@ -891,7 +914,39 @@ async function checkTimeline() {
   const requests = new Map<string, ReturnType<typeof deferred>>();
   product.query = async (query) => {
     queries.push(query);
-    return query.cursor ? { ...page, rows: [], next_cursor: null } : page;
+    return query.cursor
+      ? { ...page, rows: [], next_cursor: null }
+      : {
+          ...page,
+          rows: [
+            {
+              ...page.rows[0],
+              event: {
+                ...page.rows[0].event,
+                detail: { method: "GET", status: 201, duration_ms: 125 },
+              },
+            },
+            page.rows[1],
+            {
+              sequence: 3,
+              event: {
+                ...event("log-error"),
+                source: "logs",
+                summary: "Error tag: message",
+                detail: { level: "E", tag: "Error tag", message: "message" },
+              },
+            },
+            {
+              sequence: 4,
+              event: {
+                ...event("log-unknown"),
+                source: "logs",
+                summary: "unparsed message",
+                detail: {},
+              },
+            },
+          ],
+        };
   };
   product.detail = (id) => {
     const pending = deferred();
@@ -903,6 +958,28 @@ async function checkTimeline() {
   await screen.findByRole("button", {
     name: /GET https:\/\/example.invalid\/one/,
   });
+  assert.ok(screen.getByText("Status 201"));
+  assert.ok(screen.getByText("Duration 125 ms"));
+  assert.ok(
+    screen
+      .getByText("Error", { selector: "span" })
+      .className.includes("text-red"),
+  );
+  assert.ok(screen.getByText("Unknown", { selector: "span" }));
+  assert.ok(
+    screen.getByText("Error tag").className.includes("text-muted-foreground"),
+  );
+  await user.click(screen.getByRole("button", { name: "Older page" }));
+  await waitFor(() => assert.equal(queries.at(-1).cursor, "older"));
+  await user.selectOptions(screen.getByLabelText("Log level filter"), "E");
+  await waitFor(() => assert.equal(queries.at(-1).log_level, "E"));
+  assert.equal(queries.at(-1).cursor, null);
+  assert.equal(
+    screen.getByRole("button", { name: "Newer page" }).disabled,
+    true,
+  );
+  await user.selectOptions(screen.getByLabelText("Log level filter"), "");
+  await waitFor(() => assert.equal(queries.at(-1).log_level, null));
   await user.click(screen.getByRole("button", { name: "Older page" }));
   await waitFor(() => assert.equal(queries.at(-1).cursor, "older"));
   await user.click(screen.getByRole("checkbox", { name: "Follow latest" }));
@@ -932,6 +1009,11 @@ async function checkTimeline() {
   await screen.findByText("two", { selector: "dd" });
   await act(async () => old.resolve(detail("one")));
   assert.equal(screen.queryByText("one", { selector: "dd" }), null);
+  await user.keyboard("{Control>}f{/Control}");
+  await screen.findByRole("search", { name: "Find in both bodies" });
+  await user.keyboard("{Escape}");
+  assert.equal(screen.queryByRole("search"), null);
+  assert.ok(screen.getByRole("dialog", { name: "Event details" }));
   await user.click(screen.getByRole("button", { name: "Older page" }));
   await screen.findByText("Selected outside this page");
   await user.click(screen.getByRole("button", { name: "Close event details" }));
@@ -969,78 +1051,159 @@ async function checkTimeline() {
   );
 }
 async function checkDetails() {
-  const bodyCalls: unknown[] = [];
-  const metadataCalls: unknown[] = [];
-  product.detailChunk = async (...args) => {
-    metadataCalls.push(args);
-    return emptyChunk;
+  const original =
+    '{"10":9007199254740993,"2":-0,"e":1e+09,"first":"needle","tail":"' +
+    "x".repeat(90000) +
+    'NEEDLE"}';
+  const pair = bodyPair(original, "request needle");
+  const copies: string[] = [];
+  product.bodyDocuments = async () => pair;
+  product.copyText = async (text) => {
+    copies.push(text);
   };
+  const mounted = render(
+    <Details key="one" detail={detail("one")} offPage={false} wrap />,
+  );
+  await screen.findByRole("tab", { name: "Response" });
+  assert.equal(
+    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    "true",
+  );
+  assert.match(
+    (await screen.findByLabelText("Body content")).textContent!,
+    /9007199254740993/,
+  );
+  assert.ok(screen.getByLabelText("Body content").textContent!.length < 20000);
+  await user.click(screen.getByRole("button", { name: "Copy original" }));
+  await waitFor(() => assert.equal(copies.at(-1), original));
+  await user.click(screen.getByRole("button", { name: "Copy formatted" }));
+  await waitFor(() => assert.match(copies.at(-1)!, /"10": 9007199254740993/));
+  assert.ok(copies.at(-1)!.endsWith('NEEDLE"\n}'));
+  await user.keyboard("{Meta>}f{/Meta}");
+  const find = screen.getByRole("textbox", {
+    name: "Find in request and response",
+  });
+  assert.equal(document.activeElement, find);
+  await user.type(find, "needle");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Request (1)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.keyboard("{Enter}");
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Response (2)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
+  );
+  await waitFor(() =>
+    assert.match(screen.getByLabelText("Body content").textContent!, /NEEDLE/),
+  );
+  assert.ok(screen.getByLabelText("Body content").querySelector("mark"));
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  await user.keyboard("{Shift>}{Enter}{/Shift}");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/),
+  );
+  await user.keyboard("{Escape}");
+  assert.equal(screen.queryByRole("search"), null);
+  assert.equal(
+    document.activeElement,
+    screen.getByRole("button", { name: "Find" }),
+  );
+  product.copyText = async () => {
+    throw new Error("clipboard unavailable");
+  };
+  await user.click(screen.getByRole("button", { name: "Copy original" }));
+  assert.match(
+    (await screen.findByRole("alert")).textContent!,
+    /clipboard unavailable/,
+  );
+  const reveal = deferred();
+  product.reveal = async () => reveal.promise;
+  const revealButton = screen.getByRole("button", {
+    name: "Reveal raw source",
+  });
+  assert.equal(revealButton.parentElement!.tagName, "FOOTER");
+  await user.click(revealButton);
+  await act(async () => reveal.reject(new Error("reveal failed")));
+  assert.ok(
+    screen
+      .getAllByRole("alert")
+      .some((node) => node.textContent!.includes("reveal failed")),
+  );
+  product.bodyDocuments = async () => bodyPair("", "available request");
+  mounted.rerender(
+    <Details key="empty" detail={detail("empty")} offPage={false} wrap />,
+  );
+  await screen.findByText("Empty body");
+  assert.equal(
+    screen.getByRole("tab", { name: "Response" }).getAttribute("aria-selected"),
+    "true",
+  );
+  product.bodyDocuments = async () => ({
+    request: bodyPair().request,
+    response: {
+      kind: "unavailable",
+      reason: "Not recorded",
+      retained_available: false,
+    },
+  });
+  mounted.rerender(
+    <Details key="missing" detail={detail("missing")} offPage={false} wrap />,
+  );
+  await screen.findByText(/Response unavailable/);
+  assert.equal(
+    screen.getByRole("tab", { name: "Request" }).getAttribute("aria-selected"),
+    "true",
+  );
+  const bodyCalls: unknown[] = [];
+  product.bodyDocuments = async () => ({
+    request: {
+      kind: "unavailable",
+      reason: "Missing request",
+      retained_available: false,
+    },
+    response: { kind: "binary", reason: "Binary body", bytes: 65539 },
+  });
   product.body = async (...args) => {
     bodyCalls.push(args);
     return {
+      body: { available: true },
       chunk: {
         offset: args[2],
         total_bytes: 65539,
-        data_base64: args[3] ? "ZGVjb2RlZA==" : "AP9B",
+        data_base64: "AP9B",
         next_offset: args[2] === 0 ? 65536 : null,
       },
     };
   };
-  const binary = {
-    ...detail("binary"),
-    bodies: [
-      {
-        side: "response",
-        available: true,
-        bytes: 65539,
-        text: false,
-        content_encoding: "gzip",
-        decoded_available: true,
-        reason: null,
-        decoded_reason: null,
-      },
-    ],
-  };
-  const mounted = render(
-    <Details key="binary" detail={binary} offPage={false} wrap />,
+  mounted.rerender(
+    <Details key="binary" detail={detail("binary")} offPage={false} wrap />,
   );
-  await user.click(screen.getByRole("button", { name: /Response/ }));
-  await waitFor(() =>
-    assert.match(
-      screen.getByText(/00000000/, { selector: "pre" }).textContent!,
-      /00 ff 41/,
-    ),
+  await screen.findByText(/Binary body/);
+  await user.click(
+    screen.getByRole("button", { name: "Retained bytes · hexadecimal" }),
   );
+  await screen.findByText(/00 ff 41/, { selector: "pre" });
   await user.click(screen.getByRole("button", { name: "Next 64 KiB" }));
   await waitFor(() =>
-    assert.deepEqual(bodyCalls.at(-1), ["binary", "response", 65536, false]),
+    assert.deepEqual(bodyCalls.at(-1), ["binary", "response", 65536]),
   );
-  await user.click(screen.getByRole("button", { name: "Decode gzip" }));
-  await screen.findByText("decoded", { selector: "pre" });
-  assert.deepEqual(bodyCalls.at(-1), ["binary", "response", 0, true]);
-  const reveal = deferred();
-  product.reveal = async () => reveal.promise;
-  await user.click(screen.getByRole("button", { name: "Reveal raw source" }));
-  assert.equal(
-    screen.getByRole("button", { name: "Revealing raw source…" }).disabled,
-    true,
-  );
-  await act(async () => reveal.reject(new Error("reveal failed")));
-  assert.match(screen.getByRole("alert").textContent!, /reveal failed/);
-  mounted.rerender(
-    <Details
-      key="replacement"
-      detail={detail("replacement")}
-      offPage={false}
-      wrap
-    />,
-  );
-  await waitFor(() =>
-    assert.deepEqual(metadataCalls.at(-1), ["replacement", 0]),
-  );
-  assert.equal(screen.queryByRole("alert"), null);
   const abandoned = deferred();
-  product.detailChunk = () => abandoned.promise;
+  product.bodyDocuments = () => abandoned.promise;
   mounted.rerender(
     <Details
       key="abandoned"
@@ -1049,13 +1212,114 @@ async function checkDetails() {
       wrap
     />,
   );
-  mounted.unmount();
-  await act(async () =>
-    abandoned.resolve({ ...emptyChunk, data_base64: "YWJj" }),
+  const metadata = new TextEncoder().encode(
+    JSON.stringify({
+      level: "E",
+      tag: "Full tag",
+      pid: 123,
+      tid: 456,
+      message: "full message " + "日".repeat(22000) + " full-tail",
+    }),
   );
-  assert.equal(screen.queryByText("abc"), null);
+  product.detailChunk = async (_id, offset) => ({
+    offset,
+    total_bytes: metadata.length,
+    data_base64: btoa(
+      String.fromCharCode(...metadata.slice(offset, offset + 65536)),
+    ),
+    next_offset: offset + 65536 < metadata.length ? offset + 65536 : null,
+  });
+  mounted.rerender(
+    <Details
+      key="log"
+      detail={{
+        ...detail("log"),
+        detail_complete: false,
+        event: {
+          ...event("log"),
+          source: "logs",
+          detail: { message: "truncated" },
+        },
+      }}
+      offPage={false}
+      wrap
+    />,
+  );
+  await screen.findByText("Error", { selector: "span" });
+  assert.match(
+    screen.getByLabelText("Body content").textContent!,
+    /full message/,
+  );
+  assert.equal(screen.queryByText("truncated"), null);
+  await act(async () => abandoned.resolve(bodyPair("stale body")));
+  assert.equal(screen.queryByText("stale body"), null);
+  await user.click(screen.getByRole("button", { name: "Next window" }));
+  await user.click(screen.getByRole("button", { name: "Next window" }));
+  assert.match(screen.getByLabelText("Body content").textContent!, /full-tail/);
+  const createOwner = bodyDocuments.create;
+  const delayedFind = deferred();
+  let staleReadStarted = false;
+  let disposed = false;
+  bodyDocuments.create = () => {
+    const owner = createOwner();
+    return {
+      read: (operation) => {
+        if (operation.kind === "find" && operation.query === "old") {
+          staleReadStarted = true;
+          return delayedFind.promise;
+        }
+        return owner.read(operation);
+      },
+      dispose: () => {
+        disposed = true;
+        owner.dispose();
+      },
+    };
+  };
+  product.bodyDocuments = async () => bodyPair("fresh", "old");
+  mounted.rerender(
+    <Details
+      key="query-race"
+      detail={detail("query-race")}
+      offPage={false}
+      wrap
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Find" }));
+  const raceInput = screen.getByRole("textbox", {
+    name: "Find in request and response",
+  });
+  await user.type(raceInput, "old");
+  await waitFor(() => assert.equal(staleReadStarted, true));
+  await user.clear(raceInput);
+  await user.type(raceInput, "fresh");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 1 matches/),
+  );
+  await act(async () =>
+    delayedFind.resolve({
+      kind: "found",
+      search: {
+        total: 99,
+        request: 99,
+        response: 0,
+        active: { side: "request", start: 0, end: 3, ordinal: 98 },
+      },
+    }),
+  );
+  assert.match(screen.getByRole("search").textContent!, /1 of 1 matches/);
+  assert.equal(
+    screen
+      .getByRole("tab", { name: "Response (1)" })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  mounted.unmount();
+  assert.equal(disposed, true);
+  bodyDocuments.create = createOwner;
+  product.bodyDocuments = async () => bodyPair();
   console.log(
-    "Detail DOM checks passed. 64 KiB binary paging, decoded content, local raw errors, mount reset and disposed reads.",
+    "Detail DOM checks passed. Response-first text and empty bodies, complete Find and copy, lexical JSON fidelity, cross-tab reverse/wrap, tail highlights, binary byte paging, copy errors, full log reads, and disposed body reads.",
   );
 }
 async function checkModal() {
@@ -1401,6 +1665,16 @@ async function checkViewPreservation() {
   assert.equal(getComputedStyle(evidence).display, "none");
   assert.equal(screen.queryByRole("dialog", { name: "Event details" }), null);
   assert.equal(evidence.contains(document.activeElement), false);
+  const hiddenFind = new KeyboardEvent("keydown", {
+    key: "f",
+    metaKey: true,
+    cancelable: true,
+    bubbles: true,
+  });
+  document.dispatchEvent(hiddenFind);
+  assert.equal(hiddenFind.defaultPrevented, false);
+  assert.equal(evidence.querySelector('[role="search"]'), null);
+
   const folder = screen.getByLabelText("Session folder");
   await user.clear(folder);
   await user.type(folder, "/unsaved-evidence");
@@ -1533,8 +1807,8 @@ async function checkWholeApp() {
     product.detail = async () => (read === "detail" ? held.promise : withBody);
     product.detailChunk = async () =>
       read === "metadata" ? held.promise : emptyChunk;
-    product.body = async () =>
-      read === "body" ? held.promise : { chunk: emptyChunk };
+    product.bodyDocuments = async () =>
+      read === "body" ? held.promise : bodyPair();
     product.reveal = async () => (read === "raw" ? held.promise : undefined);
     render(<App />);
     const stop = await screen.findByRole(
@@ -1549,8 +1823,12 @@ async function checkWholeApp() {
         name: /GET https:\/\/example.invalid\/one/,
       }),
     );
-    if (read === "body")
-      await user.click(await screen.findByRole("button", { name: /Response/ }));
+    if (read === "metadata")
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Full metadata and headers",
+        }),
+      );
     if (read === "raw")
       await user.click(
         await screen.findByRole("button", { name: "Reveal raw source" }),
@@ -1574,7 +1852,7 @@ async function checkWholeApp() {
         read === "detail"
           ? withBody
           : read === "body"
-            ? { chunk: emptyChunk }
+            ? bodyPair()
             : read === "raw"
               ? undefined
               : emptyChunk,

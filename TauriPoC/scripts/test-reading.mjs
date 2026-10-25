@@ -65,6 +65,7 @@ try {
     outfile: output,
     bundle: true,
     platform: "node",
+    define: { "import.meta.url": JSON.stringify(import.meta.url) },
     format: "cjs",
     jsx: "automatic",
     external: [

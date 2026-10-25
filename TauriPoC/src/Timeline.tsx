@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "./api";
 import {
   formatBytes,
+  logLevelSchema,
+  type LogLevel,
   product,
   type EventDetail,
   type SessionDescriptor,
@@ -17,10 +19,12 @@ import {
 } from "./product";
 import { timelineFence, useReading } from "./state";
 import { Details } from "./Details";
+import { EventSummary } from "./EventSummary";
 import { X } from "lucide-react";
 
 type QueryState = {
   source: string;
+  logLevel: LogLevel | null;
   search: string;
   cursor: string | null;
   previous: (string | null)[];
@@ -42,6 +46,7 @@ type Inspector =
       ));
 const initialQuery: QueryState = {
   source: "",
+  logLevel: null,
   search: "",
   cursor: null,
   previous: [],
@@ -51,8 +56,10 @@ const initialQuery: QueryState = {
 };
 export function Timeline({
   inspected,
+  visible = true,
 }: {
   inspected: SessionDescriptor | undefined;
+  visible?: boolean;
 }) {
   const [reading, setReading] = useReading();
   const [query, setQuery] = useState<QueryState>(initialQuery);
@@ -97,6 +104,7 @@ export function Timeline({
     if (!inspected) return;
     const input: TimelineQuery = {
       source: query.source || null,
+      log_level: query.logLevel,
       search: query.search,
       order: reading.order,
       limit: 200,
@@ -266,6 +274,28 @@ export function Timeline({
             <option value="network">Network</option>
             <option value="logs">Logs</option>
             <option value="marker">Markers</option>
+          </NativeSelect>
+          <NativeSelect
+            aria-label="Log level filter"
+            value={query.logLevel ?? ""}
+            disabled={!inspected}
+            onChange={(event) => {
+              const value = event.target.value;
+              const level = logLevelSchema.safeParse(value);
+              if (value === "" || level.success)
+                reset({ logLevel: level.success ? level.data : null });
+            }}
+          >
+            <option value="">All log levels</option>
+            <option value="V">Verbose</option>
+            <option value="D">Debug</option>
+            <option value="I">Info</option>
+            <option value="W">Warning</option>
+            <option value="E">Error</option>
+            <option value="F">Fatal</option>
+            <option value="A">Assert</option>
+            <option value="S">Silent</option>
+            <option value="unknown">Unknown</option>
           </NativeSelect>
           <NativeSelect
             aria-label="Timeline order"
@@ -445,12 +475,7 @@ export function Timeline({
                           ? "MARK"
                           : "LOG"}
                     </Badge>
-                    <span className="flex min-w-0 flex-col gap-1 [&_strong]:text-xs [&_strong]:font-normal [&_strong]:text-muted-foreground [&>span]:text-sm [&>span]:leading-5">
-                      <strong>{event.kind.replaceAll("_", " ")}</strong>
-                      <span className="event-summary select-text">
-                        {event.summary}
-                      </span>
-                    </span>
+                    <EventSummary event={event} />
                   </Button>
                 </div>
               ))}
@@ -497,7 +522,7 @@ export function Timeline({
           aria-modal={false}
           aria-labelledby="event-inspector-title"
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
+            if (visible && event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();
               closeInspector();
@@ -516,7 +541,7 @@ export function Timeline({
               <X aria-hidden="true" />
             </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+          <div className="flex min-h-0 flex-1 flex-col">
             {visibleInspector.kind === "loading" && (
               <p role="status">Reading event…</p>
             )}
@@ -537,6 +562,7 @@ export function Timeline({
                 detail={visibleInspector.detail}
                 offPage={!!selectionOffPage}
                 wrap={reading.wrap}
+                visible={visible}
               />
             )}
           </div>

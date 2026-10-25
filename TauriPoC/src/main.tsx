@@ -547,7 +547,7 @@ export function App() {
                 revision={revision}
                 visible={view === "capture"}
               />
-              <Timeline inspected={inspected} />
+              <Timeline inspected={inspected} visible={view === "capture"} />
             </section>
             <section
               aria-label="Settings view"

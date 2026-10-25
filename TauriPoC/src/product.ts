@@ -81,8 +81,20 @@ export const progressSchema = z.object({
   complete: z.boolean(),
   latest_sequence: z.number(),
 });
+export const logLevelSchema = z.enum([
+  "V",
+  "D",
+  "I",
+  "W",
+  "E",
+  "F",
+  "A",
+  "S",
+  "unknown",
+]);
 export const timelineQuerySchema = z.object({
   source: z.string().nullable(),
+  log_level: logLevelSchema.nullable(),
   search: z.string(),
   order: z.enum(["oldest_first", "newest_first"]),
   limit: z.number(),
@@ -125,6 +137,28 @@ export const detailSchema = z.object({
   detail_complete: z.boolean(),
   bodies: z.array(bodyDescriptorSchema),
 });
+export const bodyDocumentSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("text"),
+    original: z.string(),
+    bytes: z.number(),
+    basis: z.enum(["decoded", "retained"]),
+  }),
+  z.object({
+    kind: z.literal("binary"),
+    bytes: z.number(),
+    reason: z.string(),
+  }),
+  z.object({
+    kind: z.literal("unavailable"),
+    reason: z.string(),
+    retained_available: z.boolean(),
+  }),
+]);
+export const bodyDocumentsSchema = z.object({
+  request: bodyDocumentSchema,
+  response: bodyDocumentSchema,
+});
 export const bodyChunkSchema = z.object({
   body: bodyDescriptorSchema,
   chunk: dataChunkSchema,
@@ -156,6 +190,10 @@ export type TimelineQuery = z.infer<typeof timelineQuerySchema>;
 export type TimelinePage = z.infer<typeof pageSchema>;
 export type EventDetail = z.infer<typeof detailSchema>;
 export type BodyDescriptor = z.infer<typeof bodyDescriptorSchema>;
+export type DataChunk = z.infer<typeof dataChunkSchema>;
+export type BodyDocument = z.infer<typeof bodyDocumentSchema>;
+export type BodyDocuments = z.infer<typeof bodyDocumentsSchema>;
+export type LogLevel = z.infer<typeof logLevelSchema>;
 export type BodySide = z.infer<typeof bodySideSchema>;
 export type SessionDescriptor = z.infer<typeof descriptorSchema>;
 
@@ -170,7 +208,11 @@ export const product = {
       await invoke<unknown>("open_session", { directory }),
     ),
   query: async (query: TimelineQuery) =>
-    pageSchema.parse(await invoke<unknown>("timeline_query", { query })),
+    pageSchema.parse(
+      await invoke<unknown>("timeline_query", {
+        query: timelineQuerySchema.parse(query),
+      }),
+    ),
   detail: async (id: string) =>
     detailSchema
       .nullable()
@@ -185,6 +227,11 @@ export const product = {
         decoded,
       }),
     ),
+  bodyDocuments: async (id: string) =>
+    bodyDocumentsSchema.parse(await invoke<unknown>("body_documents", { id })),
+  copyText: async (text: string) => {
+    await invoke<unknown>("copy_text", { text });
+  },
   detailChunk: async (id: string, offset: number) =>
     dataChunkSchema.parse(
       await invoke<unknown>("detail_chunk", { id, offset, limit: 65536 }),
