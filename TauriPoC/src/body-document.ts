@@ -39,12 +39,13 @@ export function formatJson(
   }
   const chunks: string[] = [];
   let buffer = "";
-  let size = 0;
+  const utf8Overhead = bytes - original.length;
+  let formattedBytes = utf8Overhead;
   let depth = 0;
   let previous = "";
   const append = (text: string) => {
-    size += text.length;
-    if (size > formattedByteBound) return false;
+    formattedBytes += text.length;
+    if (formattedBytes > formattedByteBound) return false;
     buffer += text;
     if (buffer.length >= 32768) {
       chunks.push(buffer);
@@ -52,8 +53,6 @@ export function formatJson(
     }
     return true;
   };
-  // Original non-ASCII bytes are unchanged. Only ASCII whitespace changes size.
-  size = bytes - original.length;
   for (let index = 0; index < original.length; index += 1) {
     const character = original[index];
     if (
