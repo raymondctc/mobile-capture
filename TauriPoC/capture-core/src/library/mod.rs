@@ -30,6 +30,7 @@ pub struct EvidenceLibrary {
     descriptor: SessionDescriptor,
     index: Index,
     live: bool,
+    session_key: String,
     _cache_writer: FileLease,
 }
 
@@ -62,6 +63,10 @@ impl EvidenceLibrary {
         let index = Index::open(&cache_directory.join(format!("{cache_id}.sqlite")))?;
         let mut library = Self {
             descriptor,
+            session_key: evidence
+                .to_str()
+                .ok_or("Evidence path is not valid UTF-8")?
+                .to_owned(),
             index,
             live,
             _cache_writer: writer,
@@ -293,6 +298,7 @@ impl EvidenceLibrary {
             timeline::preview(&mut event);
         }
         Ok(Some(EventDetail {
+            session_key: self.session_key.clone(),
             sequence,
             event,
             detail_bytes,
@@ -309,25 +315,59 @@ impl EvidenceLibrary {
         chunk(&bytes, offset, limit)
     }
 
-    pub fn body_documents(&mut self, id: &str) -> Result<BodyDocuments> {
+    pub fn body_documents(&mut self, reference: &EventRef) -> Result<BodyDocuments> {
+        self.check_reference(reference)?;
         let (_, event) = self
-            .full_event(id)?
+            .full_event(&reference.event_id)?
             .ok_or("Timeline event is no longer indexed")?;
         Ok(BodyDocuments {
+            reference: EventRef {
+                session_key: self.session_key.clone(),
+                event_id: reference.event_id.clone(),
+            },
+            request_info: RequestInfo {
+                method: event.detail["method"].as_str().map(str::to_owned),
+                url: event.detail["url"].as_str().map(str::to_owned),
+            },
             request: bodies::document(&event, BodySide::Request),
             response: bodies::document(&event, BodySide::Response),
         })
     }
 
+    pub fn check_reference(&self, reference: &EventRef) -> Result<()> {
+        if reference.session_key != self.session_key {
+            return Err("The selected event belongs to a different session".into());
+        }
+        Ok(())
+    }
+
+    pub fn retained_body(&mut self, reference: &EventRef, side: BodySide) -> Result<RetainedBody> {
+        self.check_reference(reference)?;
+        let (_, event) = self
+            .full_event(&reference.event_id)?
+            .ok_or("Timeline event is no longer indexed")?;
+        let (body, bytes) = bodies::view(&event, side, false);
+        if !body.available {
+            return Err(body
+                .reason
+                .unwrap_or_else(|| "Retained body unavailable".into()));
+        }
+        Ok(RetainedBody {
+            bytes,
+            origin: PathBuf::from(&self.session_key),
+        })
+    }
+
     pub fn body_chunk(
         &mut self,
-        id: &str,
+        reference: &EventRef,
         side: BodySide,
         offset: u64,
         limit: u32,
     ) -> Result<BodyChunk> {
+        self.check_reference(reference)?;
         let (_, event) = self
-            .full_event(id)?
+            .full_event(&reference.event_id)?
             .ok_or("Timeline event is no longer indexed")?;
         let (body, bytes) = bodies::view(&event, side, false);
         let chunk = chunk(&bytes, offset, limit)?;
@@ -336,13 +376,14 @@ impl EvidenceLibrary {
 
     pub fn decoded_body_chunk(
         &mut self,
-        id: &str,
+        reference: &EventRef,
         side: BodySide,
         offset: u64,
         limit: u32,
     ) -> Result<BodyChunk> {
+        self.check_reference(reference)?;
         let (_, event) = self
-            .full_event(id)?
+            .full_event(&reference.event_id)?
             .ok_or("Timeline event is no longer indexed")?;
         let (body, bytes) = bodies::view(&event, side, true);
         let chunk = chunk(&bytes, offset, limit)?;

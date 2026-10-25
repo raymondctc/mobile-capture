@@ -116,6 +116,7 @@ pub struct IndexProgress {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventDetail {
+    pub session_key: String,
     pub sequence: u64,
     pub event: Event,
     pub detail_bytes: u64,
@@ -167,8 +168,36 @@ pub struct BodyChunk {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct EventRef {
+    pub session_key: String,
+    pub event_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum BodyDocument {
+pub enum Retained {
+    Available { bytes: u64 },
+    Unavailable { reason: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Media {
+    pub content_type: Option<String>,
+    pub label: String,
+    pub content_encoding: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BodyDocument {
+    pub retained: Retained,
+    pub media: Media,
+    #[serde(flatten)]
+    pub content: BodyContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BodyContent {
     Text {
         original: String,
         bytes: u64,
@@ -176,11 +205,11 @@ pub enum BodyDocument {
     },
     Binary {
         bytes: u64,
+        basis: BodyTextBasis,
         reason: String,
     },
     Unavailable {
         reason: String,
-        retained_available: bool,
     },
 }
 
@@ -192,9 +221,22 @@ pub enum BodyTextBasis {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct RequestInfo {
+    pub method: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BodyDocuments {
+    pub reference: EventRef,
+    pub request_info: RequestInfo,
     pub request: BodyDocument,
     pub response: BodyDocument,
+}
+
+pub struct RetainedBody {
+    pub bytes: Vec<u8>,
+    pub origin: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
