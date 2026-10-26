@@ -155,9 +155,26 @@ impl EvidenceLibrary {
                 return Err("Sequence is outside the supported range".into());
             }
         }
+        if query.cursor.is_some() && query.seek.is_some() {
+            return Err("Timeline cursor and seek are mutually exclusive".into());
+        }
         self.index.validate(&self.descriptor.directory)?;
-        let mut identity = query.clone();
-        identity.cursor = None;
+        if let Some(seek) = &query.seek {
+            if seek.session_key != self.session_key {
+                return Err("Timeline seek belongs to a different session".into());
+            }
+            if seek.generation != self.index.generation {
+                return Err("Timeline seek generation is stale".into());
+            }
+            if seek.event_id.len() > 128 {
+                return Err("Invalid timeline seek identifier".into());
+            }
+        }
+        let identity = serde_json::json!({
+            "source": query.source, "log_level": query.log_level,
+            "search": query.search, "order": query.order, "limit": query.limit,
+            "after_sequence": query.after_sequence, "through_sequence": query.through_sequence,
+        });
         let query_id = timeline::hash(&serde_json::to_vec(&identity).map_err(|e| e.to_string())?);
         let cursor = query
             .cursor
@@ -197,9 +214,31 @@ impl EvidenceLibrary {
                 |r| sql_u64(r, 0),
             )
             .map_err(|e| e.to_string())?;
-        let ascending = query.order == TimelineOrder::OldestFirst;
+        let anchor = if let Some(seek) = &query.seek {
+            Some(self.index.db.query_row(
+                &format!("SELECT timestamp,source_rank,line,id FROM events WHERE {filter} AND id=?6"),
+                params![query.source, search, after as i64, through as i64, level, seek.event_id],
+                |r| Ok(Cursor {
+                    generation: self.index.generation.clone(), query: query_id.clone(),
+                    timestamp: r.get(0)?, rank: r.get(1)?, line: sql_u64(r, 2)?, id: r.get(3)?,
+                }),
+            ).optional().map_err(|e| e.to_string())?
+                .ok_or("Timeline seek anchor is missing or does not match the current view")?)
+        } else {
+            cursor
+        };
+        let before = query
+            .seek
+            .as_ref()
+            .is_some_and(|seek| seek.relation == SeekRelation::Before);
+        let ascending = (query.order == TimelineOrder::OldestFirst) != before;
         let direction = if ascending { "ASC" } else { "DESC" };
-        let comparison = if ascending { ">" } else { "<" };
+        let comparison = match (ascending, query.seek.as_ref().map(|seek| seek.relation)) {
+            (true, Some(SeekRelation::At)) => ">=",
+            (false, Some(SeekRelation::At)) => "<=",
+            (true, _) => ">",
+            (false, _) => "<",
+        };
         let sql = format!("SELECT sequence,preview,timestamp,source_rank,line,id FROM events WHERE {filter}
             AND (?6=0 OR (timestamp,source_rank,line,id) {comparison} (?7,?8,?9,?10))
             ORDER BY timestamp {direction},source_rank {direction},line {direction},id {direction} LIMIT ?11");
@@ -212,11 +251,11 @@ impl EvidenceLibrary {
                     after as i64,
                     through as i64,
                     level,
-                    u8::from(cursor.is_some()),
-                    cursor.as_ref().map(|c| c.timestamp.as_str()).unwrap_or(""),
-                    cursor.as_ref().map(|c| c.rank).unwrap_or(0),
-                    cursor.as_ref().map(|c| c.line as i64).unwrap_or(0),
-                    cursor.as_ref().map(|c| c.id.as_str()).unwrap_or(""),
+                    u8::from(anchor.is_some()),
+                    anchor.as_ref().map(|c| c.timestamp.as_str()).unwrap_or(""),
+                    anchor.as_ref().map(|c| c.rank).unwrap_or(0),
+                    anchor.as_ref().map(|c| c.line as i64).unwrap_or(0),
+                    anchor.as_ref().map(|c| c.id.as_str()).unwrap_or(""),
                     query.limit + 1
                 ],
                 |row| {
@@ -234,9 +273,30 @@ impl EvidenceLibrary {
         let mut values = rows
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        let has_more = values.len() > query.limit as usize;
         values.truncate(query.limit as usize);
-        let next_cursor = if has_more {
+        if before {
+            values.reverse();
+        }
+        let exists = |boundary: Option<&(u64, String, String, u8, u64, String)>,
+                      previous: bool|
+         -> Result<bool> {
+            let Some((_, _, timestamp, rank, line, id)) = boundary else {
+                return Ok(false);
+            };
+            let comparison = if (query.order == TimelineOrder::OldestFirst) == previous {
+                "<"
+            } else {
+                ">"
+            };
+            self.index.db.query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM events WHERE {filter} AND (timestamp,source_rank,line,id) {comparison} (?6,?7,?8,?9))"),
+                params![query.source, search, after as i64, through as i64, level, timestamp, rank, *line as i64, id],
+                |r| r.get(0),
+            ).map_err(|e| e.to_string())
+        };
+        let has_previous = exists(values.first(), true)?;
+        let has_next = exists(values.last(), false)?;
+        let next_cursor = if has_next {
             values
                 .last()
                 .map(|(_, _, timestamp, rank, line, id)| {
@@ -266,9 +326,12 @@ impl EvidenceLibrary {
             .collect::<Result<Vec<_>>>()?;
         let progress = self.index.progress()?;
         Ok(TimelinePage {
+            session_key: self.session_key.clone(),
             generation: self.index.generation.clone(),
             rows,
             next_cursor,
+            has_previous,
+            has_next,
             total: progress.indexed,
             matching,
             progress,
@@ -329,6 +392,8 @@ impl EvidenceLibrary {
                 method: event.detail["method"].as_str().map(str::to_owned),
                 url: event.detail["url"].as_str().map(str::to_owned),
             },
+            request_headers: bodies::headers(&event, BodySide::Request),
+            response_headers: bodies::headers(&event, BodySide::Response),
             request: bodies::document(&event, BodySide::Request),
             response: bodies::document(&event, BodySide::Response),
         })

@@ -1,10 +1,40 @@
-use super::{BodyContent, BodyDescriptor, BodyDocument, BodySide, BodyTextBasis, Media, Retained};
+use super::{
+    BodyContent, BodyDescriptor, BodyDocument, BodySide, BodyTextBasis, HeaderDocument, HeaderRow,
+    Media, Retained,
+};
 use crate::model::Event;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::read::{DeflateDecoder, MultiGzDecoder, ZlibDecoder};
 use std::io::Read;
 
 const DECODED_BOUND: usize = 32 * 1024 * 1024;
+
+pub(super) fn headers(event: &Event, side: BodySide) -> HeaderDocument {
+    let key = match side {
+        BodySide::Request => "request_headers",
+        BodySide::Response => "response_headers",
+    };
+    let value = &event.detail[key];
+    if value.is_null() {
+        return HeaderDocument::Absent;
+    }
+    let rows = value.as_array().and_then(|rows| {
+        rows.iter()
+            .map(|row| {
+                Some(HeaderRow {
+                    name: row.get("name")?.as_str()?.to_owned(),
+                    value: row.get("value")?.as_str()?.to_owned(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+    });
+    match rows {
+        Some(rows) => HeaderDocument::Present { rows },
+        None => HeaderDocument::Unavailable {
+            reason: "The recorded header list is malformed.".into(),
+        },
+    }
+}
 
 pub(super) fn document(event: &Event, side: BodySide) -> BodyDocument {
     let content_type = header(event, side, "content-type");
