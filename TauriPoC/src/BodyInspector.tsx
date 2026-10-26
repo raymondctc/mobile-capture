@@ -11,10 +11,12 @@ import { ChevronDown } from "lucide-react";
 import { Input } from "./components/ui/input";
 import { DetailChunks } from "./DetailChunks";
 import { QueryParameters } from "./QueryParameters";
+import { Headers } from "./Headers";
+import type { InspectorPreferenceProps } from "./inspector-state";
 import { BodyWindow } from "./BodyViewport";
 import { type Representation, type Search } from "./body-document";
 import { bodyDocuments, type DocumentOwner } from "./body-owner";
-import { type DocumentInfo, type Window } from "./body-session";
+import { type Reply, type DocumentInfo, type Window } from "./body-session";
 import { errorMessage } from "./api";
 import { product, type BodySide, type EventRef } from "./product";
 
@@ -24,44 +26,41 @@ type State =
       kind: "ready";
       documents: DocumentInfo;
       query: "present" | "absent" | "unavailable";
+      headers: Extract<Reply, { kind: "loaded" }>["headers"];
     }
   | { kind: "error"; message: string };
 type Find =
   | { kind: "closed" }
-  | { kind: "searching"; query: string }
-  | { kind: "complete"; query: string; search: Search }
-  | { kind: "error"; query: string; message: string };
+  | { kind: "searching" }
+  | { kind: "complete"; search: Search }
+  | { kind: "error"; message: string };
 type Copy =
   | { kind: "idle" }
   | { kind: "pending" }
   | { kind: "done"; mode: Representation }
   | { kind: "error"; message: string };
-const emptySearch: Search = {
-  queryParameters: 0,
-  request: 0,
-  response: 0,
-  total: 0,
-  active: null,
-};
 const sides: BodySide[] = ["request", "response"];
 export function BodyInspector({
   reference,
   wrap,
   visible,
   paneVisible,
-  onFindOpen,
   onRaw,
+  preferences,
+  onPreferences,
+  findFocus,
+  onFindFocusConsumed,
+  onRequestFind,
 }: {
   reference: EventRef;
   wrap: boolean;
   visible: boolean;
   paneVisible: boolean;
-  onFindOpen: () => void;
   onRaw: (side: BodySide) => void;
-}) {
+} & InspectorPreferenceProps) {
   const [state, setState] = useState<State>({ kind: "loading" });
-  const [side, setSide] = useState<BodySide>("response");
-  const [mode, setMode] = useState<Representation>("formatted");
+  const side = preferences.side ?? "response";
+  const mode = preferences.representation;
   const [offset, setOffset] = useState(0);
   const [find, setFind] = useState<Find>({ kind: "closed" });
   const [window, setWindow] = useState<
@@ -80,7 +79,6 @@ export function BodyInspector({
     setState({ kind: "loading" });
     setFind({ kind: "closed" });
     setCopy({ kind: "idle" });
-    setMode("formatted");
     setOffset(0);
     let document: DocumentOwner;
     try {
@@ -97,11 +95,14 @@ export function BodyInspector({
         if (request !== revision.current) return;
         if (reply.kind !== "loaded")
           throw new Error("Unexpected body document reply");
-        setSide(reply.side);
+        onPreferences((previous) =>
+          previous.side === null ? { ...previous, side: reply.side } : previous,
+        );
         setState({
           kind: "ready",
           documents: reply.documents,
           query: reply.query,
+          headers: reply.headers,
         });
       })
       .catch((cause: unknown) => {
@@ -114,10 +115,14 @@ export function BodyInspector({
       document.dispose();
       owner.current = null;
     };
-  }, [reference.session_key, reference.event_id]);
-  const query = find.kind !== "closed" ? find.query : "";
+  }, [reference.session_key, reference.event_id, onPreferences]);
+  const query = preferences.find.open ? preferences.find.query : "";
   const searching = find.kind === "searching";
-  const findOpen = find.kind !== "closed";
+  const findOpen = preferences.find.open;
+  useEffect(() => {
+    if (state.kind === "ready" && findOpen)
+      void search(query, { reveal: false, ordinal: -1 });
+  }, [state.kind, findOpen]);
   useEffect(() => {
     if (state.kind !== "ready" || !owner.current) return;
     let disposed = false;
@@ -140,51 +145,71 @@ export function BodyInspector({
     };
   }, [state.kind, side, mode, query, offset, searching]);
   useEffect(() => {
-    if (findOpen && visible && paneVisible && state.kind === "ready")
-      input.current?.focus();
-  }, [findOpen, visible, paneVisible, state.kind]);
+    if (
+      findFocus &&
+      findFocus.event.session_key === reference.session_key &&
+      findFocus.event.event_id === reference.event_id &&
+      findOpen &&
+      visible &&
+      paneVisible &&
+      state.kind === "ready" &&
+      input.current
+    ) {
+      input.current.focus();
+      onFindFocusConsumed(findFocus.token);
+    }
+  }, [
+    findFocus,
+    findOpen,
+    visible,
+    paneVisible,
+    state.kind,
+    reference.session_key,
+    reference.event_id,
+    onFindFocusConsumed,
+  ]);
+  function closeFind() {
+    findRevision.current += 1;
+    onPreferences((previous) => ({
+      ...previous,
+      find: { ...previous.find, open: false },
+    }));
+    setFind({ kind: "closed" });
+    findButton.current?.focus();
+  }
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !paneVisible || !findOpen) return;
     function key(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        event.stopPropagation();
-        onFindOpen();
-        setFind((previous) =>
-          previous.kind !== "closed"
-            ? previous
-            : { kind: "complete", query: "", search: emptySearch },
-        );
-        if (paneVisible) input.current?.focus();
-      } else if (
+      if (
         event.key === "Escape" &&
         !(
           event.target instanceof Element &&
           event.target.closest('[role="menu"]')
-        ) &&
-        find.kind !== "closed" &&
-        paneVisible
+        )
       ) {
         event.preventDefault();
         event.stopPropagation();
-        findRevision.current += 1;
-        setFind({ kind: "closed" });
-        findButton.current?.focus();
+        closeFind();
       }
     }
     document.addEventListener("keydown", key, true);
     return () => document.removeEventListener("keydown", key, true);
-  }, [visible, paneVisible, find.kind, onFindOpen]);
+  }, [visible, paneVisible, findOpen]);
   function showMatch(search: Search) {
-    if (search.active) {
-      setSide(
-        search.active.region.kind === "query"
-          ? "request"
-          : search.active.region.side,
-      );
-      if (search.active.region.kind === "body")
-        setOffset(Math.max(0, search.active.start - 200));
-    }
+    const active = search.active;
+    if (!active) return;
+    const side =
+      active.region.kind === "query" ? "request" : active.region.side;
+    onPreferences((previous) => ({
+      ...previous,
+      side,
+      headersOpen:
+        active.region.kind === "header"
+          ? { ...previous.headersOpen, [side]: true }
+          : previous.headersOpen,
+    }));
+    if (active.region.kind === "body")
+      setOffset(Math.max(0, active.start - 200));
   }
   async function search(
     query: string,
@@ -193,20 +218,19 @@ export function BodyInspector({
       ordinal = 0,
       debounce = false,
       preserveSide,
+      reveal = true,
     }: {
       representation?: Representation;
       ordinal?: number;
       debounce?: boolean;
       preserveSide?: BodySide;
+      reveal?: boolean;
     } = {},
   ) {
+    onPreferences((previous) => ({ ...previous, find: { open: true, query } }));
     if (state.kind !== "ready" || !owner.current) return;
-    const preserveQuery =
-      preserveSide === "request" &&
-      find.kind === "complete" &&
-      find.search.active?.region.kind === "query";
     const request = ++findRevision.current;
-    setFind({ kind: "searching", query });
+    setFind({ kind: "searching" });
     try {
       if (debounce) await new Promise((resolve) => setTimeout(resolve, 150));
       if (request !== findRevision.current || !owner.current) return;
@@ -214,49 +238,52 @@ export function BodyInspector({
         kind: "find",
         mode: representation,
         query,
-        ordinal:
-          preserveQuery && find.kind === "complete" && find.search.active
-            ? find.search.active.ordinal
-            : ordinal,
+        ordinal,
       });
       if (request !== findRevision.current || !owner.current) return;
       if (reply.kind !== "found") throw new Error("Unexpected body Find reply");
       if (
         preserveSide &&
-        !preserveQuery &&
-        (reply.search.active?.region.kind !== "body" ||
-          reply.search.active.region.side !== preserveSide)
+        (reply.search.active?.region.kind === "query"
+          ? "request"
+          : reply.search.active?.region.side) !== preserveSide
       ) {
-        if (reply.search[preserveSide]) {
+        const first =
+          preserveSide === "request"
+            ? 0
+            : reply.search.requestHeaders +
+              reply.search.queryParameters +
+              reply.search.request;
+        const count =
+          reply.search[preserveSide] +
+          (preserveSide === "request"
+            ? reply.search.requestHeaders + reply.search.queryParameters
+            : reply.search.responseHeaders);
+        if (count) {
           reply = await owner.current.read({
             kind: "find",
             mode: representation,
             query,
-            ordinal:
-              reply.search.queryParameters +
-              (preserveSide === "response" ? reply.search.request : 0),
+            ordinal: first,
           });
           if (request !== findRevision.current) return;
           if (reply.kind !== "found")
             throw new Error("Unexpected body Find reply");
-        } else {
-          reply = { ...reply, search: { ...reply.search, active: null } };
-        }
+        } else reply = { ...reply, search: { ...reply.search, active: null } };
       }
-      setFind({ kind: "complete", query, search: reply.search });
-      showMatch(reply.search);
+      setFind({ kind: "complete", search: reply.search });
+      if (reveal) showMatch(reply.search);
     } catch (cause) {
-      if (request === findRevision.current) {
-        setFind({ kind: "error", query, message: errorMessage(cause) });
-      }
+      if (request === findRevision.current)
+        setFind({ kind: "error", message: errorMessage(cause) });
     }
   }
   function navigate(direction: 1 | -1) {
     if (find.kind !== "complete" || !find.search.total) return;
     const current = find.search.active?.ordinal ?? (direction === 1 ? -1 : 0);
-    const ordinal =
-      (current + direction + find.search.total) % find.search.total;
-    void search(find.query, { ordinal });
+    void search(query, {
+      ordinal: (current + direction + find.search.total) % find.search.total,
+    });
   }
   async function copyBody(representation: Representation) {
     if (state.kind !== "ready" || !owner.current) return;
@@ -300,7 +327,7 @@ export function BodyInspector({
           value={side}
           onValueChange={(value) => {
             if (value !== "request" && value !== "response") return;
-            setSide(value);
+            onPreferences((previous) => ({ ...previous, side: value }));
             setOffset(0);
             setCopy({ kind: "idle" });
           }}
@@ -308,38 +335,26 @@ export function BodyInspector({
           {sides.map((value) => {
             const searchable =
               state.documents[value].kind === "text" ||
-              (value === "request" && state.query === "present");
+              (value === "request" && state.query === "present") ||
+              state.headers[value].kind === "present";
             const count =
               find.kind === "complete"
                 ? find.search[value] +
-                  (value === "request" ? find.search.queryParameters : 0)
+                  (value === "request"
+                    ? find.search.requestHeaders + find.search.queryParameters
+                    : find.search.responseHeaders)
                 : "…";
             return (
               <ToggleGroupItem key={value} value={value}>
                 {value === "request" ? "Request" : "Response"}
-                {find.kind !== "closed" && find.query
+                {findOpen && query
                   ? ` (${searchable ? count : "not searchable"})`
                   : ""}
               </ToggleGroupItem>
             );
           })}
         </ToggleGroup>
-        <Button
-          ref={findButton}
-          onClick={() => {
-            onFindOpen();
-            setFind((previous) =>
-              previous.kind !== "closed"
-                ? previous
-                : {
-                    kind: "complete",
-                    query: "",
-                    search: emptySearch,
-                  },
-            );
-            input.current?.focus();
-          }}
-        >
+        <Button ref={findButton} onClick={onRequestFind}>
           Find
         </Button>
       </div>
@@ -352,16 +367,16 @@ export function BodyInspector({
           </p>
         ) : null;
       })}
-      {find.kind !== "closed" && (
+      {findOpen && (
         <div
           className="space-y-2 rounded-md border border-border p-2"
           role="search"
-          aria-label="Find in query and both bodies"
+          aria-label="Find in headers, query and both bodies"
         >
           <Input
             ref={input}
-            aria-label="Find in query, request and response"
-            value={find.query}
+            aria-label="Find in headers, query, request and response"
+            value={query}
             maxLength={256}
             placeholder="Literal text, case insensitive"
             onChange={(event) =>
@@ -377,9 +392,9 @@ export function BodyInspector({
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span role="status">
               {find.kind === "complete"
-                ? `${find.search.active ? find.search.active.ordinal + 1 : 0} of ${find.search.total} matches · Query parameters ${find.search.queryParameters} · Request body ${state.documents.request.kind === "text" ? find.search.request : "not searchable"} · Response body ${state.documents.response.kind === "text" ? find.search.response : "not searchable"}`
+                ? `${find.search.active ? find.search.active.ordinal + 1 : 0} of ${find.search.total} matches · Request headers ${find.search.requestHeaders} · Query parameters ${find.search.queryParameters} · Request body ${state.documents.request.kind === "text" ? find.search.request : "not searchable"} · Response headers ${find.search.responseHeaders} · Response body ${state.documents.response.kind === "text" ? find.search.response : "not searchable"}`
                 : find.kind === "searching"
-                  ? "Searching complete query and bodies…"
+                  ? "Searching complete headers, query and bodies…"
                   : "Find failed"}
             </span>
             {find.kind === "error" && <p role="alert">{find.message}</p>}
@@ -396,18 +411,49 @@ export function BodyInspector({
             >
               Next match
             </Button>
-            <Button
-              onClick={() => {
-                findRevision.current += 1;
-                setFind({ kind: "closed" });
-                findButton.current?.focus();
-              }}
-            >
-              Close Find
-            </Button>
+            <Button onClick={closeFind}>Close Find</Button>
           </div>
         </div>
       )}
+      <section
+        aria-label={`${side === "request" ? "Request" : "Response"} headers`}
+        className="space-y-2"
+      >
+        <Button
+          aria-expanded={preferences.headersOpen[side]}
+          onClick={() =>
+            onPreferences((previous) => ({
+              ...previous,
+              headersOpen: {
+                ...previous.headersOpen,
+                [side]: !previous.headersOpen[side],
+              },
+            }))
+          }
+        >
+          {side === "request" ? "Request" : "Response"} headers
+          {state.headers[side].kind === "present"
+            ? ` (${state.headers[side].total})`
+            : ""}
+        </Button>
+        {preferences.headersOpen[side] &&
+          (state.headers[side].kind === "present" && owner.current ? (
+            <Headers
+              key={side}
+              owner={owner.current}
+              side={side}
+              query={query}
+              active={find.kind === "complete" ? find.search.active : null}
+              wrap={wrap}
+            />
+          ) : (
+            <p>
+              {state.headers[side].kind === "unavailable"
+                ? `Headers unavailable. ${state.headers[side].reason}`
+                : "Headers were not recorded."}
+            </p>
+          ))}
+      </section>
       {side === "request" && state.query === "present" && owner.current && (
         <QueryParameters
           owner={owner.current}
@@ -444,10 +490,13 @@ export function BodyInspector({
               value={displayMode}
               onValueChange={(value) => {
                 if (value !== "original" && value !== "formatted") return;
-                setMode(value);
+                onPreferences((previous) => ({
+                  ...previous,
+                  representation: value,
+                }));
                 setOffset(0);
-                if (find.kind !== "closed")
-                  void search(find.query, {
+                if (findOpen)
+                  void search(query, {
                     representation: value,
                     preserveSide: side,
                   });

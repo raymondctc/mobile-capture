@@ -28,6 +28,7 @@ import { App } from "../src/main";
 import { api } from "../src/api";
 import { product } from "../src/product";
 import { initialDraft } from "../src/state";
+import { checkHeadersKeyboard } from "./headers-keyboard-behavior";
 
 api.updateStatus = async () => ({ state: "unconfigured" });
 
@@ -121,6 +122,8 @@ const media = {
 const bodyPair = (response = "body", request = "request") => ({
   reference: { session_key: "/evidence/A", event_id: "one" },
   request_info: { method: "GET", url: "https://example.invalid/" },
+  request_headers: { kind: "absent" },
+  response_headers: { kind: "absent" },
   request: {
     kind: "text",
     retained: {
@@ -161,6 +164,9 @@ const progress = {
   latest_sequence: 401,
 };
 const page = {
+  session_key: "/evidence/A",
+  has_previous: false,
+  has_next: true,
   generation: "g",
   rows: [
     { sequence: 1, event: event("one") },
@@ -1030,7 +1036,7 @@ async function checkTimeline() {
   assert.match(inspector.textContent!, /Reading event/);
   assert.equal(
     document.activeElement,
-    within(inspector).getByRole("button", { name: "Close event details" }),
+    first,
   );
   await user.keyboard("{Escape}");
   assert.equal(screen.queryByRole("dialog"), null);
@@ -1060,7 +1066,7 @@ async function checkTimeline() {
     await waitFor(() => assert.equal(document.activeElement, copyTrigger));
   }
   await user.keyboard("{Control>}f{/Control}");
-  await screen.findByRole("search", { name: "Find in query and both bodies" });
+  await screen.findByRole("search", { name: "Find in headers, query and both bodies" });
   await user.keyboard("{Escape}");
   assert.equal(screen.queryByRole("search"), null);
   assert.ok(screen.getByRole("dialog", { name: "Event details" }));
@@ -1139,7 +1145,7 @@ async function checkDetails() {
   await user.keyboard("{Control>}f{/Control}");
   await act(async () => nativeRead.resolve(bodyPair()));
   const loadedFind = await screen.findByRole("textbox", {
-    name: "Find in query, request and response",
+    name: "Find in headers, query, request and response",
   });
   await waitFor(() =>
     assert.equal(
@@ -1186,7 +1192,7 @@ async function checkDetails() {
   await user.click(screen.getByRole("radio", { name: "Formatted" }));
   await user.keyboard("{Meta>}f{/Meta}");
   const find = screen.getByRole("textbox", {
-    name: "Find in query, request and response",
+    name: "Find in headers, query, request and response",
   });
   assert.equal(document.activeElement, find);
   const visibleFocus = find.focus.bind(find);
@@ -1303,7 +1309,7 @@ async function checkDetails() {
   await screen.findByRole("radio", { name: "Response" });
   await user.keyboard("{Meta>}f{/Meta}");
   const scopedFind = screen.getByRole("textbox", {
-    name: "Find in query, request and response",
+    name: "Find in headers, query, request and response",
   });
   await user.type(scopedFind, '": ');
   await waitFor(() =>
@@ -1488,7 +1494,7 @@ async function checkDetails() {
   );
   await user.click(await screen.findByRole("button", { name: "Find" }));
   const raceInput = screen.getByRole("textbox", {
-    name: "Find in query, request and response",
+    name: "Find in headers, query, request and response",
   });
   await user.type(raceInput, "old");
   await waitFor(() => assert.equal(staleReadStarted, true));
@@ -1640,7 +1646,7 @@ async function checkInspectorControls() {
 
   await user.click(screen.getByRole("button", { name: "Find" }));
   const find = screen.getByRole("textbox", {
-    name: "Find in query, request and response",
+    name: "Find in headers, query, request and response",
   });
   await user.type(find, "needle");
   await waitFor(() =>
@@ -1674,7 +1680,7 @@ async function checkInspectorControls() {
     ),
   );
   await user.keyboard(" ");
-  await waitFor(() => assert.equal(document.activeElement, find));
+  await waitFor(() => assert.equal(document.activeElement, screen.getByRole("radio", { name: "Bodies" })));
   assert.equal(find.value, "needle");
   assert.ok(screen.getByRole("radio", { name: "Response (1)", checked: true }));
   assert.ok(screen.getByRole("radio", { name: "Formatted", checked: true }));
@@ -1689,7 +1695,7 @@ async function checkInspectorControls() {
     null,
   );
   await user.click(screen.getByRole("radio", { name: "Bodies" }));
-  await waitFor(() => assert.equal(document.activeElement, find));
+  await waitFor(() => assert.equal(document.activeElement, screen.getByRole("radio", { name: "Bodies" })));
   assert.equal(find.value, "needle");
 
   product.bodyDocuments = async () => bodyPair('""');
@@ -1748,14 +1754,14 @@ async function checkQueryAndBinaryDetails() {
   await waitFor(() => assert.equal(copies.at(-1), rawQuery));
   await user.keyboard("{Control>}f{/Control}");
   const input = screen.getByRole("textbox", {
-    name: "Find in query, request and response",
+    name: "Find in headers, query, request and response",
   });
   revealedMatches.length = 0;
   await user.type(input, "needle");
   await waitFor(() =>
     assert.match(
       screen.getByRole("search").textContent!,
-      /1 of 3 matches · Query parameters 1 · Request body 1 · Response body 1/,
+      /1 of 3 matches · Request headers 0 · Query parameters 1 · Request body 1 · Response headers 0 · Response body 1/,
     ),
   );
   assert.equal(
@@ -2603,6 +2609,7 @@ async function checks() {
       notices: checkNotices,
       views: checkViewPreservation,
       timeline: checkTimeline,
+      keyboard: checkHeadersKeyboard,
       details: checkDetails,
       modal: checkModal,
       updates: checkUpdates,

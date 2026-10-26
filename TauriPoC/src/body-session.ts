@@ -2,6 +2,7 @@ import type { BodyDocument, BodyDocuments, BodySide } from "./product";
 import {
   bodyText,
   bodyWindow,
+  headerWindow,
   initialSide,
   prepareDocuments,
   queryWindow,
@@ -9,6 +10,7 @@ import {
   visibleMatches,
   type Documents,
   type QueryTarget,
+  type HeaderTarget,
   type Representation,
 } from "./body-document";
 
@@ -32,6 +34,8 @@ export type Operation =
     }
   | { kind: "copy"; side: BodySide; mode: Representation }
   | { kind: "query-window"; firstRow: number; query: string }
+  | { kind: "header-window"; side: BodySide; firstRow: number; query: string }
+  | { kind: "header-text"; target: HeaderTarget; offset: number; query: string }
   | {
       kind: "query-text";
       target: QueryTarget;
@@ -48,14 +52,21 @@ export type Reply =
       documents: DocumentInfo;
       side: BodySide;
       query: Documents["query"]["kind"];
+      headers: Record<
+        BodySide,
+        | { kind: "present"; total: number }
+        | Exclude<Documents["headers"][BodySide], { kind: "present" }>
+      >;
     }
   | { kind: "found"; search: ReturnType<typeof searchBodies> }
   | { kind: "window"; window: Window | null }
   | { kind: "copy"; text: string }
+  | { kind: "header-window"; window: ReturnType<typeof headerWindow> }
   | { kind: "query-window"; window: ReturnType<typeof queryWindow> };
 export type Request = { id: number; operation: Operation };
 export type Response = { id: number } & (
-  { kind: "result"; reply: Reply } | { kind: "error"; message: string }
+  | { kind: "result"; reply: Reply }
+  | { kind: "error"; message: string }
 );
 
 function info(document: Documents[BodySide]): BodyInfo {
@@ -85,10 +96,42 @@ export function createSession() {
         },
         side: initialSide(documents),
         query: documents.query.kind,
+        headers: {
+          request: headerInfo(documents.headers.request),
+          response: headerInfo(documents.headers.response),
+        },
       };
     }
     if (!documents) throw new Error("Body documents are not loaded");
     switch (operation.kind) {
+      case "header-window":
+        return {
+          kind: "header-window",
+          window: headerWindow(
+            documents.headers[operation.side],
+            operation.firstRow,
+            operation.query,
+          ),
+        };
+      case "header-text": {
+        const headers = documents.headers[operation.target.side];
+        if (headers.kind !== "present")
+          throw new Error("Headers are unavailable");
+        const text = headers.rows[operation.target.row][operation.target.field];
+        const window = bodyWindow(text, operation.offset);
+        return {
+          kind: "window",
+          window: {
+            ...window,
+            matches: visibleMatches(
+              text,
+              operation.query,
+              window.start,
+              window.end,
+            ),
+          },
+        };
+      }
       case "query-window":
         return {
           kind: "query-window",
@@ -163,4 +206,10 @@ export function createSession() {
       }
     }
   };
+}
+
+function headerInfo(headers: Documents["headers"][BodySide]) {
+  return headers.kind === "present"
+    ? { kind: headers.kind, total: headers.rows.length }
+    : headers;
 }

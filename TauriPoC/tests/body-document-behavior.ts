@@ -10,6 +10,7 @@ import {
   visibleMatches,
   parseQuery,
   queryWindow,
+  headerWindow,
 } from "../src/body-document";
 
 function fixture(pair: {
@@ -32,6 +33,8 @@ function fixture(pair: {
   return bodyDocumentsSchema.parse({
     reference: { session_key: "/synthetic", event_id: "one" },
     request_info: { method: "GET", url: null },
+    request_headers: { kind: "absent" },
+    response_headers: { kind: "absent" },
     request: enrich(pair.request),
     response: enrich(pair.response),
   });
@@ -239,4 +242,66 @@ assert.equal(queryPage?.rows[19].value.total, 100_006);
 assert.equal(queryWindow(queryPair.query, 0)?.rows.length, 50);
 console.log(
   "Query document checks passed. Exact raw extraction, form decoding, malformed UTF-8 diagnostics, ordered duplicates and empty segments, complete tail Find, region boundaries, row and cell bounds.",
+);
+
+const headers = prepareDocuments({
+  ...fixture({
+    request: { kind: "text", original: "needle", bytes: 6 },
+    response: { kind: "text", original: "needle", bytes: 6 },
+  }),
+  request_headers: {
+    kind: "present",
+    rows: Array.from({ length: 120 }, (_, row) => ({
+      name: row === 0 ? "NeEdLe" : "X-Duplicate",
+      value: row === 119 ? "x".repeat(100_000) + "needle" : "same",
+    })),
+  },
+  response_headers: {
+    kind: "present",
+    rows: [{ name: "needle", value: "needle" }],
+  },
+  request_info: { method: "GET", url: "https://example.invalid/?q=needle" },
+});
+assert.deepEqual(
+  [0, 1, 2, 3, 4, 5, 6].map(
+    (ordinal) =>
+      searchBodies(headers, "original", "needle", ordinal).active?.region,
+  ),
+  [
+    { kind: "header", side: "request", row: 0, field: "name" },
+    { kind: "header", side: "request", row: 119, field: "value" },
+    { kind: "query", row: 0, field: "value" },
+    { kind: "body", side: "request" },
+    { kind: "header", side: "response", row: 0, field: "name" },
+    { kind: "header", side: "response", row: 0, field: "value" },
+    { kind: "body", side: "response" },
+  ],
+);
+const headerSearch = searchBodies(headers, "original", "needle", -1);
+assert.deepEqual(
+  [
+    headerSearch.requestHeaders,
+    headerSearch.responseHeaders,
+    headerSearch.total,
+    headerSearch.active,
+  ],
+  [2, 2, 7, null],
+);
+assert.equal(
+  headerWindow(headers.headers.request, 100)?.rows[19].value.total,
+  100_006,
+);
+assert.equal(
+  headerWindow(headers.headers.request, 100)?.rows[19].value.text.length,
+  256,
+);
+assert.equal(headerWindow(headers.headers.request, 0)?.rows.length, 50);
+assert.equal(headerWindow({ kind: "absent" }, 0), null);
+assert.equal(
+  headerWindow({ kind: "unavailable", reason: "malformed" }, 0),
+  null,
+);
+assert.equal(headerWindow({ kind: "present", rows: [] }, 0)?.total, 0);
+console.log(
+  "Header document checks passed. Ordered complete names and values, duplicate rows, five-region Find order, null active recomputation and bounded rows/cells.",
 );

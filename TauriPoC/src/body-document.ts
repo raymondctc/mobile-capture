@@ -1,8 +1,14 @@
-import type { BodyDocument, BodyDocuments, BodySide } from "./product";
+import type {
+  BodyDocument,
+  BodyDocuments,
+  BodySide,
+  HeaderDocument,
+} from "./product";
 
 export type Representation = "original" | "formatted";
 type Formatting =
-  { kind: "ready"; text: string } | { kind: "unavailable"; reason: string };
+  | { kind: "ready"; text: string }
+  | { kind: "unavailable"; reason: string };
 export type TextDocument = Extract<BodyDocument, { kind: "text" }> & {
   formatting: Formatting;
 };
@@ -16,10 +22,20 @@ export type QueryDocument =
   | { kind: "present"; raw: string; rows: QueryRow[] }
   | { kind: "absent" }
   | { kind: "unavailable" };
-export type Documents = Record<BodySide, Document> & { query: QueryDocument };
+export type Documents = Record<BodySide, Document> & {
+  query: QueryDocument;
+  headers: Record<BodySide, HeaderDocument>;
+};
+export type HeaderTarget = {
+  side: BodySide;
+  row: number;
+  field: "name" | "value";
+};
 export type QueryTarget =
-  { kind: "raw" } | { kind: "cell"; row: number; field: "key" | "value" };
+  | { kind: "raw" }
+  | { kind: "cell"; row: number; field: "key" | "value" };
 export type Region =
+  | ({ kind: "header" } & HeaderTarget)
   | { kind: "query"; row: number; field: "key" | "value" }
   | { kind: "body"; side: BodySide };
 export type Match = {
@@ -29,6 +45,8 @@ export type Match = {
   ordinal: number;
 };
 export type Search = {
+  requestHeaders: number;
+  responseHeaders: number;
   queryParameters: number;
   request: number;
   response: number;
@@ -127,6 +145,7 @@ export function prepareDocuments(pair: BodyDocuments): Documents {
     request: prepare(pair.request),
     response: prepare(pair.response),
     query: parseQuery(pair.request_info.url),
+    headers: { request: pair.request_headers, response: pair.response_headers },
   };
 }
 export function initialSide(pair: Documents): BodySide {
@@ -185,7 +204,13 @@ export function searchBodies(
   query: string,
   ordinal = 0,
 ): Search {
-  const counts = { queryParameters: 0, request: 0, response: 0 };
+  const counts = {
+    requestHeaders: 0,
+    responseHeaders: 0,
+    queryParameters: 0,
+    request: 0,
+    response: 0,
+  };
   let total = 0;
   let active: Match | null = null;
   const pattern = matcher(query);
@@ -205,6 +230,19 @@ export function searchBodies(
       counts[source] += 1;
     }
   };
+  const scanHeaders = (side: BodySide) => {
+    const headers = pair.headers[side];
+    if (headers.kind !== "present") return;
+    headers.rows.forEach((row, index) => {
+      for (const field of ["name", "value"] as const)
+        scan(
+          row[field],
+          { kind: "header", side, row: index, field },
+          side === "request" ? "requestHeaders" : "responseHeaders",
+        );
+    });
+  };
+  scanHeaders("request");
   if (pair.query.kind === "present")
     pair.query.rows.forEach((row, index) => {
       scan(
@@ -219,10 +257,37 @@ export function searchBodies(
       );
     });
   for (const side of sides) {
+    if (side === "response") scanHeaders(side);
     const text = bodyText(pair[side], mode);
     if (text !== null) scan(text, { kind: "body", side }, side);
   }
   return { ...counts, total, active };
+}
+export function headerWindow(
+  headers: HeaderDocument,
+  firstRow: number,
+  search = "",
+) {
+  if (headers.kind !== "present") return null;
+  const start = Math.max(
+    0,
+    Math.min(firstRow, Math.max(0, headers.rows.length - 1)),
+  );
+  const preview = (text: string) => {
+    const end = /[\uDC00-\uDFFF]/.test(text[256] ?? "") ? 255 : 256;
+    return {
+      text: text.slice(0, end),
+      total: text.length,
+      matches: visibleMatches(text, search, 0, end),
+    };
+  };
+  return {
+    start,
+    total: headers.rows.length,
+    rows: headers.rows
+      .slice(start, start + 50)
+      .map((row) => ({ name: preview(row.name), value: preview(row.value) })),
+  };
 }
 export function queryWindow(
   query: QueryDocument,

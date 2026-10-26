@@ -26,10 +26,24 @@ const timelineQuery = {
   order: "newest_first",
   limit: 200,
   cursor: null,
+  seek: null,
   after_sequence: null,
   through_sequence: null,
 };
 assert.equal(timelineQuerySchema.safeParse(timelineQuery).success, true);
+assert.equal(
+  timelineQuerySchema.safeParse({
+    ...timelineQuery,
+    cursor: "token",
+    seek: {
+      session_key: "/synthetic",
+      generation: "g",
+      event_id: "one",
+      relation: "at",
+    },
+  }).success,
+  false,
+);
 assert.equal(
   timelineQuerySchema.safeParse({ ...timelineQuery, log_level: "ERROR" })
     .success,

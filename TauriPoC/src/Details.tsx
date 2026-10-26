@@ -8,26 +8,76 @@ import { timeLabel } from "./ui";
 import { BodyInspector } from "./BodyInspector";
 import { DetailChunks } from "./DetailChunks";
 import { LogDetails } from "./LogDetails";
+import {
+  initialInspectorPreferences,
+  type FindFocusIntent,
+  type InspectorPreferenceProps,
+} from "./inspector-state";
 export { hexChunk } from "./DetailChunks";
 
 type Content =
-  { kind: "primary" } | { kind: "metadata" } | { kind: "raw"; side: BodySide };
+  | { kind: "primary" }
+  | { kind: "metadata" }
+  | { kind: "raw"; side: BodySide };
 type Reveal =
-  { kind: "idle" } | { kind: "pending" } | { kind: "error"; message: string };
+  | { kind: "idle" }
+  | { kind: "pending" }
+  | { kind: "error"; message: string };
 export function Details({
   detail,
   offPage,
   wrap,
   visible = true,
+  inspector,
 }: {
   detail: EventDetail;
   offPage: boolean;
   wrap: boolean;
   visible?: boolean;
+  inspector?: InspectorPreferenceProps;
 }) {
+  const [preferences, onPreferences] = useState(initialInspectorPreferences);
+  const [findFocus, setFindFocus] = useState<FindFocusIntent | null>(null);
+  const findToken = useRef(0);
+  const controls: InspectorPreferenceProps = inspector ?? {
+    preferences,
+    onPreferences,
+    findFocus,
+    onFindFocusConsumed: (token) =>
+      setFindFocus((previous) => (previous?.token === token ? null : previous)),
+    onRequestFind: () => {
+      onPreferences((previous) => ({
+        ...previous,
+        find: { ...previous.find, open: true },
+      }));
+      setFindFocus({
+        event: { session_key: detail.session_key, event_id: detail.event.id },
+        token: ++findToken.current,
+      });
+    },
+  };
   const [content, setContent] = useState<Content>({ kind: "primary" });
   const [reveal, setReveal] = useState<Reveal>({ kind: "idle" });
   const revision = useRef(0);
+  useEffect(() => {
+    if (
+      controls.findFocus?.event.event_id === detail.event.id &&
+      controls.findFocus.event.session_key === detail.session_key
+    )
+      setContent({ kind: "primary" });
+  }, [controls.findFocus, detail.event.id, detail.session_key]);
+  useEffect(() => {
+    if (inspector || !visible || detail.event.source !== "network") return;
+    function key(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        event.stopPropagation();
+        controls.onRequestFind();
+      }
+    }
+    document.addEventListener("keydown", key, true);
+    return () => document.removeEventListener("keydown", key, true);
+  }, [inspector, visible, detail.event.source, controls.onRequestFind]);
   useEffect(
     () => () => {
       revision.current += 1;
@@ -80,7 +130,7 @@ export function Details({
               wrap={wrap}
               visible={visible}
               paneVisible={content.kind === "primary"}
-              onFindOpen={() => setContent({ kind: "primary" })}
+              {...controls}
               onRaw={(side) => setContent({ kind: "raw", side })}
             />
           </div>
