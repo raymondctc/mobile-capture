@@ -86,6 +86,7 @@ export function useTimelineReader({
   const [focusIntent, setFocusIntent] = useState<FocusIntent>({
     kind: "timeline",
   });
+  const focusOwner = useRef(focusIntent);
   const [error, setError] = useState("");
   const [invalidation, setInvalidation] = useState("");
   const [loading, setLoading] = useState(false);
@@ -117,13 +118,36 @@ export function useTimelineReader({
     inspector.kind !== "closed" && inspector.directory === inspected?.directory
       ? inspector
       : undefined;
+  function claimFocus(intent: FocusIntent) {
+    focusOwner.current = intent;
+    setFocusIntent(intent);
+  }
   function cancelPending({ details = true } = {}) {
     context.current += 1;
     generation.current += 1;
     if (details) detailGeneration.current += 1;
     pending.current = null;
     busy.current = false;
-    setFocusIntent({ kind: "timeline" });
+    claimFocus({ kind: "timeline" });
+  }
+  function supersedeMovement() {
+    if (!pending.current) return;
+    const accepted = acceptedPosition.current;
+    const position =
+      pending.current.kind === "freeze" ? query.position : accepted?.position;
+    cancelPending({ details: false });
+    if (!accepted || !position) return;
+    acceptedPosition.current = {
+      ...accepted,
+      position,
+      through: query.through,
+      context: context.current,
+    };
+    setQuery((previous) => ({
+      ...previous,
+      position,
+      revision: previous.revision + 1,
+    }));
   }
   useEffect(() => {
     cancelPending();
@@ -174,7 +198,7 @@ export function useTimelineReader({
     }
     document.addEventListener("keydown", key, true);
     return () => document.removeEventListener("keydown", key, true);
-  }, [visible, visibleInspector, page?.session_key]);
+  }, [visible, visibleInspector, page?.session_key, query]);
   function requestFind() {
     if (
       !visibleInspector ||
@@ -183,11 +207,12 @@ export function useTimelineReader({
       !page
     )
       return;
+    supersedeMovement();
     setPreferences((previous) => ({
       ...previous,
       find: { ...previous.find, open: true },
     }));
-    setFocusIntent({
+    claimFocus({
       kind: "find",
       event: {
         session_key:
@@ -211,6 +236,7 @@ export function useTimelineReader({
     source?: string,
   ) {
     if (!inspected) return;
+    supersedeMovement();
     const selected = {
       directory: inspected.directory,
       eventId,
@@ -222,7 +248,7 @@ export function useTimelineReader({
     const request = ++detailGeneration.current;
     selectedId.current = eventId;
     if (intent === "timeline") focusRow(eventId);
-    setFocusIntent(
+    claimFocus(
       intent === "timeline"
         ? { kind: "timeline" }
         : { kind: "details", eventId },
@@ -286,8 +312,13 @@ export function useTimelineReader({
   }
   function scheduleFocus(id: string) {
     const requestContext = context.current;
+    const owner = focusOwner.current;
     requestAnimationFrame(() => {
-      if (requestContext === context.current && selectedId.current === id)
+      if (
+        requestContext === context.current &&
+        owner === focusOwner.current &&
+        selectedId.current === id
+      )
         focusRow(id);
     });
   }
@@ -399,9 +430,10 @@ export function useTimelineReader({
     };
   }, [inspected?.directory, query, reading.order, visible]);
   function closeInspector() {
+    supersedeMovement();
     detailGeneration.current += 1;
     setInspector({ kind: "closed" });
-    setFocusIntent({ kind: "timeline" });
+    claimFocus({ kind: "timeline" });
     const target = selectedId.current && rows.current.get(selectedId.current);
     if (target) target.focus();
     else heading.current?.focus();
@@ -510,7 +542,7 @@ export function useTimelineReader({
     }
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
     event.preventDefault();
-    setFocusIntent({ kind: "timeline" });
+    claimFocus({ kind: "timeline" });
     const accepted = acceptedPosition.current;
     if (
       loading ||

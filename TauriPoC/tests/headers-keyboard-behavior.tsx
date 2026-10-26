@@ -366,10 +366,265 @@ export async function checkHeadersKeyboard() {
   );
   cleanup();
   await checkPendingIntents();
+  await checkStableFindMatches();
+  await checkFindSupersedesMovement();
+  await checkFindSupersedesQueuedFocus();
+  await checkInspectorActionsSupersedeMovement();
   await checkHeaderWindows();
   console.log(
-    "Headers and keyboard DOM checks passed. Loading-time Find, retained preferences, row focus, later-page freeze, both manual directions, endpoints, duplicate edges, filter invalidation, menu and Escape ownership, and bounded complete header reveal.",
+    "Headers and keyboard DOM checks passed. Loading-time Find, stable query/header occurrences through formatting, newer Find and inspector action ownership, queued focus cancellation, retained preferences, later-page freeze, endpoints, filter invalidation, and bounded complete header reveal.",
   );
+}
+
+async function checkStableFindMatches() {
+  const user = userEvent.setup();
+  product.bodyDocuments = async () => ({
+    ...pair("query-occurrence"),
+    request_info: {
+      method: "GET",
+      url: "https://example.invalid/?first=needle&later=needle+needle",
+    },
+    request_headers: { kind: "absent" },
+    response_headers: { kind: "absent" },
+    request: body('{"request":true}'),
+    response: body('{"response":true}'),
+  });
+  render(<Details detail={detail("query-occurrence")} offPage={false} wrap />);
+  await screen.findByRole("radio", { name: "Response" });
+  await user.click(screen.getByRole("button", { name: "Find", exact: true }));
+  const queryInput = screen.getByRole("textbox", {
+    name: "Find in headers, query, request and response",
+  });
+  await user.type(queryInput, "needle");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  for (const ordinal of [2, 3]) {
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      assert.match(
+        screen.getByRole("search").textContent!,
+        new RegExp(`${ordinal} of 3 matches`),
+      ),
+    );
+  }
+  for (const representation of ["Original", "Formatted"]) {
+    await user.click(screen.getByRole("radio", { name: representation }));
+    await waitFor(() => {
+      assert.match(screen.getByRole("search").textContent!, /3 of 3 matches/);
+      const content = screen.getByLabelText("Query field content");
+      assert.equal(content.textContent, "needle needle");
+      const marks = content.querySelectorAll("mark");
+      assert.equal(marks.length, 2);
+      assert.equal(marks[1].classList.contains("bg-primary"), true);
+    });
+  }
+  cleanup();
+
+  product.bodyDocuments = async () => ({
+    ...pair("header-occurrence"),
+    request_headers: { kind: "absent" },
+    response_headers: {
+      kind: "present",
+      rows: [
+        { name: "X-First", value: " 1" },
+        { name: "X-Later", value: " 1 1" },
+      ],
+    },
+    request: body('{"n":1,"other":1}'),
+    response: body('{"response":true}'),
+  });
+  render(<Details detail={detail("header-occurrence")} offPage={false} wrap />);
+  await screen.findByRole("radio", { name: "Response" });
+  await user.click(screen.getByRole("radio", { name: "Original" }));
+  await user.click(screen.getByRole("button", { name: "Find", exact: true }));
+  const headerInput = screen.getByRole("textbox", {
+    name: "Find in headers, query, request and response",
+  });
+  await user.type(headerInput, " 1");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 3 matches/),
+  );
+  for (const ordinal of [2, 3]) {
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      assert.match(
+        screen.getByRole("search").textContent!,
+        new RegExp(`${ordinal} of 3 matches`),
+      ),
+    );
+  }
+  for (const [representation, count] of [
+    ["Formatted", 5],
+    ["Original", 3],
+  ] as const) {
+    await user.click(screen.getByRole("radio", { name: representation }));
+    await waitFor(() => {
+      assert.match(
+        screen.getByRole("search").textContent!,
+        new RegExp(`${count} of ${count} matches`),
+      );
+      const content = screen.getByLabelText("Response header value");
+      assert.equal(content.textContent, " 1 1");
+      assert.equal(
+        content.querySelectorAll("mark")[1].classList.contains("bg-primary"),
+        true,
+      );
+    });
+  }
+  cleanup();
+}
+
+async function checkFindSupersedesMovement() {
+  localStorage.clear();
+  const user = userEvent.setup();
+  const delayed = deferred<TimelinePage>();
+  let held: TimelineQuery | null = null;
+  product.query = async (query) => {
+    queries.push(query);
+    if (query.seek?.relation === "after") {
+      held = query;
+      return delayed.promise;
+    }
+    return queryPage(query);
+  };
+  product.detail = async (id) => detail(id);
+  product.bodyDocuments = async (reference) => pair(reference.event_id);
+  render(<Timeline inspected={descriptor} />);
+  await screen.findByRole("button", { name: /synthetic one$/ });
+  await user.click(row("one"));
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    assert.equal(document.activeElement === row("two"), true),
+  );
+  await user.click(row("three"));
+  await screen.findByRole("radio", { name: "Response" });
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() => assert.ok(held));
+  await user.keyboard("{Meta>}f{/Meta}");
+  const input = await screen.findByRole("textbox", {
+    name: "Find in headers, query, request and response",
+  });
+  await waitFor(() => assert.equal(document.activeElement === input, true));
+  await user.type(input, "needle");
+  await waitFor(() =>
+    assert.match(screen.getByRole("search").textContent!, /1 of 6 matches/),
+  );
+  const oldQuery = held!;
+  await act(async () => delayed.resolve(queryPage(oldQuery)));
+  await act(async () => new Promise((resolve) => requestAnimationFrame(resolve)));
+  assert.equal(
+    document.activeElement === input,
+    true,
+    "Older page movement cannot steal explicit Find focus",
+  );
+  assert.equal(input.value, "needle");
+  assert.equal(row("three").getAttribute("aria-pressed"), "true");
+  assert.equal(screen.queryByRole("button", { name: /synthetic four$/ }), null);
+  assert.ok(screen.getByText(/page 1$/));
+  assert.ok(screen.getByRole("button", { name: "Resume" }));
+  assert.equal(queries.at(-1)?.through_sequence, 20);
+  await user.keyboard("{Escape}");
+  act(() => row("three").focus());
+  await user.keyboard("{ArrowUp}");
+  await waitFor(() =>
+    assert.equal(document.activeElement === row("two"), true),
+  );
+  cleanup();
+}
+
+async function checkFindSupersedesQueuedFocus() {
+  localStorage.clear();
+  const user = userEvent.setup();
+  product.query = async (query) => queryPage(query);
+  product.detail = async (id) => detail(id);
+  product.bodyDocuments = async (reference) => pair(reference.event_id);
+  render(<Timeline inspected={descriptor} />);
+  await screen.findByRole("button", { name: /synthetic one$/ });
+  await user.click(row("one"));
+  await screen.findByRole("radio", { name: "Response" });
+  const originalFrame = globalThis.requestAnimationFrame;
+  const frames: FrameRequestCallback[] = [];
+  globalThis.requestAnimationFrame = (callback) => frames.push(callback);
+  try {
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() =>
+      assert.equal(document.activeElement === row("two"), true),
+    );
+    assert.ok(frames.length);
+    await user.keyboard("{Meta>}f{/Meta}");
+    const input = await screen.findByRole("textbox", {
+      name: "Find in headers, query, request and response",
+    });
+    await waitFor(() => assert.equal(document.activeElement === input, true));
+    act(() => frames.splice(0).forEach((callback) => callback(performance.now())));
+    assert.equal(
+      document.activeElement === input,
+      true,
+      "Queued row focus cannot override a later explicit Find",
+    );
+    assert.equal(row("two").getAttribute("aria-pressed"), "true");
+  } finally {
+    globalThis.requestAnimationFrame = originalFrame;
+    cleanup();
+  }
+}
+
+async function checkInspectorActionsSupersedeMovement() {
+  for (const action of ["Escape", "Close button", "Row click", "Enter"]) {
+    localStorage.clear();
+    const user = userEvent.setup();
+    const delayed = deferred<TimelinePage>();
+    let held: TimelineQuery | null = null;
+    product.query = async (query) => {
+      if (query.seek?.relation === "after") {
+        held = query;
+        return delayed.promise;
+      }
+      return queryPage(query);
+    };
+    product.detail = async (id) => detail(id);
+    product.bodyDocuments = async (reference) => pair(reference.event_id);
+    render(<Timeline inspected={descriptor} />);
+    await screen.findByRole("button", { name: /synthetic one$/ });
+    await user.click(row("one"));
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() =>
+      assert.equal(document.activeElement === row("two"), true),
+    );
+    await user.click(row("three"));
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => assert.ok(held));
+    if (action === "Escape" || action === "Enter")
+      await user.keyboard(`{${action}}`);
+    else if (action === "Row click") await user.click(row("one"));
+    else
+      await user.click(
+        screen.getByRole("button", { name: "Close event details" }),
+      );
+    const closed = action === "Escape" || action === "Close button";
+    assert.equal(screen.queryByRole("dialog") === null, closed);
+    const oldQuery = held!;
+    await act(async () => delayed.resolve(queryPage(oldQuery)));
+    await act(async () =>
+      new Promise((resolve) => requestAnimationFrame(resolve)),
+    );
+    assert.equal(
+      screen.queryByRole("dialog") === null,
+      closed,
+      `${action} retains inspector ownership after older movement resolves`,
+    );
+    const selected = action === "Row click" ? "one" : "three";
+    const focused =
+      action === "Enter"
+        ? screen.getByRole("button", { name: "Close event details" })
+        : row(selected);
+    assert.equal(document.activeElement === focused, true);
+    assert.equal(row(selected).getAttribute("aria-pressed"), String(!closed));
+    assert.equal(screen.queryByRole("button", { name: /synthetic four$/ }), null);
+    assert.ok(screen.getByText(/page 1$/));
+    cleanup();
+  }
 }
 
 async function checkPendingIntents() {

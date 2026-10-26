@@ -12,6 +12,7 @@ import {
   type QueryTarget,
   type HeaderTarget,
   type Representation,
+  type StableMatch,
 } from "./body-document";
 
 type TextInfo = Omit<Extract<BodyDocument, { kind: "text" }>, "original"> & {
@@ -24,7 +25,13 @@ export type Window = ReturnType<typeof bodyWindow> & {
 };
 export type Operation =
   | { kind: "load"; pair: BodyDocuments }
-  | { kind: "find"; mode: Representation; query: string; ordinal: number }
+  | {
+      kind: "find";
+      mode: Representation;
+      query: string;
+      ordinal: number;
+      preferred?: StableMatch;
+    }
   | {
       kind: "window";
       side: BodySide;
@@ -176,6 +183,7 @@ export function createSession() {
             operation.mode,
             operation.query,
             operation.ordinal,
+            operation.preferred,
           ),
         };
       case "window": {

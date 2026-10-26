@@ -14,7 +14,11 @@ import { QueryParameters } from "./QueryParameters";
 import { Headers } from "./Headers";
 import type { InspectorPreferenceProps } from "./inspector-state";
 import { BodyWindow } from "./BodyViewport";
-import { type Representation, type Search } from "./body-document";
+import {
+  type Representation,
+  type Search,
+  type StableMatch,
+} from "./body-document";
 import { bodyDocuments, type DocumentOwner } from "./body-owner";
 import { type Reply, type DocumentInfo, type Window } from "./body-session";
 import { errorMessage } from "./api";
@@ -218,12 +222,14 @@ export function BodyInspector({
       ordinal = 0,
       debounce = false,
       preserveSide,
+      preferred,
       reveal = true,
     }: {
       representation?: Representation;
       ordinal?: number;
       debounce?: boolean;
       preserveSide?: BodySide;
+      preferred?: StableMatch;
       reveal?: boolean;
     } = {},
   ) {
@@ -239,6 +245,7 @@ export function BodyInspector({
         mode: representation,
         query,
         ordinal,
+        preferred,
       });
       if (request !== findRevision.current || !owner.current) return;
       if (reply.kind !== "found") throw new Error("Unexpected body Find reply");
@@ -499,6 +506,15 @@ export function BodyInspector({
                   void search(query, {
                     representation: value,
                     preserveSide: side,
+                    preferred:
+                      find.kind === "complete" &&
+                      find.search.active &&
+                      find.search.active.region.kind !== "body"
+                        ? {
+                            region: find.search.active.region,
+                            start: find.search.active.start,
+                          }
+                        : undefined,
                   });
               }}
             >

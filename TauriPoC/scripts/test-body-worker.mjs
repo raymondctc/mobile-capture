@@ -122,6 +122,17 @@ try {
     row: 6,
     field: "value",
   });
+  const queryPreserved = await read({
+    kind: "find",
+    mode: "formatted",
+    query: "needle",
+    ordinal: 0,
+    preferred: {
+      region: queryFound.search.active.region,
+      start: queryFound.search.active.start,
+    },
+  });
+  assert.deepEqual(queryPreserved.search.active, queryFound.search.active);
   const queryTail = await read({
     kind: "query-text",
     target: { kind: "cell", row: 6, field: "value" },

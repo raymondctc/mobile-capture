@@ -44,6 +44,9 @@ export type Match = {
   end: number;
   ordinal: number;
 };
+export type StableMatch = Pick<Match, "start"> & {
+  region: Exclude<Region, { kind: "body" }>;
+};
 export type Search = {
   requestHeaders: number;
   responseHeaders: number;
@@ -203,6 +206,7 @@ export function searchBodies(
   mode: Representation,
   query: string,
   ordinal = 0,
+  preferred?: StableMatch,
 ): Search {
   const counts = {
     requestHeaders: 0,
@@ -213,19 +217,35 @@ export function searchBodies(
   };
   let total = 0;
   let active: Match | null = null;
+  let preferredActive: Match | null = null;
   const pattern = matcher(query);
   if (!pattern) return { ...counts, total, active };
   const scan = (text: string, region: Region, source: keyof typeof counts) => {
     pattern.lastIndex = 0;
+    const stableRegion = preferred?.region;
+    const sameRegion =
+      stableRegion?.kind === "query"
+        ? region.kind === "query" &&
+          region.row === stableRegion.row &&
+          region.field === stableRegion.field
+        : stableRegion?.kind === "header" &&
+          region.kind === "header" &&
+          region.side === stableRegion.side &&
+          region.row === stableRegion.row &&
+          region.field === stableRegion.field;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(text))) {
-      if (total === ordinal)
-        active = {
+      const preferredMatch = sameRegion && match.index === preferred?.start;
+      if (total === ordinal || preferredMatch) {
+        const result = {
           region,
           start: match.index,
           end: match.index + match[0].length,
-          ordinal,
+          ordinal: total,
         };
+        if (total === ordinal) active = result;
+        if (preferredMatch) preferredActive = result;
+      }
       total += 1;
       counts[source] += 1;
     }
@@ -261,7 +281,7 @@ export function searchBodies(
     const text = bodyText(pair[side], mode);
     if (text !== null) scan(text, { kind: "body", side }, side);
   }
-  return { ...counts, total, active };
+  return { ...counts, total, active: preferredActive ?? active };
 }
 export function headerWindow(
   headers: HeaderDocument,
