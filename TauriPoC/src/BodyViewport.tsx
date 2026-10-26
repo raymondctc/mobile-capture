@@ -3,6 +3,24 @@ import { Button } from "./components/ui/button";
 import { bodyWindow, type Match } from "./body-document";
 import type { Window } from "./body-session";
 
+export function highlightText(
+  text: string,
+  matches: { start: number; end: number }[],
+): ReactNode {
+  if (!text || !matches.length) return text;
+  const runs: ReactNode[] = [];
+  let offset = 0;
+  for (const match of matches) {
+    runs.push(text.slice(offset, match.start));
+    runs.push(
+      <mark key={match.start}>{text.slice(match.start, match.end)}</mark>,
+    );
+    offset = match.end;
+  }
+  runs.push(text.slice(offset));
+  return runs;
+}
+
 export function BodyViewport({
   text,
   offset,
@@ -28,12 +46,14 @@ export function BodyWindow({
   wrap,
   active = null,
   label = "Body content",
+  emptyLabel = "Empty body",
 }: {
   window: Window;
   onOffset: (offset: number) => void;
   wrap: boolean;
   active?: Match | null;
   label?: string;
+  emptyLabel?: string;
 }) {
   const activeMark = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -70,7 +90,7 @@ export function BodyWindow({
         tabIndex={0}
         className={`min-h-32 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-5 select-text ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}
       >
-        {window.total ? runs : "Empty body"}
+        {window.total ? runs : emptyLabel}
       </pre>
       {(window.start > 0 || window.end < window.total) && (
         <nav

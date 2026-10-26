@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button";
-import { BodyWindow } from "./BodyViewport";
+import { BodyWindow, highlightText } from "./BodyViewport";
 import { errorMessage } from "./api";
 import { product } from "./product";
 import type { DocumentOwner } from "./body-owner";
@@ -147,7 +147,7 @@ export function QueryParameters({
                         setOffset(0);
                       }}
                     >
-                      {highlight(cell.text, cell.matches) ||
+                      {highlightText(cell.text, cell.matches) ||
                         (field === "value" && !row.hasEquals
                           ? "(no equals sign)"
                           : "(empty)")}
@@ -225,22 +225,4 @@ export function QueryParameters({
       {status && <p role="status">{status}</p>}
     </section>
   );
-}
-
-function highlight(
-  text: string,
-  matches: { start: number; end: number }[],
-): ReactNode {
-  if (!text || !matches.length) return text;
-  const runs: ReactNode[] = [];
-  let offset = 0;
-  for (const match of matches) {
-    runs.push(text.slice(offset, match.start));
-    runs.push(
-      <mark key={match.start}>{text.slice(match.start, match.end)}</mark>,
-    );
-    offset = match.end;
-  }
-  runs.push(text.slice(offset));
-  return runs;
 }

@@ -39,6 +39,7 @@ pub struct TimelineQuery {
     pub order: TimelineOrder,
     pub limit: u32,
     pub cursor: Option<String>,
+    pub seek: Option<TimelineSeek>,
     pub after_sequence: Option<u64>,
     pub through_sequence: Option<u64>,
 }
@@ -52,10 +53,27 @@ impl Default for TimelineQuery {
             order: TimelineOrder::NewestFirst,
             limit: 200,
             cursor: None,
+            seek: None,
             after_sequence: None,
             through_sequence: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SeekRelation {
+    At,
+    Before,
+    After,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TimelineSeek {
+    pub session_key: String,
+    pub generation: String,
+    pub event_id: String,
+    pub relation: SeekRelation,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -96,9 +114,12 @@ pub struct TimelineRow {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TimelinePage {
+    pub session_key: String,
     pub generation: String,
     pub rows: Vec<TimelineRow>,
     pub next_cursor: Option<String>,
+    pub has_previous: bool,
+    pub has_next: bool,
     pub total: u64,
     pub matching: u64,
     pub progress: IndexProgress,
@@ -230,8 +251,24 @@ pub struct RequestInfo {
 pub struct BodyDocuments {
     pub reference: EventRef,
     pub request_info: RequestInfo,
+    pub request_headers: HeaderDocument,
+    pub response_headers: HeaderDocument,
     pub request: BodyDocument,
     pub response: BodyDocument,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HeaderRow {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HeaderDocument {
+    Present { rows: Vec<HeaderRow> },
+    Absent,
+    Unavailable { reason: String },
 }
 
 pub struct RetainedBody {

@@ -56,6 +56,8 @@ try {
   const pair = (request, response, url = null) => ({
     reference: { session_key: "/synthetic", event_id: "one" },
     request_info: { method: "POST", url },
+    request_headers: { kind: "absent" },
+    response_headers: { kind: "absent" },
     request,
     response,
   });
@@ -120,6 +122,17 @@ try {
     row: 6,
     field: "value",
   });
+  const queryPreserved = await read({
+    kind: "find",
+    mode: "formatted",
+    query: "needle",
+    ordinal: 0,
+    preferred: {
+      region: queryFound.search.active.region,
+      start: queryFound.search.active.start,
+    },
+  });
+  assert.deepEqual(queryPreserved.search.active, queryFound.search.active);
   const queryTail = await read({
     kind: "query-text",
     target: { kind: "cell", row: 6, field: "value" },
@@ -155,6 +168,65 @@ try {
   );
   assert.equal(queryPage.window.rows[6].value.total, 100006);
   assert.equal(queryPage.window.rows[6].value.text.length, 256);
+  const headerPair = pair(
+    body("needle"),
+    body("needle"),
+    "https://example.invalid/?q=needle",
+  );
+  headerPair.request_headers = {
+    kind: "present",
+    rows: Array.from({ length: 120 }, (_, row) => ({
+      name: "X-Duplicate",
+      value: row === 119 ? "x".repeat(100000) + "needle" : "same",
+    })),
+  };
+  headerPair.response_headers = {
+    kind: "present",
+    rows: [{ name: "NEEDLE", value: "needle" }],
+  };
+  const headerLoaded = await read({ kind: "load", pair: headerPair });
+  assert.equal(headerLoaded.headers.request.total, 120);
+  const headerFound = await read({
+    kind: "find",
+    mode: "original",
+    query: "needle",
+    ordinal: 0,
+  });
+  assert.deepEqual(
+    [
+      headerFound.search.requestHeaders,
+      headerFound.search.queryParameters,
+      headerFound.search.request,
+      headerFound.search.responseHeaders,
+      headerFound.search.response,
+      headerFound.search.total,
+    ],
+    [1, 1, 1, 2, 1, 6],
+  );
+  assert.deepEqual(headerFound.search.active.region, {
+    kind: "header",
+    side: "request",
+    row: 119,
+    field: "value",
+  });
+  const headerRows = await read({
+    kind: "header-window",
+    side: "request",
+    firstRow: 100,
+    query: "needle",
+  });
+  assert.equal(headerRows.window.rows.length, 20);
+  assert.equal(headerRows.window.rows[19].value.text.length, 256);
+  const headerTail = await read({
+    kind: "header-text",
+    target: headerFound.search.active.region,
+    query: "needle",
+    offset: 99800,
+  });
+  assert.equal(headerTail.window.total, 100006);
+  assert.ok(headerTail.window.text.endsWith("needle"));
+  assert.ok(headerTail.window.text.length <= 16384);
+  assert.equal(headerTail.window.matches.length, 1);
   const flood = "x".repeat(32 * 1024 * 1024);
   await read({
     kind: "load",

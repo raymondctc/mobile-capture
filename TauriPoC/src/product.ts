@@ -92,20 +92,35 @@ export const logLevelSchema = z.enum([
   "S",
   "unknown",
 ]);
-export const timelineQuerySchema = z.object({
-  source: z.string().nullable(),
-  log_level: logLevelSchema.nullable(),
-  search: z.string(),
-  order: z.enum(["oldest_first", "newest_first"]),
-  limit: z.number(),
-  cursor: z.string().nullable(),
-  after_sequence: z.number().nullable(),
-  through_sequence: z.number().nullable(),
-});
+export const timelineQuerySchema = z
+  .object({
+    source: z.string().nullable(),
+    log_level: logLevelSchema.nullable(),
+    search: z.string(),
+    order: z.enum(["oldest_first", "newest_first"]),
+    limit: z.number(),
+    cursor: z.string().nullable(),
+    seek: z
+      .object({
+        session_key: z.string(),
+        generation: z.string(),
+        event_id: z.string(),
+        relation: z.enum(["at", "before", "after"]),
+      })
+      .nullable(),
+    after_sequence: z.number().nullable(),
+    through_sequence: z.number().nullable(),
+  })
+  .refine((query) => query.cursor === null || query.seek === null, {
+    message: "Timeline cursor and seek are mutually exclusive",
+  });
 export const pageSchema = z.object({
+  session_key: z.string(),
   generation: z.string(),
   rows: z.array(z.object({ sequence: z.number(), event: eventSchema })),
   next_cursor: z.string().nullable(),
+  has_previous: z.boolean(),
+  has_next: z.boolean(),
   total: z.number(),
   matching: z.number(),
   progress: progressSchema,
@@ -174,12 +189,22 @@ export const bodyDocumentSchema = z.discriminatedUnion("kind", [
     reason: z.string(),
   }),
 ]);
+const headerDocumentSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("present"),
+    rows: z.array(z.object({ name: z.string(), value: z.string() })),
+  }),
+  z.object({ kind: z.literal("absent") }),
+  z.object({ kind: z.literal("unavailable"), reason: z.string() }),
+]);
 export const bodyDocumentsSchema = z.object({
   reference: eventRefSchema,
   request_info: z.object({
     method: z.string().nullable(),
     url: z.string().nullable(),
   }),
+  request_headers: headerDocumentSchema,
+  response_headers: headerDocumentSchema,
   request: bodyDocumentSchema,
   response: bodyDocumentSchema,
 });
@@ -223,6 +248,7 @@ export type BodyDescriptor = z.infer<typeof bodyDescriptorSchema>;
 export type DataChunk = z.infer<typeof dataChunkSchema>;
 export type BodyDocument = z.infer<typeof bodyDocumentSchema>;
 export type BodyDocuments = z.infer<typeof bodyDocumentsSchema>;
+export type HeaderDocument = BodyDocuments["request_headers"];
 export type LogLevel = z.infer<typeof logLevelSchema>;
 export type BodySide = z.infer<typeof bodySideSchema>;
 export type SessionDescriptor = z.infer<typeof descriptorSchema>;

@@ -1105,3 +1105,319 @@ fn complete_request_metadata_and_retained_snapshots_are_session_bound() {
     assert!(second.retained_body(&reference, BodySide::Request).is_err());
     assert_eq!(snapshot.bytes, [0, 255, 65]);
 }
+
+#[test]
+fn complete_headers_keep_order_case_duplicates_and_per_side_failures() {
+    let fixture = Fixture::new(false);
+    let long = format!("{}needle", "x".repeat(300_000));
+    let rows = json!([{"name":"X-Mixed","value":"first"},{"name":"x-mixed","value":long}]);
+    fixture.write("network/events.jsonl", format!("{}\n{}\n{}\n",
+        json!({"detail":{"request_headers":rows,"response_headers":[],"request_body":{"text":"body"}}}),
+        json!({"detail":{"request_headers":[{"name":"invalid","value":7}],"response_headers":[{"name":"Valid","value":"yes"}],"request_body":{"text":STANDARD.encode("still usable")}}}),
+        json!({"detail":{"response_headers":null}})));
+    let mut library = fixture.open(false);
+    let events = all(&mut library);
+    let pairs = events
+        .iter()
+        .map(|row| {
+            library
+                .body_documents(&EventRef {
+                    session_key: library.session_key.clone(),
+                    event_id: row.event.id.clone(),
+                })
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(&pairs[0].request_headers, HeaderDocument::Present { rows } if rows.len() == 2 && rows[0].name == "X-Mixed" && rows[1].name == "x-mixed" && rows[1].value == long)
+    );
+    assert!(
+        matches!(&pairs[0].response_headers, HeaderDocument::Present { rows } if rows.is_empty())
+    );
+    assert!(matches!(
+        &pairs[1].request_headers,
+        HeaderDocument::Unavailable { .. }
+    ));
+    assert!(
+        matches!(&pairs[1].response_headers, HeaderDocument::Present { rows } if rows[0].value == "yes")
+    );
+    assert!(
+        matches!(&pairs[1].request.content, BodyContent::Text { original, .. } if original == "still usable")
+    );
+    assert!(matches!(&pairs[2].request_headers, HeaderDocument::Absent));
+    assert!(matches!(&pairs[2].response_headers, HeaderDocument::Absent));
+}
+
+#[test]
+fn checked_seek_preserves_tuple_pages_filters_fences_and_cursor_identity() {
+    let fixture = Fixture::new(false);
+    let records = (0..455)
+        .map(|n| {
+            format!(
+                "{}\n",
+                json!({
+                    "timestamp":format!("2023-11-14T22:13:{:02}.000001Z", 59 - n / 10),
+                    "summary":if n % 2 == 0 { "keep" } else { "omit" },
+                    "detail":{"request_body":{"text":"body"}},
+                })
+            )
+        })
+        .collect::<String>();
+    fixture.write("network/events.jsonl", records);
+    fixture.write(
+        "logs/device.log",
+        "1700000000.000001 1 2 E Tag: keep\n1700000000.000001 1 2 I Tag: keep\n",
+    );
+    fixture.write(
+        "timeline/markers.jsonl",
+        format!(
+            "{}\n",
+            json!({"timestamp":"2023-11-14T22:13:20.000001Z","text":"keep"})
+        ),
+    );
+    let mut library = fixture.open(true);
+    finish(&mut library);
+    for order in [TimelineOrder::OldestFirst, TimelineOrder::NewestFirst] {
+        for filtered in [false, true] {
+            let query = TimelineQuery {
+                order,
+                limit: 37,
+                search: if filtered {
+                    "keep".into()
+                } else {
+                    String::new()
+                },
+                log_level: Some(LogLevel::E),
+                ..Default::default()
+            };
+            let expected = library
+                .query(TimelineQuery {
+                    limit: 2000,
+                    ..query.clone()
+                })
+                .unwrap();
+            let ids = expected
+                .rows
+                .iter()
+                .map(|row| row.event.id.clone())
+                .collect::<Vec<_>>();
+            let first = library.query(query.clone()).unwrap();
+            let second = library
+                .query(TimelineQuery {
+                    cursor: first.next_cursor.clone(),
+                    ..query.clone()
+                })
+                .unwrap();
+            let frozen = TimelineQuery {
+                through_sequence: Some(first.progress.latest_sequence),
+                ..query.clone()
+            };
+            let seek = |id: &str, relation| TimelineSeek {
+                session_key: first.session_key.clone(),
+                generation: first.generation.clone(),
+                event_id: id.into(),
+                relation,
+            };
+            let at = library
+                .query(TimelineQuery {
+                    seek: Some(seek(&second.rows[0].event.id, SeekRelation::At)),
+                    ..frozen.clone()
+                })
+                .unwrap();
+            assert_eq!(
+                at.rows.iter().map(|r| &r.event.id).collect::<Vec<_>>(),
+                second.rows.iter().map(|r| &r.event.id).collect::<Vec<_>>()
+            );
+            assert!(at.has_previous && at.has_next);
+            let previous = library
+                .query(TimelineQuery {
+                    seek: Some(seek(&at.rows[0].event.id, SeekRelation::Before)),
+                    ..frozen.clone()
+                })
+                .unwrap();
+            assert_eq!(
+                previous
+                    .rows
+                    .iter()
+                    .map(|r| &r.event.id)
+                    .collect::<Vec<_>>(),
+                first.rows.iter().map(|r| &r.event.id).collect::<Vec<_>>()
+            );
+            assert!(!previous.has_previous && previous.has_next);
+            let mut walked = previous
+                .rows
+                .iter()
+                .map(|r| r.event.id.clone())
+                .collect::<Vec<_>>();
+            let mut current = previous;
+            while current.has_next {
+                current = library
+                    .query(TimelineQuery {
+                        seek: Some(seek(
+                            &current.rows.last().unwrap().event.id,
+                            SeekRelation::After,
+                        )),
+                        ..frozen.clone()
+                    })
+                    .unwrap();
+                assert!(current.has_previous);
+                walked.extend(current.rows.iter().map(|r| r.event.id.clone()));
+            }
+            assert_eq!(walked, ids);
+            assert!(library
+                .query(TimelineQuery {
+                    seek: Some(seek(&ids[0], SeekRelation::Before)),
+                    ..frozen.clone()
+                })
+                .unwrap()
+                .rows
+                .is_empty());
+            assert!(library
+                .query(TimelineQuery {
+                    seek: Some(seek(ids.last().unwrap(), SeekRelation::After)),
+                    ..frozen.clone()
+                })
+                .unwrap()
+                .rows
+                .is_empty());
+            let via_cursor = library
+                .query(TimelineQuery {
+                    cursor: at.next_cursor.clone(),
+                    ..frozen.clone()
+                })
+                .unwrap();
+            assert_eq!(via_cursor.rows[0].event.id, ids[74]);
+            assert!(library
+                .query(TimelineQuery {
+                    seek: Some(seek(&ids[0], SeekRelation::At)),
+                    cursor: at.next_cursor,
+                    ..frozen.clone()
+                })
+                .is_err());
+            for (session_key, generation) in [
+                ("wrong", first.generation.as_str()),
+                (first.session_key.as_str(), "stale"),
+            ] {
+                assert!(library
+                    .query(TimelineQuery {
+                        seek: Some(TimelineSeek {
+                            session_key: session_key.into(),
+                            generation: generation.into(),
+                            ..seek(&ids[0], SeekRelation::At)
+                        }),
+                        ..frozen.clone()
+                    })
+                    .is_err());
+            }
+            assert!(library
+                .query(TimelineQuery {
+                    seek: Some(seek(&ids[0], SeekRelation::At)),
+                    search: "never-matches".into(),
+                    ..frozen.clone()
+                })
+                .is_err());
+        }
+    }
+    let first = library.query(TimelineQuery::default()).unwrap();
+    fixture.append(
+        "network/events.jsonl",
+        format!(
+            "{}\n",
+            json!({"timestamp":"2023-11-14T22:13:59.000001Z","summary":"appended"})
+        )
+        .as_bytes(),
+    );
+    finish(&mut library);
+    let frozen = library
+        .query(TimelineQuery {
+            through_sequence: Some(first.progress.latest_sequence),
+            seek: Some(TimelineSeek {
+                session_key: first.session_key,
+                generation: first.generation,
+                event_id: first.rows[0].event.id.clone(),
+                relation: SeekRelation::At,
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(frozen.matching, first.matching);
+    assert!(frozen.progress.latest_sequence > first.progress.latest_sequence);
+    assert!(frozen
+        .rows
+        .iter()
+        .all(|row| row.sequence <= first.progress.latest_sequence));
+    let stale_seek = TimelineSeek {
+        session_key: frozen.session_key,
+        generation: frozen.generation,
+        event_id: frozen.rows[0].event.id.clone(),
+        relation: SeekRelation::At,
+    };
+    fixture.write(
+        "network/events.jsonl",
+        format!("{}\n", json!({"summary":"replacement"})),
+    );
+    finish(&mut library);
+    assert!(library
+        .query(TimelineQuery {
+            seek: Some(stale_seek),
+            ..Default::default()
+        })
+        .unwrap_err()
+        .contains("generation"));
+}
+
+#[test]
+fn seek_uses_id_to_break_equal_timestamp_rank_and_line_ties() {
+    let fixture = Fixture::new(false);
+    fixture.write("network/events.jsonl", "{}\n{}\n{}\n");
+    let mut library = fixture.open(false);
+    library
+        .index
+        .db
+        .execute("UPDATE events SET line=1", [])
+        .unwrap();
+    let mut expected = all(&mut library)
+        .iter()
+        .map(|row| row.event.id.clone())
+        .collect::<Vec<_>>();
+    expected.sort();
+    for order in [TimelineOrder::OldestFirst, TimelineOrder::NewestFirst] {
+        let mut ids = expected.clone();
+        if order == TimelineOrder::NewestFirst {
+            ids.reverse();
+        }
+        let first = library
+            .query(TimelineQuery {
+                order,
+                limit: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(first.rows[0].event.id, ids[0]);
+        let seek = |event_id: &str, relation| TimelineSeek {
+            session_key: first.session_key.clone(),
+            generation: first.generation.clone(),
+            event_id: event_id.into(),
+            relation,
+        };
+        let second = library
+            .query(TimelineQuery {
+                order,
+                limit: 1,
+                seek: Some(seek(&ids[0], SeekRelation::After)),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(second.rows[0].event.id, ids[1]);
+        let before = library
+            .query(TimelineQuery {
+                order,
+                limit: 1,
+                seek: Some(seek(&ids[2], SeekRelation::Before)),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(before.rows[0].event.id, ids[1]);
+        assert!(before.has_previous && before.has_next);
+    }
+}

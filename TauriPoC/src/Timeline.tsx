@@ -5,55 +5,12 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { NativeSelect } from "./components/ui/native-select";
-import { useEffect, useRef, useState } from "react";
-import { errorMessage } from "./api";
-import {
-  formatBytes,
-  logLevelSchema,
-  type LogLevel,
-  product,
-  type EventDetail,
-  type SessionDescriptor,
-  type TimelinePage,
-  type TimelineQuery,
-} from "./product";
-import { timelineFence, useReading } from "./state";
+import { formatBytes, logLevelSchema, type SessionDescriptor } from "./product";
 import { Details } from "./Details";
 import { EventSummary } from "./EventSummary";
+import { useTimelineReader } from "./useTimelineReader";
 import { X } from "lucide-react";
 
-type QueryState = {
-  source: string;
-  logLevel: LogLevel | null;
-  search: string;
-  cursor: string | null;
-  previous: (string | null)[];
-  after: number | null;
-  through: number | null;
-  revision: number;
-};
-type InspectorEvent = {
-  directory: SessionDescriptor["directory"];
-  eventId: EventDetail["event"]["id"];
-};
-type Inspector =
-  | { kind: "closed" }
-  | (InspectorEvent &
-      (
-        | { kind: "loading" }
-        | { kind: "ready"; detail: EventDetail }
-        | { kind: "error"; message: string }
-      ));
-const initialQuery: QueryState = {
-  source: "",
-  logLevel: null,
-  search: "",
-  cursor: null,
-  previous: [],
-  after: null,
-  through: null,
-  revision: 0,
-};
 export function Timeline({
   inspected,
   visible = true,
@@ -61,169 +18,35 @@ export function Timeline({
   inspected: SessionDescriptor | undefined;
   visible?: boolean;
 }) {
-  const [reading, setReading] = useReading();
-  const [query, setQuery] = useState<QueryState>(initialQuery);
-  const [page, setPage] = useState<TimelinePage>();
-  const [inspector, setInspector] = useState<Inspector>({ kind: "closed" });
-  const [error, setError] = useState("");
-  const [invalidation, setInvalidation] = useState("");
-  const [loading, setLoading] = useState(false);
-  const generation = useRef(0);
-  const detailGeneration = useRef(0);
-  const returnFocus = useRef<HTMLButtonElement | null>(null);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  const heading = useRef<HTMLHeadingElement>(null);
-  const directory = useRef(inspected?.directory);
-  const list = useRef<HTMLDivElement>(null);
-  const follow = useRef(reading.follow);
-  const paused = query.through !== null;
-  follow.current = reading.follow;
-  directory.current = inspected?.directory;
-  const visibleInspector =
-    inspector.kind !== "closed" && inspector.directory === inspected?.directory
-      ? inspector
-      : undefined;
-  useEffect(() => {
-    setQuery(initialQuery);
-    setPage(undefined);
-    setInspector({ kind: "closed" });
-    returnFocus.current = null;
-    setInvalidation("");
-    detailGeneration.current += 1;
-    return () => {
-      detailGeneration.current += 1;
-    };
-  }, [inspected?.directory]);
-  useEffect(() => {
-    if (visibleInspector) closeButton.current?.focus();
-  }, [visibleInspector?.directory, visibleInspector?.eventId]);
-  useEffect(() => {
-    const request = ++generation.current;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    if (!inspected) return;
-    const input: TimelineQuery = {
-      source: query.source || null,
-      log_level: query.logLevel,
-      search: query.search,
-      order: reading.order,
-      limit: 200,
-      cursor: query.cursor,
-      after_sequence: query.after,
-      through_sequence: query.through,
-    };
-    setLoading(true);
-    setError("");
-    async function poll() {
-      try {
-        const result = await product.query(input);
-        if (disposed || request !== generation.current) return;
-        setPage(result);
-        setError("");
-        setLoading(false);
-        if (
-          follow.current &&
-          query.cursor === null &&
-          query.through === null &&
-          list.current
-        )
-          list.current.scrollTop =
-            reading.order === "newest_first" ? 0 : list.current.scrollHeight;
-      } catch (cause) {
-        if (disposed || request !== generation.current) return;
-        setError(errorMessage(cause));
-        setLoading(false);
-        if (input.cursor) {
-          setInvalidation(
-            `The previous page could not be read. ${errorMessage(cause)} The first page has reloaded with your filters preserved.`,
-          );
-          setQuery((previous) => ({
-            ...previous,
-            cursor: null,
-            previous: [],
-            revision: previous.revision + 1,
-          }));
-        }
-      }
-      if (!disposed) timer = setTimeout(poll, 1000);
-    }
-    void poll();
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [inspected?.directory, query, reading.order]);
-  async function select(eventId: string, origin: HTMLButtonElement) {
-    if (!inspected) return;
-    const selected = { directory: inspected.directory, eventId };
-    const request = ++detailGeneration.current;
-    returnFocus.current = origin;
-    setInspector({ kind: "loading", ...selected });
-    try {
-      const detail = await product.detail(eventId);
-      if (
-        request !== detailGeneration.current ||
-        directory.current !== selected.directory
-      )
-        return;
-      setInspector(
-        detail
-          ? { kind: "ready", ...selected, detail }
-          : {
-              kind: "error",
-              ...selected,
-              message:
-                "The selected event is no longer available. Refresh the session.",
-            },
-      );
-    } catch (cause) {
-      if (
-        request === detailGeneration.current &&
-        directory.current === selected.directory
-      )
-        setInspector({
-          kind: "error",
-          ...selected,
-          message: errorMessage(cause),
-        });
-    }
-  }
-  function closeInspector() {
-    detailGeneration.current += 1;
-    setInspector({ kind: "closed" });
-    const target = returnFocus.current;
-    if (target?.isConnected) target.focus();
-    else heading.current?.focus();
-    returnFocus.current = null;
-  }
-  function reset(changes: Partial<QueryState>) {
-    setQuery((previous) => ({
-      ...previous,
-      ...changes,
-      cursor: null,
-      previous: [],
-    }));
-  }
-  function fence(action: "pause" | "clear" | "full") {
-    const next = timelineFence(
-      action,
-      page?.progress.latest_sequence ?? 0,
-      query,
-    );
-    reset(next);
-    if (action !== "pause")
-      setReading({ ...reading, follow: reading.order === "newest_first" });
-  }
-  function latest() {
-    reset({ through: null });
-    setReading({ ...reading, follow: true, order: "newest_first" });
-    if (list.current)
-      list.current.scrollTop =
-        reading.order === "newest_first" ? 0 : list.current.scrollHeight;
-  }
-  const selectionOffPage =
-    visibleInspector &&
-    !page?.rows.some((row) => row.event.id === visibleInspector.eventId);
+  const {
+    reading,
+    setReading,
+    query,
+    page,
+    shownPageNumber,
+    visibleInspector,
+    error,
+    invalidation,
+    setInvalidation,
+    loading,
+    paused,
+    canPrevious,
+    canNext,
+    firstPage,
+    heading,
+    list,
+    closeButton,
+    rows,
+    select,
+    rowKey,
+    changePage,
+    reset,
+    fence,
+    latest,
+    closeInspector,
+    selectionOffPage,
+    inspectorControls,
+  } = useTimelineReader({ inspected, visible });
   return (
     <section
       className="relative flex min-h-[16rem] min-w-0 flex-1 overflow-hidden"
@@ -379,7 +202,7 @@ export function Timeline({
             role="alert"
           >
             {error}
-            {query.cursor === null && (
+            {firstPage && (
               <span>
                 {" "}
                 The first page will reload. Your filters are preserved.
@@ -450,12 +273,19 @@ export function Timeline({
               {page.rows.map(({ sequence, event }) => (
                 <div role="listitem" key={event.id}>
                   <Button
+                    aria-keyshortcuts="ArrowUp ArrowDown Enter"
+                    title="↑/↓ browse · Enter details"
                     aria-pressed={visibleInspector?.eventId === event.id}
                     aria-haspopup="dialog"
                     variant="ghost"
                     className={`grid h-auto min-h-16 w-full grid-cols-[70px_48px_minmax(0,1fr)] items-start justify-start gap-3 rounded-none border-0 border-b border-border px-4 py-3 text-left font-normal whitespace-normal select-text ${visibleInspector?.eventId === event.id ? "bg-accent hover:bg-accent" : "hover:bg-muted/50"}`}
-                    onClick={(click) =>
-                      void select(event.id, click.currentTarget)
+                    ref={(element) => {
+                      if (element) rows.current.set(event.id, element);
+                      else rows.current.delete(event.id);
+                    }}
+                    onKeyDown={(key) => rowKey(key, event.id)}
+                    onClick={() =>
+                      void select(event.id, "timeline", event.source)
                     }
                   >
                     <span
@@ -483,34 +313,14 @@ export function Timeline({
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2 text-xs tabular-nums [&_button]:h-7 [&_button]:text-xs">
-          <Button
-            disabled={!query.previous.length || loading}
-            onClick={() => {
-              const history = query.previous.slice(0, -1);
-              const cursor = query.previous.at(-1) ?? null;
-              setQuery({ ...query, cursor, previous: history });
-              setReading({ ...reading, follow: false });
-            }}
-          >
+          <Button disabled={!canPrevious} onClick={() => changePage(-1)}>
             {reading.order === "newest_first" ? "Newer page" : "Earlier page"}
           </Button>
           <span>
             {page?.rows.length ?? 0} events on this page · page{" "}
-            {query.previous.length + 1}
+            {shownPageNumber}
           </span>
-          <Button
-            disabled={!page?.next_cursor || loading}
-            onClick={() => {
-              if (page?.next_cursor) {
-                setQuery({
-                  ...query,
-                  cursor: page.next_cursor,
-                  previous: [...query.previous, query.cursor],
-                });
-                setReading({ ...reading, follow: false });
-              }
-            }}
-          >
+          <Button disabled={!canNext} onClick={() => changePage(1)}>
             {reading.order === "newest_first" ? "Older page" : "Later page"}
           </Button>
         </div>
@@ -563,6 +373,7 @@ export function Timeline({
                 offPage={!!selectionOffPage}
                 wrap={reading.wrap}
                 visible={visible}
+                inspector={inspectorControls}
               />
             )}
           </div>
